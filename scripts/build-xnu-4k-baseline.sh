@@ -55,7 +55,7 @@ if [ "${XNU_NATIVE_LEGACY_DISPLAY:-0}" != 1 ] && ! grep -q 'uke_display_probe_st
   cat >> "$UKE_BSD_INIT" <<'UKE_DISPLAY_STUB'
 
 /* uke_display_probe_stub: see scripts/build-xnu-4k-baseline.sh. */
-void native_legacy_display_probe(void)
+__attribute__((weak)) void native_legacy_display_probe(void)
 {
 	kprintf("uke: native_legacy_display_probe: no display provider on this board yet\n");
 }
