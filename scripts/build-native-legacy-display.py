@@ -205,9 +205,10 @@ run(trace_cmd,cwd=pr['directory'])
 touch_dir=OUT/'touch';touch_dir.mkdir(exist_ok=True)
 touch_cpp=ROOT/'kits/uke/TouchProbe.cpp';touch_cpp_obj=touch_dir/'TouchProbe.o'
 cpufreq_cpp=ROOT/'kits/uke/CpuFreqProbe.cpp';cpufreq_obj=touch_dir/'CpuFreqProbe.o'
-gpupower_cpp=ROOT/'kits/uke/GpuPowerProbe.cpp';gpupower_obj=touch_dir/'GpuPowerProbe.o'
+# uke first-console: NATIVE_ADRENO is off, so GpuPowerProbe's Adreno and
+# GPU-addon imports would be undefined. It is a default-off probe; omit it
+# from this archive until the Adreno kit is linked.
 run([str(touch_cpp) if str(arg)==str(source) else str(touch_cpp_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
-run([str(gpupower_cpp) if str(arg)==str(source) else str(gpupower_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]+['-I',str(ROOT/'drivers/NativeAdreno'),'-I',str(ROOT/'kits/ArmSmmu4K'),'-I',str(ROOT/'kits/AdrenoFirmware'),'-I',str(ROOT/'kits/AdrenoPM4')],cwd=r['directory'])
 run([str(cpufreq_cpp) if str(arg)==str(source) else str(cpufreq_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
 print(run(['python3',ROOT/'scripts/gen-touch-firmware.py'],text=True),end='')
 touch_c=[ROOT/'drivers/NativeGeniSpi/GeniSpi.c',ROOT/'drivers/NativeNovatekTouch/NvtProtocol.c',
@@ -228,7 +229,6 @@ run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',
 require(code((keyevents/'NativeKeyStoreEvents.o').read_bytes(),macho((keyevents/'NativeKeyStoreEvents.o').read_bytes()))==
         code(keyevents_late.read_bytes(),macho(keyevents_late.read_bytes())),'Owned event-service instructions unchanged by late init staging')
 run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDisplayProbe.o',hid_obj,keystore_obj,process_obj,trace_obj,
-     hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,touch_cpp_obj,cpufreq_obj,gpupower_obj,*touch_objs])
 sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          ROOT/'drivers/NativeMobileDisplay/NativeLegacyRequest.h',source,hid_source,keystore_source,process_source,trace_source,ROOT/'kits/uke/BootUiTraceCore.h',ROOT/'kits/uke/BootUiTraceDetails.h',
          ROOT/'drivers/NativeHidInput/NativeHidInput.cpp',ROOT/'scripts/build-native-hid-input.py',

@@ -111,6 +111,9 @@ jobs:
              out/uke/tree/build/native-prelink/native-owner-ufs-cpu-desktop-v9-hid-init-candidate.macho
           cp out/uke/kernel/kernel.json \
              out/uke/tree/build/native-prelink/native-owner-ufs-cpu-desktop-v9-hid-init-candidate.json
+          # Do not leave the bootstrap kernel where the result step would
+          # upload it as the shipping kernel.
+          rm -f out/uke/kernel/kernel.macho out/uke/kernel/kernel.json
           ls -l out/uke/tree/build/native-prelink/
 
       - name: Build the pinned corecrypto provider
@@ -169,6 +172,7 @@ jobs:
           mkdir -p ../artifacts
           if [ -f out/uke/kernel/kernel.macho ]; then
             cp out/uke/kernel/kernel.macho ../artifacts/
+            cp out/uke/kernel/kernel.json ../artifacts/ 2>/dev/null || true
             shasum -a 256 out/uke/kernel/kernel.macho | tee ../artifacts/kernel.macho.sha256
           else
             echo "kernel.macho was not produced" | tee ../artifacts/MISSING.txt
