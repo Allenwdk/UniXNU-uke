@@ -162,6 +162,9 @@ jobs:
       - name: Build and prelink the first-console kernel
         working-directory: UniXNU
         run: |
+          # The corecrypto source is not a unixnu-managed refer module;
+          # tree.assemble cannot unlink a directory on macOS.
+          rm -rf out/uke/tree/refer/corecrypto-2023
           ./unixnu defconfig uke_defconfig -D ../UniXNU-uke
           ./unixnu build kernel -D ../UniXNU-uke
 
