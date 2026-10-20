@@ -101,9 +101,12 @@ jobs:
           ./unixnu defconfig bootstrap_defconfig -D ../UniXNU-uke
           ./unixnu build kernel -D ../UniXNU-uke
           test -f out/uke/kernel/kernel.macho
+          test -f out/uke/kernel/kernel.json
           mkdir -p out/uke/tree/build/native-prelink
           cp out/uke/kernel/kernel.macho \
              out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.macho
+          cp out/uke/kernel/kernel.json \
+             out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.json
           ls -l out/uke/tree/build/native-prelink/
 
       - name: Build the pinned corecrypto provider

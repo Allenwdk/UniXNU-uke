@@ -45,8 +45,9 @@ needs an original-class candidate Mach-O.
 So the workflow runs:
 
 1. `bootstrap_defconfig` → `unixnu build kernel` → compile records plus
-   `out/uke/kernel/kernel.macho`; copy the latter to
-   `out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.macho`.
+   `out/uke/kernel/kernel.macho`; copy the prelink output and its
+   `kernel.json` plan to
+   `out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.{macho,json}`.
 2. Clone the pinned `ONLYA/corecrypto-2023` (`11fba65…`) into `refer/` and run
    `build-corecrypto-14.py` plain and `--namespace`.
 3. Build `ArmDTPlatform`, `ArmCpu`, the empty touch-firmware object and the

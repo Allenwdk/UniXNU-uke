@@ -82,6 +82,8 @@ cd ~/uke/UniXNU
 mkdir -p out/uke/tree/build/native-prelink
 cp out/uke/kernel/kernel.macho \
    out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.macho
+cp out/uke/kernel/kernel.json \
+   out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.json
 ```
 
 The bootstrap kernel does not have to boot. Its outputs are the XNU compile
