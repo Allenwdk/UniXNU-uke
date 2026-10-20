@@ -170,6 +170,8 @@ while i<len(args):
     i+=1
 cmd+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unnecessary-virtual-specifier','-Wno-c99-designator','-Wno-reorder-init-list',
       '-Wno-deprecated-enum-enum-conversion','-I',str(ROOT/'.cache/xnu-work/osfmk')]
+(ROOT/'kits/uke-ci').mkdir(parents=True,exist_ok=True)
+cmd+=['-I',str(ROOT/'kits/uke-ci')]
 run(cmd,cwd=r['directory'])
 hid_source=ROOT/'kits/uke/HidInputProbe.cpp'
 hid_obj=OUT/'HidInputProbe.o'
