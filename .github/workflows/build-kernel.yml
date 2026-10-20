@@ -1,29 +1,28 @@
 name: build-uke-kernel
 
-# Builds the first-console XNU kernel for the Xiaomi Pad 7 / POCO Pad X1
-# (uke, SM7675) on a macOS runner. The kernel step needs macOS: xnu's own
-# makefiles are driven with xcodebuild and the iPhoneOS SDK, and MIG ships
-# only inside Xcode. Linux stops at the missing MIG (see the piano port's
-# LINUX-BUILD.md).
+# Builds the XNU kernels for the Xiaomi Pad 7 / POCO Pad X1 (uke, SM7675) on a
+# macOS runner. The kernel step needs macOS: xnu's own makefiles are driven with
+# xcodebuild and the iPhoneOS SDK, and MIG ships only inside Xcode. Linux stops
+# at the missing MIG (see the piano port's LINUX-BUILD.md).
 #
-# This mirrors docs/MACOS-BUILD.md:
-#
-#  1. bootstrap_defconfig builds a plain 4 KiB XNU and prelinks it; the prelink
-#     output is the original-class candidate the legacy display ABI builder
-#     needs, and the build leaves the compile records for every device archive.
-#  2. the namespaced corecrypto provider, ArmDTPlatform and ArmCpu are built
-#     from those records.
-#  3. build-native-legacy-display.py builds the GOP legacy display provider.
-#  4. uke_defconfig builds and prelinks the shipping first-console kernel.
+#   kernel  first-console kernel: corecrypto, ArmDTPlatform, ArmCpu, timer,
+#           PAN, DT panic region and the GOP legacy display.
+#   full    stage-6 kernel from configs/uke-full_defconfig: everything the
+#           source-reproducible archive chain can supply, including NativeUfs
+#           and NativeAES, plus mockfs, pthread, PMGR and the legacy display.
+#           The hardware-qualification gates (storage ABI snapshots, verified
+#           root policy bundles, VirtIO/RamBlock, owner-root, boot progress)
+#           stay off; configs/uke-full-plus_defconfig lists them.
 #
 # Runner note: the piano port proved that macos-14 / Xcode 15.4 is too old
 # (`-mach_msg2` is unknown and MIG has no SubSystem declaration). Use the
 # current macos-latest (macOS 26, Xcode 26.x); do not pin macos-14.
 #
-# The payload and boot image are built on Linux afterwards:
-#
-#   unixnu build payload --kernel <downloaded kernel.macho>
-#   unixnu bootimg --uefi <uefi-uke> --dtb <vendor_boot.dtb>
+# Both jobs restore the UniXNU out/ tree, the device firmware cache and the
+# Homebrew download cache. The bootstrap pass is the expensive part, so a
+# restored tree turns the next run into an incremental build. The cache key
+# includes the device configuration and the UniXNU fork commit; bump
+# CACHE_SCHEMA when the object layout changes in a way the key cannot see.
 
 on:
   workflow_dispatch:
@@ -31,18 +30,28 @@ on:
     branches: [main]
     paths:
       - 'board.toml'
+      - 'feeds.toml'
       - 'configs/**'
       - 'package/**'
       - 'scripts/**'
       - 'docs/MACOS-BUILD.md'
       - '.github/workflows/build-kernel.yml'
 
+concurrency:
+  group: build-uke-kernel-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
+env:
+  CACHE_SCHEMA: v1
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+
 jobs:
   kernel:
-    runs-on: macos-latest       # Apple Silicon, newest Xcode (piano: 9m12s)
+    runs-on: macos-latest
     timeout-minutes: 240
 
     steps:
@@ -51,6 +60,36 @@ jobs:
         with:
           path: UniXNU-uke
 
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: Allenwdk/UniXNU
+          ref: uke
+          path: UniXNU
+
+      - name: Record the UniXNU revision
+        id: base
+        working-directory: UniXNU
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Homebrew downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: brew-${{ runner.os }}-${{ hashFiles('UniXNU-uke/.github/workflows/build-kernel.yml') }}
+          restore-keys: brew-${{ runner.os }}-
+
+      - name: Restore the build tree
+        uses: actions/cache@v4
+        with:
+          path: |
+            UniXNU/out
+            UniXNU-uke/.cache
+          key: unixnu-out-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-${{ hashFiles('UniXNU-uke/board.toml', 'UniXNU-uke/feeds.toml', 'UniXNU-uke/configs/**', 'UniXNU-uke/scripts/**') }}
+          restore-keys: |
+            unixnu-out-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-
+            unixnu-out-${{ env.CACHE_SCHEMA }}-
+
       - name: Report the runner toolchain
         run: |
           sw_vers
@@ -58,7 +97,6 @@ jobs:
           xcodebuild -version
           xcode-select -p
           xcrun -sdk iphoneos -find mig || echo 'mig not found for iphoneos'
-          xcrun -sdk iphoneos -find iig || echo 'iig not found for iphoneos'
 
       - name: Install the host tools
         run: |
@@ -72,22 +110,11 @@ jobs:
             printf '%-10s %s\n' "$tool" "$(command -v "$tool" || echo MISSING)"
           done
 
-      - name: Check out UniXNU
-        uses: actions/checkout@v4
-        with:
-          repository: UniXNU/UniXNU
-          ref: main
-          path: UniXNU
-
-      - name: Select the device repository
-        working-directory: UniXNU
-        run: |
-          ./unixnu defconfig uke_defconfig -D ../UniXNU-uke
-          ./unixnu status
-
       - name: Fetch the Apple references
         working-directory: UniXNU
-        run: ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions -D ../UniXNU-uke
+        run: |
+          ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions libpthread \
+                          corecrypto-2023 IOStorageFamily -D ../UniXNU-uke
 
       - name: Fetch the target IPSW members
         working-directory: UniXNU
@@ -98,6 +125,8 @@ jobs:
         # bootstrap_defconfig disables every device archive. Its outputs are
         # the compile records under build/xnu/ and the prelinked kernel.macho
         # that build-native-legacy-display.py uses as its original candidate.
+        # CONFIG_XNU_BUILD_ARCHIVES is not set, so the board's archive list is
+        # not run during this pass.
         run: |
           ./unixnu defconfig bootstrap_defconfig -D ../UniXNU-uke
           ./unixnu build kernel -D ../UniXNU-uke
@@ -117,26 +146,18 @@ jobs:
           rm -f out/uke/kernel/kernel.macho out/uke/kernel/kernel.json
           ls -l out/uke/tree/build/native-prelink/
 
-      - name: Build the pinned corecrypto provider
+      - name: Build the first-console archives
         working-directory: UniXNU
+        # The first-console configuration does not opt in to the board archive
+        # list, so its archives are built here explicitly.
         run: |
-          ./unixnu tree -D ../UniXNU-uke
           workspace=out/uke/tree
-          git clone --quiet https://github.com/ONLYA/corecrypto-2023 "$workspace/refer/corecrypto-2023"
-          git -C "$workspace/refer/corecrypto-2023" checkout --quiet 11fba65b12d8830630e248dfa8344caf8b065f26
-          git -C "$workspace/refer/corecrypto-2023" rev-parse HEAD
+          ( cd "$workspace" && python3 scripts/gen-touch-firmware.py )
           ( cd "$workspace" && python3 scripts/build-corecrypto-14.py )
           ( cd "$workspace" && python3 scripts/build-corecrypto-14.py --namespace )
-          ls -l "$workspace/build/corecrypto-2023/"*.a
-
-      - name: Seed the original-class runtime observation cache
-        working-directory: UniXNU
-        # audit-mobile-graphics-legacy.py accepts the recorded runtime
-        # observation hash from its previous output when the GDB dump was
-        # pruned. The observation is of the unchanged iPad7,1 original class,
-        # not of the native uke kernel; uke pins the same kernelcache as sheng.
-        run: |
-          mkdir -p out/uke/tree/build/display-analysis
+          ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmDTPlatform )
+          ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmCpu )
+          mkdir -p "$workspace/build/display-analysis"
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -144,28 +165,14 @@ jobs:
           if not p.exists():
               p.write_text(json.dumps({'runtime_metadata_checkpoint_sha256': '3044c2beff552911605994c0dc7aa73182066cbb5aed0b396999ceeb5a96da2b'}) + '\n')
           PY
-
-      - name: Build the driver archives and legacy display provider
-        working-directory: UniXNU
-        # build-arm-driver.py compiles drivers/<name>/<name>.cpp from the base
-        # repository against the bootstrap kernel's recorded compile command.
-        # build-native-legacy-display.py runs the mobile-graphics ABI audit,
-        # builds the GOP legacy display provider and archives it.
-        run: |
-          workspace=out/uke/tree
-          ( cd "$workspace" && python3 scripts/gen-touch-firmware.py )
-          ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmDTPlatform )
-          ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmCpu )
           ( cd "$workspace" && python3 scripts/build-native-legacy-display.py )
-          ls -l "$workspace/build/armdt-platform/" "$workspace/build/armcpu/" \
+          ls -l "$workspace/build/corecrypto-2023/"*.a \
+                "$workspace/build/armdt-platform/" "$workspace/build/armcpu/" \
                 "$workspace/build/native-legacy-display/"
 
       - name: Build and prelink the first-console kernel
         working-directory: UniXNU
         run: |
-          # The corecrypto source is not a unixnu-managed refer module;
-          # tree.assemble cannot unlink a directory on macOS.
-          rm -rf out/uke/tree/refer/corecrypto-2023
           ./unixnu defconfig uke_defconfig -D ../UniXNU-uke
           ./unixnu build kernel -D ../UniXNU-uke
 
@@ -181,8 +188,6 @@ jobs:
           else
             echo "kernel.macho was not produced" | tee ../artifacts/MISSING.txt
           fi
-          cp out/uke/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf \
-             ../artifacts/ 2>/dev/null || true
           cp -r out/uke/logs ../artifacts/logs 2>/dev/null || true
           ls -l ../artifacts
 
@@ -195,11 +200,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # First full-config step: SHENG_PMGR + BOOT_PROGRESS + legacy display.
-  # Storage, trust cache and owner-root stay off until PMGR clears the early
-  # XNU SecurityLock path; this job keeps the archive chain to the minimum
-  # that the full kernel actually links.
-  full-pmgr:
+  full:
     runs-on: macos-latest
     timeout-minutes: 240
 
@@ -208,6 +209,36 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: UniXNU-uke
+
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: Allenwdk/UniXNU
+          ref: uke
+          path: UniXNU
+
+      - name: Record the UniXNU revision
+        id: base
+        working-directory: UniXNU
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Homebrew downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: brew-${{ runner.os }}-${{ hashFiles('UniXNU-uke/.github/workflows/build-kernel.yml') }}
+          restore-keys: brew-${{ runner.os }}-
+
+      - name: Restore the build tree
+        uses: actions/cache@v4
+        with:
+          path: |
+            UniXNU/out
+            UniXNU-uke/.cache
+          key: unixnu-out-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-${{ hashFiles('UniXNU-uke/board.toml', 'UniXNU-uke/feeds.toml', 'UniXNU-uke/configs/**', 'UniXNU-uke/scripts/**') }}
+          restore-keys: |
+            unixnu-out-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-
+            unixnu-out-${{ env.CACHE_SCHEMA }}-
 
       - name: Report the runner toolchain
         run: |
@@ -223,33 +254,27 @@ jobs:
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
 
-      - name: Check out UniXNU
-        uses: actions/checkout@v4
-        with:
-          repository: UniXNU/UniXNU
-          ref: main
-          path: UniXNU
-
-      - name: Select the full-minus-PMGR device configuration
-        working-directory: UniXNU
-        run: |
-          ./unixnu defconfig uke-full-minus-pmgr_defconfig -D ../UniXNU-uke
-          ./unixnu status
-
       - name: Fetch the Apple references
         working-directory: UniXNU
-        run: ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions -D ../UniXNU-uke
+        # IOStorageFamily supplies the public block-storage headers; the
+        # other references feed the kernel scripts and the archive builders.
+        run: |
+          ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions libpthread \
+                          corecrypto-2023 IOStorageFamily -D ../UniXNU-uke
 
       - name: Fetch the target IPSW members
         working-directory: UniXNU
         run: ./unixnu ipsw fetch -D ../UniXNU-uke
 
-      - name: Bootstrap kernel, prelinked candidate and compile records
+      - name: Bootstrap kernel and prelinked candidate
         working-directory: UniXNU
+        # CONFIG_XNU_BUILD_ARCHIVES is unset in bootstrap_defconfig, so this
+        # pass only produces the compile records and the prelinked candidate.
         run: |
           ./unixnu defconfig bootstrap_defconfig -D ../UniXNU-uke
           ./unixnu build kernel -D ../UniXNU-uke
           test -f out/uke/kernel/kernel.macho
+          test -f out/uke/kernel/kernel.json
           mkdir -p out/uke/tree/build/native-prelink
           cp out/uke/kernel/kernel.macho \
              out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.macho
@@ -260,20 +285,14 @@ jobs:
           cp out/uke/kernel/kernel.json \
              out/uke/tree/build/native-prelink/native-owner-ufs-cpu-desktop-v9-hid-init-candidate.json
           rm -f out/uke/kernel/kernel.macho out/uke/kernel/kernel.json
-
-      - name: Build the pinned corecrypto provider
-        working-directory: UniXNU
-        run: |
-          ./unixnu tree -D ../UniXNU-uke
-          workspace=out/uke/tree
-          git clone --quiet https://github.com/ONLYA/corecrypto-2023 "$workspace/refer/corecrypto-2023"
-          git -C "$workspace/refer/corecrypto-2023" checkout --quiet 11fba65b12d8830630e248dfa8344caf8b065f26
-          ( cd "$workspace" && python3 scripts/build-corecrypto-14.py )
-          ( cd "$workspace" && python3 scripts/build-corecrypto-14.py --namespace )
-          ls -l "$workspace/build/corecrypto-2023/"*.a
+          ls -l out/uke/tree/build/native-prelink/
 
       - name: Seed the display ABI observation cache
         working-directory: UniXNU
+        # audit-mobile-graphics-legacy.py accepts the recorded runtime
+        # observation hash from its previous output when the GDB dump was
+        # pruned. The observation is of the unchanged iPad7,1 original class,
+        # not of the native uke kernel; uke pins the same kernelcache as sheng.
         run: |
           mkdir -p out/uke/tree/build/display-analysis
           python3 - <<'PY'
@@ -284,43 +303,26 @@ jobs:
               p.write_text(json.dumps({'runtime_metadata_checkpoint_sha256': '3044c2beff552911605994c0dc7aa73182066cbb5aed0b396999ceeb5a96da2b'}) + '\n')
           PY
 
-      - name: Build ArmDTPlatform, ArmCpu, touch firmware and legacy display
+      - name: Stage the inputs the board archive list reads
         working-directory: UniXNU
         run: |
           workspace=out/uke/tree
           ( cd "$workspace" && python3 scripts/gen-touch-firmware.py )
-          ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmDTPlatform )
-          ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmCpu )
-          ( cd "$workspace" && python3 scripts/build-native-legacy-display.py )
-          ls -l "$workspace/build/armdt-platform/" "$workspace/build/armcpu/" \
-                "$workspace/build/native-legacy-display/"
-
-      - name: Stage the decompressed kernelcache for the PMGR audit
-        working-directory: UniXNU
-        run: |
-          mkdir -p out/uke/tree/.cache/firmware/kernelcache.macho
+          mkdir -p "$workspace/.cache/firmware/kernelcache.macho"
           source=$(find out -name 'kernelcache.decompressed' -print -quit)
           test -n "$source"
           echo "kernelcache: $source"
-          cp "$source" out/uke/tree/.cache/firmware/kernelcache.macho/kernelcache.release.ipad7.decompressed
+          cp "$source" "$workspace/.cache/firmware/kernelcache.macho/kernelcache.release.ipad7.decompressed"
 
-      - name: Build the SHENG PMGR archive
+      - name: Build and prelink the full kernel
         working-directory: UniXNU
+        # CONFIG_XNU_BUILD_ARCHIVES turns on the board archive list in
+        # board.toml: corecrypto, ArmDTPlatform, ArmCpu, NativeAES with the
+        # recorded original bindings, the public storage headers, the NativeUfs
+        # bring-up transport, mockfs, PMGR, pthread and the legacy display.
         run: |
-          workspace=out/uke/tree
-          ( cd "$workspace" && python3 scripts/build-sheng-platform-power.py )
-          test -f "$workspace/build/sheng-platform-power/libShengPlatformPower.a"
-          ls -l "$workspace/build/sheng-platform-power/"
-
-      - name: Build and prelink the full-minus-PMGR kernel
-        working-directory: UniXNU
-        run: |
-          # build-corecrypto-14.py keeps the linkable archive under
-          # build/corecrypto-2023; the cloned source directory is not a
-          # unixnu-managed refer module, and tree.assemble cannot unlink a
-          # directory on macOS.
-          rm -rf out/uke/tree/refer/corecrypto-2023
-          ./unixnu defconfig uke-full-minus-pmgr_defconfig -D ../UniXNU-uke
+          ./unixnu defconfig uke-full_defconfig -D ../UniXNU-uke
+          ./unixnu status
           ./unixnu build kernel -D ../UniXNU-uke
 
       - name: Record the result
@@ -336,13 +338,20 @@ jobs:
             echo "kernel.macho was not produced" | tee ../artifacts-full/MISSING.txt
           fi
           cp -r out/uke/logs ../artifacts-full/logs 2>/dev/null || true
+          for report in build/native-aes/bindings.json build/storage-abi/headers.json \
+                        build/native-ufs/compile.log build/native-legacy-display/build-report.json; do
+            if [ -f "out/uke/tree/$report" ]; then
+              mkdir -p "../artifacts-full/$(dirname "$report")"
+              cp "out/uke/tree/$report" "../artifacts-full/$report"
+            fi
+          done
           ls -l ../artifacts-full
 
-      - name: Upload the full-minus-PMGR kernel
+      - name: Upload the full kernel
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: uke-kernel-full-pmgr
+          name: uke-kernel-full
           path: artifacts-full/
           if-no-files-found: warn
           retention-days: 14

@@ -1,0 +1,8 @@
+# Extra sources of the uke build tree; the base feeds.toml supplies the rest.
+
+[[source]]
+name = "IOStorageFamily"
+kind = "refer"
+git = "https://github.com/apple-oss-distributions/IOStorageFamily.git"
+ref = "main"
+commit = "e45fbe30a7879e0b16e26dddb78538f1b00e0bff"

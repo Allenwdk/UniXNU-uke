@@ -35,6 +35,23 @@ windows = [
 
 [kernel]
 defconfig = "uke_defconfig"
+# Archive builders of the kernel step, in order. They run only for a configuration with
+# CONFIG_XNU_BUILD_ARCHIVES=y (configs/uke-full_defconfig), after the bootstrap pass has left the
+# compile records behind. Each entry is a script of the build tree with its arguments.
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "build-arm-driver.py ArmDTPlatform",
+  "build-arm-driver.py ArmCpu",
+  "build-arm-driver.py NativeAES",
+  "build-native-aes-bindings.py",
+  "prepare-storage-headers.py",
+  "build-arm-driver.py NativeUfs --unverified",
+  "build-mockfs-fixture.py",
+  "build-sheng-platform-power.py",
+  "build-libpthread-kernel.py",
+  "build-native-legacy-display.py",
+]
 
 [kernel.prelink]
 tool = "kits/NativePrelink/emit_prelink.py"
