@@ -75,7 +75,7 @@ Download the `uke-kernel` artifact. It contains:
   prelink;
 - `logs/` — the build logs.
 
-The workflow pins `UniXNU/UniXNU` at `64f5b76` (the current `origin/main` with
+The workflow tracks `UniXNU/UniXNU` `main` (the current `origin/main` with
 `UniXNUPkg` and `unixnu.toml`). Update the pin when the base repository moves.
 
 ## Runner and Xcode
