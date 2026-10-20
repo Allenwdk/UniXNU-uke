@@ -311,6 +311,11 @@ jobs:
       - name: Build and prelink the full-minus-PMGR kernel
         working-directory: UniXNU
         run: |
+          # build-corecrypto-14.py keeps the linkable archive under
+          # build/corecrypto-2023; the cloned source directory is not a
+          # unixnu-managed refer module, and tree.assemble cannot unlink a
+          # directory on macOS.
+          rm -rf out/uke/tree/refer/corecrypto-2023
           ./unixnu defconfig uke-full-minus-pmgr_defconfig -D ../UniXNU-uke
           ./unixnu build kernel -D ../UniXNU-uke
 
