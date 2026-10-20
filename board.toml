@@ -114,7 +114,7 @@ loader = "firmware"
 title = "uke first boot: source 4K XNU to console"
 dram_size = "0x80000000"             # SMEM RAM table observed on the device
 skip_setup_tool = "scripts/seed-data-skip-setup.py"   # used by --skip-setup
-panic_screen = true                  # patch panic() screen output into the payload copy of the kernel
+panic_screen = false                 # native XNU panic output; the custom screen needs Font.h
 kernel_args = [
   "-v",
   "serial=3",
@@ -148,7 +148,7 @@ kernel_args = [
 [payload.adt]
 tool = "scripts/make-uke-adt.py"
 chip_id = "207"
-owned_memory_size = "0x40000000"
+owned_memory_size = "0x10000000"     # largest contiguous free run on uke is ~326 MiB
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
 packed_data_ramdisk = true
@@ -159,7 +159,7 @@ unique_chip_id = "required"          # the platform seed is not stored in any re
 
 # The stock ABL powers the panel off when the device tree has no splash region, so add it.
 [bootimg.image]
-header_version = 0
+header_version = 4
 base           = 0x00000000
 kernel_offset  = 0x00008000
 tags_offset    = 0x01e00000
@@ -170,4 +170,14 @@ path = "/reserved-memory/splash_region"
 props = [
   { name = "label", type = "s", value = "cont_splash_region" },
   { name = "reg", type = "x", value = ["0x0", "0xe3940000", "0x0", "0x2b00000"] },
+]
+
+# The boot image has no ramdisk. The payload is the vendor_boot vendor ramdisk,
+# which the ABL loads at 0x1000000; UkeBootMemoryDxe publishes this range as
+# the FAT volume the boot manager scans.
+[[bootimg.dtb_node]]
+path = "/chosen"
+props = [
+  { name = "linux,initrd-start", type = "x", value = ["0x1000000"] },
+  { name = "linux,initrd-end", type = "x", value = ["0x6000000"] },
 ]

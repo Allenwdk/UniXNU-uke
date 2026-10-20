@@ -190,3 +190,141 @@ jobs:
           path: artifacts/
           if-no-files-found: warn
           retention-days: 14
+
+  # First full-config step: SHENG_PMGR + BOOT_PROGRESS + legacy display.
+  # Storage, trust cache and owner-root stay off until PMGR clears the early
+  # XNU SecurityLock path; this job keeps the archive chain to the minimum
+  # that the full kernel actually links.
+  full-pmgr:
+    runs-on: macos-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+        with:
+          path: UniXNU-uke
+
+      - name: Report the runner toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcode-select -p
+          xcrun -sdk iphoneos -find mig || echo 'mig not found for iphoneos'
+
+      - name: Install the host tools
+        run: |
+          brew install cmake ninja unifdef llvm mtools dtc
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: main
+          path: UniXNU
+
+      - name: Select the full-minus-PMGR device configuration
+        working-directory: UniXNU
+        run: |
+          ./unixnu defconfig uke-full-minus-pmgr_defconfig -D ../UniXNU-uke
+          ./unixnu status
+
+      - name: Fetch the Apple references
+        working-directory: UniXNU
+        run: ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions -D ../UniXNU-uke
+
+      - name: Fetch the target IPSW members
+        working-directory: UniXNU
+        run: ./unixnu ipsw fetch -D ../UniXNU-uke
+
+      - name: Bootstrap kernel, prelinked candidate and compile records
+        working-directory: UniXNU
+        run: |
+          ./unixnu defconfig bootstrap_defconfig -D ../UniXNU-uke
+          ./unixnu build kernel -D ../UniXNU-uke
+          test -f out/uke/kernel/kernel.macho
+          mkdir -p out/uke/tree/build/native-prelink
+          cp out/uke/kernel/kernel.macho \
+             out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.macho
+          cp out/uke/kernel/kernel.json \
+             out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.json
+          cp out/uke/kernel/kernel.macho \
+             out/uke/tree/build/native-prelink/native-owner-ufs-cpu-desktop-v9-hid-init-candidate.macho
+          cp out/uke/kernel/kernel.json \
+             out/uke/tree/build/native-prelink/native-owner-ufs-cpu-desktop-v9-hid-init-candidate.json
+          rm -f out/uke/kernel/kernel.macho out/uke/kernel/kernel.json
+
+      - name: Build the pinned corecrypto provider
+        working-directory: UniXNU
+        run: |
+          ./unixnu tree -D ../UniXNU-uke
+          workspace=out/uke/tree
+          git clone --quiet https://github.com/ONLYA/corecrypto-2023 "$workspace/refer/corecrypto-2023"
+          git -C "$workspace/refer/corecrypto-2023" checkout --quiet 11fba65b12d8830630e248dfa8344caf8b065f26
+          ( cd "$workspace" && python3 scripts/build-corecrypto-14.py )
+          ( cd "$workspace" && python3 scripts/build-corecrypto-14.py --namespace )
+          ls -l "$workspace/build/corecrypto-2023/"*.a
+
+      - name: Seed the display ABI observation cache
+        working-directory: UniXNU
+        run: |
+          mkdir -p out/uke/tree/build/display-analysis
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('out/uke/tree/build/display-analysis/mobile-graphics-legacy-abi.json')
+          if not p.exists():
+              p.write_text(json.dumps({'runtime_metadata_checkpoint_sha256': '3044c2beff552911605994c0dc7aa73182066cbb5aed0b396999ceeb5a96da2b'}) + '\n')
+          PY
+
+      - name: Build ArmDTPlatform, ArmCpu, touch firmware and legacy display
+        working-directory: UniXNU
+        run: |
+          workspace=out/uke/tree
+          ( cd "$workspace" && python3 scripts/gen-touch-firmware.py )
+          ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmDTPlatform )
+          ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmCpu )
+          ( cd "$workspace" && python3 scripts/build-native-legacy-display.py )
+          ls -l "$workspace/build/armdt-platform/" "$workspace/build/armcpu/" \
+                "$workspace/build/native-legacy-display/"
+
+      - name: Build the SHENG PMGR archive
+        working-directory: UniXNU
+        run: |
+          workspace=out/uke/tree
+          ( cd "$workspace" && python3 scripts/build-sheng-platform-power.py )
+          test -f "$workspace/build/sheng-platform-power/libShengPlatformPower.a"
+          ls -l "$workspace/build/sheng-platform-power/"
+
+      - name: Build and prelink the full-minus-PMGR kernel
+        working-directory: UniXNU
+        run: |
+          ./unixnu defconfig uke-full-minus-pmgr_defconfig -D ../UniXNU-uke
+          ./unixnu build kernel -D ../UniXNU-uke
+
+      - name: Record the result
+        working-directory: UniXNU
+        if: always()
+        run: |
+          mkdir -p ../artifacts-full
+          if [ -f out/uke/kernel/kernel.macho ]; then
+            cp out/uke/kernel/kernel.macho ../artifacts-full/
+            cp out/uke/kernel/kernel.json ../artifacts-full/ 2>/dev/null || true
+            shasum -a 256 out/uke/kernel/kernel.macho | tee ../artifacts-full/kernel.macho.sha256
+          else
+            echo "kernel.macho was not produced" | tee ../artifacts-full/MISSING.txt
+          fi
+          cp -r out/uke/logs ../artifacts-full/logs 2>/dev/null || true
+          ls -l ../artifacts-full
+
+      - name: Upload the full-minus-PMGR kernel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uke-kernel-full-pmgr
+          path: artifacts-full/
+          if-no-files-found: warn
+          retention-days: 14
