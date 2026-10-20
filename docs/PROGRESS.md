@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-10-21
 >
-> **当前一句话状态：** 阶段 1–5 已到达；XNU 已进入（绿条）。`SecurityLock ... LockCapsuleInterface` 是 **UEFI 输出**，不是 XNU 挂点；绿条后 XNU 在等根设备。当前阶段是 **阶段 6：原生 UFS/存储 + root**，不是 SEP。
+> **当前一句话状态：** 阶段 1–5 已到达；阶段 6 的 **full 内核已完整编译并 prelink 成功**（UFS + AES + mockfs + PMGR + pthread + legacy display），产物 52,121,600 B / sha256 `e1119e44…`。设备未连接，存储/root 的实机路径尚未验证；`SecurityLock ... LockCapsuleInterface` 仍是 UEFI 输出，不是 XNU 挂点。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -16,7 +16,7 @@
   - UEFI、UniXNU 菜单、payload、DarwinBoot、XNU 入口都已跑通。
   - 绿条 = 内核入口代码已执行；之后 XNU 在等根设备。
   - sheng 在同一画面也是等根设备，补上原生 UFS/存储驱动后继续（参考 `blu-sharky/sheng-ipados@6530e65`，仓库当前不可公开访问）。
-  - 所以下一步是 **UFS/存储/root**，不是继续追 `AppleSEPManager`/SEP。
+  - **full 内核已完成编译里程碑**：`uke-full_defconfig` 链接了 NativeUfs、NativeAES、mockfs、PMGR、pthread 和 legacy display，并成功 prelink；下一步是实机存储/root，而不是继续追 SEP。
 
 ---
 
@@ -29,7 +29,7 @@
 | 3. 负载 | ✅ 完成 | `unixnu.toml`、`xnu` 条目、80 MiB payload、ADT 都被识别；initrd 对齐问题修复后出现 `uke first boot: source 4K XNU to console`。 |
 | 4. DarwinBoot | ✅ 完成 | `Exiting boot services`、entry pa、window 0x10000000、video base 0xE3940000、CurrentEL 1、SCTLR/ID_AA64 打印；绿条出现。 |
 | 5. 内核入口 | ✅ 到达 | 绿条后 XNU 已运行；`SecurityLock ... LockCapsuleInterface` 是 UEFI 输出，不是内核挂点。XNU 现在等根设备。 |
-| 6. 存储与根卷 | ⏳ **当前** | `NativeUfs` 尚未链接；`native-ufs-root=1` 尚未启用；`userdata`/root UUID/OS+SystemOS 尚未接通。 |
+| 6. 存储与根卷 | 🟡 编译完成，待实机 | `uke-full_defconfig` 已链接 `NativeUfs` + `NativeAES` + mockfs + PMGR + pthread + legacy display，CI run `39493263420` 绿色；UFS 块类已绑定到固定 prelink candidate。`userdata`/root UUID/APFS 实机路径待设备。 |
 | 7. 用户态 | ❌ 未开始 | launchd、Data 卷、SpringBoard/设置界面、显示服务均未到。 |
 
 ---
@@ -38,19 +38,22 @@
 
 ### 3.1 仓库与板级配置
 
-- 设备仓库：`Allenwdk/UniXNU-uke`；UEFI：`uefi-uke`；核心：`UniXNU` upstream `main`。
+- 设备仓库：`Allenwdk/UniXNU-uke`；UEFI：`uefi-uke`；核心：`Allenwdk/UniXNU` 的 `uke` 分支（已同步 upstream `main`）。
 - `board.toml`：
   - IPSW：iPad7,1 iPadOS 17.7.11 (21H461)，kernelcache pin `f18b4df...`。
   - `[userdata]`：`first_lba = 0x2d3000`、`last_lba = 0x3b147fa`、`lba_bytes = 4096`。
   - `[payload]`：`volume = "UKEESP"`、`size_mib = 80`、`dram_size = 0x80000000`、`panic_screen = false`。
   - `[payload.adt]`：`owned_memory_size = 0x10000000`（256 MiB）、`chip_id = 207`、`root_match_volume_uuid = 04769D26-2CA0-4825-B443-E2E5F88300F2`。
   - `[[bootimg.dtb_node]]`：splash `0xe3940000 + 0x2b00000`；`/chosen` initrd `0x1000000..0x6000000`（ABL 运行时会用实际地址覆盖）。
+  - `[kernel] archives`：full 构建的 13 个 archive builder；只有 `CONFIG_XNU_BUILD_ARCHIVES=y` 的配置会执行。
+  - `[gpu]`：Adreno 732 的 chip id、寄存器窗口、SID、GMEM/GMU 参数和固件候选名（来自实机 DT 和 mainline catalog）。
 - `configs/`：
   - `uke_defconfig`：首控制台（corecrypto、ArmDTPlatform、ArmCpu、timer、PAN、panic region、legacy display）。
-  - `uke-full_defconfig`：sheng 派生 full 配置（UFS/AES/Virtio/RamBlock/VerifiedRoot/owner-root/PMGR/BOOT_PROGRESS/Adreno）。
+  - `uke-full_defconfig`：**可复现的 stage-6 full 配置**（corecrypto、pthread、UFS bring-up、AES recorded bindings、storage headers、mockfs、PMGR、legacy display）。
+  - `uke-full-plus_defconfig`：sheng parity；保留 VirtIO/RamBlock、verified root、owner-root、BOOT_PROGRESS，等待 live audit/策略包。
   - `uke-full-minus-pmgr_defconfig`：只启用 PMGR + legacy display，用于验证 PMGR 不是 SEP 阻塞点。
-  - `bootstrap_defconfig`：bootstrap/compile records + prelink candidate。
-- 设备数据：UFS `0x1d84000`、compatible `qcom,ufshc`、stream ID `0x60`；触摸 NT36532；面板 O82 3200×2136；splash `0xe3940000`。
+  - `bootstrap_defconfig`：bootstrap/compile records + prelink candidate；不执行 board archive list。
+- 设备数据：UFS `0x1d84000`、compatible `qcom,ufshc`、stream ID `0x60`；触摸 NT36532；面板 O82 3200×2136；splash `0xe3940000`；GPU `0x43030b00` / `Adreno732`。
 
 ### 3.2 UEFI 固件（uefi-uke）
 
@@ -71,24 +74,25 @@
 
 ### 3.4 内核与 CI
 
+- 仓库已同步：`Allenwdk/UniXNU` 的 `uke` 分支 = upstream `main` + uke 驱动改动；fork 的 `main` 也已快进到 upstream `main`。CI 使用 fork 的 `uke` 分支。
 - GitHub Actions `build-kernel.yml`：
-  - `kernel` job：bootstrap → corecrypto → ArmDTPlatform/ArmCpu → legacy display → first-console kernel。
-  - `full-pmgr` job：bootstrap → corecrypto → legacy display → `libShengPlatformPower.a` → `uke-full-minus-pmgr` 内核。
-  - 已修复的 CI 问题：
-    - corecrypto 源码目录不是 unixnu managed refer module，`tree.assemble` 在 macOS 上不能 unlink 目录 → 最终构建前 `rm -rf refer/corecrypto-2023`。
-    - PMGR audit 需要 `kernelcache.release.ipad7.decompressed` → 从 `kernelcache.decompressed` staging 到 `.cache/firmware/kernelcache.macho/`。
-    - `BOOT_PROGRESS` 强制要求 UFS/owner-root/Virtio/source-corecrypto → PMGR-only 阶段先关闭。
-    - `SOURCE_PTHREAD` 需要未构建的 `libpthread_kernel.a` → PMGR-only 阶段先关闭。
-    - Adreno 关闭时 `NativeLegacyDisplay` 引用 4 个 GPU fallback 符号 → 在 `package/LegacyDisplayStubs.c` 补 weak stubs。
-    - workflow 触发路径加入 `package/**`。
-- 成功 run：`39472864159`（full-pmgr）。
-- 成功产物：`uke-kernel-full-pmgr/kernel.macho`，51,994,624 B，sha256 `d2b28ced43e055bde0f234fdc0db18d60fba64118a7dbbdd1cf15847522d37e6`。
-- 已构建的 full-pmgr payload/boot：
-  - `out/uke/payload/payload.img`（80 MiB，5 秒菜单，256 MiB owned memory）
-  - `/home/allenwdk/uke-port/data/vendor_boot_uke_full.img`（85,782,528 B）
-  - `out/uke/boot/boot.img`（v4 无 ramdisk，sha256 `faa65f6b6dcca065e126e9f23de94334f21300207250086d450727d73e9761c1`）
+  - `kernel` job：bootstrap → first-console archives（corecrypto、ArmDTPlatform、ArmCpu、legacy display）→ `uke_defconfig`。
+  - `full` job：缓存恢复 → bootstrap → **13 个 board archives** → `uke-full_defconfig` 链接 + prelink。
+  - 缓存：`UniXNU/out` + `UniXNU-uke/.cache`（key 含 UniXNU commit 和 board/config/scripts 哈希），以及 Homebrew 下载缓存；`concurrency` 会取消旧 run。
+  - 构建开关：`CONFIG_XNU_BUILD_ARCHIVES=y` 才执行 board archive list；`bootstrap_defconfig` 不执行，避免 archive builder 依赖尚未生成的 prelink candidate。
+  - 依赖拉取：corecrypto 改为 unixnu feed（不再手动 clone）；`IOStorageFamily` 作为 device feed，并加入 unixnu 的 kernel REFERENCES。
+  - UFS unverified 构建：设备 override 修 `timerTicks`/`native_ufs_read_ticks` 的守卫，并把 GCC UFS 窗口改成 uke 的 `0x177000`/`0x19e000`。
+  - UFS 块类符号：新增 `build-ufs-original-bindings.py`，从固定 prelink candidate 推导 190-slot vtable、metaclass、构造/析构地址，补进 `libNativeUfs.a`。
+  - PMGR audit 需要 `kernelcache.release.ipad7.decompressed` → staging 到 `.cache/firmware/kernelcache.macho/`。
+  - Adreno 关闭时 `NativeLegacyDisplay` 的 4 个 GPU fallback 符号由 `package/LegacyDisplayStubs.c` 提供。
+- 成功 run：`39493263420`（`kernel` 与 `full` 均绿）。
+- full 产物：`uke-kernel-full/kernel.macho`，**52,121,600 B**，sha256 `e1119e44f39143b02fa84679e51193f41ec9568fa1f65b7517af050adc82616e`。
+- archive 证据：`out/uke/logs/archive-01..13-*.log`；UFS binder 输出 `PASS: 11 NativeUfs bindings ... 176 kernel method bindings, 190 slots`；AES 使用 recorded bindings。
+- 旧 full-pmgr 产物保留：51,994,624 B，sha256 `d2b28ced43e055bde0f234fdc0db18d60fba64118a7dbbdd1cf15847522d37e6`。
 
 ### 3.5 实机结果
+
+> 2026-10-21：设备未连接，本轮没有新的实机测试；以下为阶段 1–5 的既有结果。
 
 - UniXNU 菜单出现；payload 被识别；`xnu` 条目出现。
 - DarwinBoot 打印 `entry pa`、`args pa`、`window 0x10000000`、`video base 0xE3940000 3200x2136 row 12800 bytes 32 bpp`、`entry words`、`CurrentEL 1`、`SCTLR_EL1`、`TCR_EL1`、`ID_AA64MMFR0_EL1`、`ID_AA64PFR0_EL1`。
@@ -102,11 +106,12 @@
 
 ### 4.1 阶段 6：UFS / 存储 / root
 
-- `NativeUfs` 尚未链接进内核。
-- `native-ufs-root=1` 尚未加入 payload。
-- `userdata` 镜像尚未构建/刷入；`root_match_volume_uuid`、OS/SystemOS 窗口尚未在 uke 上验证。
-- `NativeAES`、`VerifiedRoot`/owner-root、APFS 这条 root 链尚未接通。
-- UFS 控制器地址 `0x1d84000`、compatible `qcom,ufshc` 已有；但 uke 的 **GCC 时钟/复位/PHY/PMGR** 与 sheng (SM8550) 不同，需要逐项确认。
+- **编译已完成**：`NativeUfs`、`NativeAES`、mockfs、PMGR、pthread 和 legacy display 都已链接进 `uke-full_defconfig`，prelink 成功。
+- `native-ufs-root=1`、`userdata` 镜像、root UUID、OS/SystemOS 窗口仍要在实机验证；设备当前未连接。
+- UFS 块读取目前是 **unverified bring-up**：块类已绑定到原始 class，但每次读不做 policy 校验。认证读取需要 verified-root policy bundle（由真实 OS/SystemOS DMG 生成）和 live storage ABI audit。
+- UFS GCC 窗口已按 uke/SM7675 改为 `0x177000`/`0x19e000`；UFS PHY、时钟/复位和 PMGR 的实机行为仍未验证。
+- `native-ufs-probe=1` 才触碰 MMIO；当前 payload 还没有加 `native-ufs-root=1`。
+- VerifiedRoot/owner-root、VirtIO/RamBlock、BOOT_PROGRESS 仍被 live audit/策略包门控，见 `uke-full-plus_defconfig`。
 
 ### 4.2 参考实现
 
@@ -116,22 +121,23 @@
 ### 4.3 其他未做
 
 - `panic_screen=true` 因 `Font.h` 路径问题暂时关闭；需要修复后开启，以便捕获真正的 panic。
-- `boot-progress=1/2` 需要 full 配置（UFS/owner/Virtio/source-corecrypto），当前 PMGR-only 不能开。
+- `boot-progress=1/2` 仍需要 audited UFS/owner-root + VirtIO + source-corecrypto；当前 full 配置没有这些，所以保持关闭。
 - `sheng-platform-stage`、`sheng-aks=1`、`amfi_get_out_of_my_way=1`、`cs_debug`、`kextlog` 等 boot args 尚未系统测试；它们不是当前 root 阻塞的优先项。
-- Adreno 732、触摸、Wi-Fi/蓝牙、USB、音频、传感器、电池、suspend/resume 均未做。
+- GPU 只完成了板级数据/校验（`docs/GPU-PORT.md`）；Adreno 732 固件和功率路径未收集，`CONFIG_XNU_NATIVE_ADRENO` 仍关闭。
+- 触摸、Wi-Fi/蓝牙、USB、音频、传感器、电池、suspend/resume 均未做。
 - `owned_memory_size` 目前 256 MiB；sheng 用 4.75 GiB。uke 的 DT reserved-memory 把最大连续块压到 326 MiB；如需更大窗口，要裁剪 reserved-memory，而不是只调大 `ADD_LIMIT`。
-- `first-console` CI job 的最终状态需要在最新修改后单独确认；`full-pmgr` 已绿。
+- `kernel` 与 `full` 两个 CI job 已在 run `39493263420` 同时绿。
 
 ---
 
 ## 5. 下一步（按优先级）
 
-1. **拿到/确认 `sheng-ipados@6530e65` 的 UFS/存储实现**（diff 或关键文件）。
-2. **构建 full 配置**：`NativeUfs` + `NativeAES` + `NativeVirtioBlock` + `NativeRamBlock` + `VerifiedRoot` + owner-root + `BOOT_PROGRESS`；补齐对应 archive/audit（`IOStorageFamily`、`IOAES`、verified-root 数据）。
-3. **payload 加 `native-ufs-root=1`**，保留 `sheng-pmgr=2`；先验证 UFS probe/块设备，再挂 root。
-4. **准备 userdata**：`build userdata`、`root_match_volume_uuid`、OS/SystemOS 窗口，确认 uke 的 Data 卷 UUID。
-5. **阶段 7**：launchd、Data 卷、SpringBoard/设置界面；之后再处理显示/触摸/GPU。
-6. 修 `Font.h` 并开启 `panic_screen`；在 full 配置可用后开 `boot-progress`。
+1. **设备连接后构建 full payload/boot**：用 `uke-kernel-full` 的 `kernel.macho` 重建 payload，加 `native-ufs-root=1`，保留 `sheng-pmgr=2`；先验证 UFS probe/块设备，再挂 root。
+2. **准备 userdata/root**：`build userdata`、`root_match_volume_uuid`、OS/SystemOS 窗口，确认 uke 的 Data 卷 UUID。
+3. **认证读取/owner-root**：拿到 OS/SystemOS DMG 后生成 verified-root policy bundle，补 live storage ABI snapshot，再开 `VERIFIED_ROOT_PROBE`/`OWNER_ROOT_*`/`BOOT_PROGRESS`（`uke-full-plus_defconfig`）。
+4. **GPU**：按 `docs/GPU-PORT.md` 从 vendor 分区拉 A732 固件，改 `build-native-adreno-kits.py` 的 pin/路径，加 Adreno archives，再开 `CONFIG_XNU_NATIVE_ADRENO`。
+5. **阶段 7**：launchd、Data 卷、SpringBoard/设置界面；之后再处理显示/触摸/GPU 运行时。
+6. 修 `Font.h` 并开启 `panic_screen`。
 7. 每次测试后恢复 Android，并更新本文档。
 
 ---
@@ -143,8 +149,10 @@
 | 产物 | 路径 | 说明 |
 |---|---|---|
 | UEFI FD | `uefi-uke/Build/ukePkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd` | 3 MiB，含 initrd 对齐/2 GiB/状态通道修复 |
-| full-pmgr 内核 | `/home/allenwdk/uke-port/ci/uke-kernel-full-pmgr/kernel.macho` | 51,994,624 B，sha256 `d2b28c...` |
-| payload | `out/uke/payload/payload.img` | 80 MiB，5 秒菜单，256 MiB owned memory |
+| **full 内核** | CI artifact `uke-kernel-full/kernel.macho` | **52,121,600 B，sha256 `e1119e44f39143b02fa84679e51193f41ec9568fa1f65b7517af050adc82616e`** |
+| full 内核（本地副本） | `/home/allenwdk/uke-port/ci/uke-kernel-full/kernel.macho` | 下载后自行保存；payload 用它重建 |
+| 旧 full-pmgr 内核 | `/home/allenwdk/uke-port/ci/uke-kernel-full-pmgr/kernel.macho` | 51,994,624 B，sha256 `d2b28c...` |
+| payload | `out/uke/payload/payload.img` | 80 MiB，5 秒菜单，256 MiB owned memory（旧 full-pmgr payload） |
 | vendor_boot | `/home/allenwdk/uke-port/data/vendor_boot_uke_full.img` | 85,782,528 B，80 MiB payload + full DTB |
 | boot image | `out/uke/boot/boot.img` | v4，无 ramdisk，sha256 `faa65f6b...` |
 | stock boot/vendor | `/home/allenwdk/uke-port/data/boot_a.img`、`vendor_boot_a.img` | 恢复 Android 用 |
@@ -182,10 +190,11 @@ fastboot reboot
 
 ### 6.3 CI
 
-- `workflow_dispatch` 或 push 到 `main`（触发路径见 workflow）。
-- `full-pmgr` artifact：`uke-kernel-full-pmgr`。
-- 最近成功 run：`39472864159`。
-- 日志：`out/uke/logs/kernel.log`、`prelink.log`；artifact 内 `logs/`。
+- `workflow_dispatch` 或 push 到 `main`（触发路径见 workflow，含 `drivers/**`、`kits/**`）。
+- artifacts：`uke-kernel`（first-console）和 `uke-kernel-full`（stage-6 full）。
+- 最近成功 run：`39493263420`（两个 job 同时绿）。
+- 缓存：`UniXNU/out` + `UniXNU-uke/.cache` + Homebrew 下载；第二次运行会复用 bootstrap 对象，冷启动约 15–17 分钟，缓存命中后约 8–10 分钟。
+- 日志：`out/uke/logs/kernel.log`、`prelink.log`、`archive-01..13-*.log`；artifact 内 `logs/`。
 
 ---
 
@@ -197,9 +206,13 @@ fastboot reboot
 - **`NO WINDOW`**：DarwinBoot 要 1 GiB 连续窗口；uke 最大连续块只有 326 MiB；`owned_memory_size` 必须降到 256 MiB，`ADD_LIMIT` 提到 2 GiB 以保留更大空闲块。
 - **`LockCapsuleInterface` 是 UEFI 输出**：不要把它当成 XNU/SEP 挂点；绿条后 XNU 在等根设备。
 - **`AppleSEPManager` 是误导**：预链接内核里有该 kext，但 sheng 同类画面最终是等根设备；不要先做 SEP 排除。
-- **corecrypto**：源码目录不是 unixnu refer module，最终 tree.assemble 前要删掉；archive 在 `build/corecrypto-2023`。
-- **`BOOT_PROGRESS`**：要求 UFS/owner/Virtio/source-corecrypto；PMGR-only 不能开。
-- **`SOURCE_PTHREAD`**：需要 `libpthread_kernel.a`；PMGR-only 先关。
+- **corecrypto**：现在是 unixnu feed（`refer/corecrypto-2023`，pinned `11fba65…`），`prepare` 会自动拉取；不再手动 clone，也不需要 `rm -rf`。
+- **`IOStorageFamily`**：作为 device `feeds.toml` 的 refer source（pinned `e45fbe3…`），并加入 unixnu 的 kernel REFERENCES，`prepare` 会拉取并链接进 tree。
+- **`CONFIG_XNU_BUILD_ARCHIVES`**：board archive list 只在配置打开时执行；bootstrap 和 first-console 不执行，避免依赖尚未生成的 prelink candidate。
+- **UFS unverified 构建**：`build-arm-driver.py NativeUfs --unverified` 跳过 `NATIVE_VERIFIED_BLOCK`；设备 override 把 `timerTicks`/`native_ufs_read_ticks` 移出 verified 守卫，并把 GCC UFS 窗口改为 uke 的 `0x177000`/`0x19e000`。
+- **UFS 块类绑定**：`build-ufs-original-bindings.py` 从固定 prelink candidate 推导 190-slot vtable、metaclass、构造/析构，生成 `libNativeUfs.a` 的 `original-bindings.o`；这是 bring-up 绑定，不是 live-qualified audit。
+- **CI 缓存 key**：包含 UniXNU commit + `board.toml`/`feeds.toml`/`configs/**`/`scripts/**` 哈希；改这些文件会换主 key，但 `restore-keys` 仍会复用旧 `out/` 树。`drivers/**` 不影响 bootstrap 对象，故不在 key 里。
+- **`BOOT_PROGRESS`**：仍然要求 audited UFS/owner-root + VirtIO + source-corecrypto；full 配置保持关闭。
 - **Adreno 关闭**：`NativeLegacyDisplay` 需要 4 个 GPU fallback weak stubs。
 - **`panic_screen`**：`patch-xnu-entry-probe.py` 需要 `Font.h`；当前关闭，修好后再开。
 - **`owned_memory_size`**：sheng 4.75 GiB，uke 256 MiB；不是越大越好，受 DT reserved-memory 碎片限制。
@@ -234,6 +247,12 @@ fastboot reboot
 | 2026-10-21 | 恢复 Android | stock boot/vendor 刷回；ADB 正常 |
 | 2026-10-21 | 参考文档/sheng 页面 | 确认 `LockCapsule` 是 UEFI 输出；sheng 同类画面等根设备；`sheng-pmgr=2` 是 native UFS root 必要条件 |
 | 2026-10-21 | 本文档建立 | 记录阶段 1–5 完成、阶段 6 当前、下一步 UFS/root |
+| 2026-10-21 | 同步仓库/fork | `Allenwdk/UniXNU` `uke` 合入 upstream `main`（15 commits）并推送；fork `main` 快进；CI 改用 fork `uke` |
+| 2026-10-21 | full 配置/archives | `CONFIG_XNU_BUILD_ARCHIVES`、13 个 archive builder、`IOStorageFamily` feed、AES recorded bindings |
+| 2026-10-21 | UFS bring-up | 设备 override 修 tick 守卫 + GCC `0x177000`/`0x19e000`；`build-ufs-original-bindings.py` 生成块类绑定 |
+| 2026-10-21 | full CI 成功 | run `39493263420` 两 job 绿；`kernel.macho` 52,121,600 B，sha256 `e1119e44…` |
+| 2026-10-21 | CI 缓存 | `out/` + `.cache` + Homebrew 缓存；`concurrency` 取消旧 run；冷/热启动约 15–17 / 8–10 分钟 |
+| 2026-10-21 | GPU 准备 | A732 板级数据写入 `board.toml [gpu]`；`check-uke-gpu.py` 对照实机 DTB 通过；`docs/GPU-PORT.md` 记录剩余固件/功率输入 |
 
 ---
 
@@ -241,9 +260,14 @@ fastboot reboot
 
 - UniXNU porting：https://unixnu.com/porting/
 - Bring-up order：https://unixnu.com/porting/bring-up
+- Drivers overview：https://unixnu.com/drivers/overview
+- Adreno 740 driver：https://unixnu.com/drivers/native-adreno
 - Boot arguments：https://unixnu.com/xnu/boot-arguments
 - Debugging and logs：https://unixnu.com/guide/debugging
 - sheng device page：https://unixnu.com/devices/sheng
+- sheng 官方设备仓库：https://github.com/UniXNU/UniXNU-sheng
 - sheng-ipados 参考 commit：`blu-sharky/sheng-ipados@6530e65`（当前仓库不可访问）
 - 本设备仓库：https://github.com/Allenwdk/UniXNU-uke
+- 本设备核心 fork：https://github.com/Allenwdk/UniXNU（`uke` 分支）
 - CI：`.github/workflows/build-kernel.yml`
+- GPU 准备：`docs/GPU-PORT.md`

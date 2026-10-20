@@ -341,7 +341,8 @@ jobs:
           fi
           cp -r out/uke/logs ../artifacts-full/logs 2>/dev/null || true
           for report in build/native-aes/bindings.json build/storage-abi/headers.json \
-                        build/native-ufs/compile.log build/native-legacy-display/build-report.json; do
+                        build/native-ufs/bindings.json build/native-ufs/compile.log \
+                        build/native-legacy-display/build-report.json; do
             if [ -f "out/uke/tree/$report" ]; then
               mkdir -p "../artifacts-full/$(dirname "$report")"
               cp "out/uke/tree/$report" "../artifacts-full/$report"

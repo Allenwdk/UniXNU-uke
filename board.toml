@@ -54,6 +54,36 @@ archives = [
   "build-native-legacy-display.py",
 ]
 
+# Adreno 732 (uke) board values for the native GPU driver. The driver currently
+# knows the Adreno 740; these are the values a port needs, taken from the live
+# uke DT. scripts/check-uke-gpu.py compares them with a device DT dump and
+# reports the firmware files the vendor partition must supply.
+[gpu]
+model = "Adreno732"
+chip_id = "0x43030b00"
+compatible = "qcom,adreno-gpu-gen7-11-0"
+family = "ADRENO_7XX_GEN2"
+gpu_base = "0x3d00000"
+gpu_size = "0x40000"
+gmu_base = "0x3d68000"
+gmu_size = "0x37000"
+gmu_pdc_base = "0xb280000"
+gmu_pdc_size = "0x10000"
+smmu_base = "0x3da0000"
+smmu_size = "0x40000"
+sid_user = 0x00
+sid_secure = 0x02
+sid_gmu = 0x05
+gmem_bytes = "0x180000"          # 1.5 MiB, the 0x43030c00 sibling's catalog entry
+gmu_chip_id = "0x70f0000"
+gmu_cgc_mode = "0x00020222"
+preempt_record_bytes = "0x418000"  # 4192 KiB
+# The vendor tree ships either the gen71500 names used by the mainline catalog
+# entry above this chip id, or A732-named copies. The first existing file wins.
+firmware_sqe = ["gen71500_sqe.fw", "a732_sqe.fw"]
+firmware_gmu = ["gen71500_gmu.bin", "a732_gmu.bin"]
+firmware_zap = ["gen71500_zap.mbn", "a732_zap.mbn", "a732_zap.mdt"]
+
 [kernel.prelink]
 tool = "kits/NativePrelink/emit_prelink.py"
 kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"

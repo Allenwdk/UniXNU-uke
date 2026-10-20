@@ -5,13 +5,18 @@ Device repository for the Xiaomi Pad 7 / POCO Pad X1 (`uke`, SM7675).
 Stages 1–5 are reached: the UEFI firmware, the UniXNU menu, the payload,
 DarwinBoot and the XNU kernel entry (green bar) work on the stock ABL. After
 the green bar XNU waits for the root device; `SecurityLock ...
-LockCapsuleInterface` is UEFI output, not the kernel hang. Stage 6 (native
-UFS/storage + userdata/root) is next.
+LockCapsuleInterface` is UEFI output, not the kernel hang.
+
+Stage 6 now **compiles**: `uke-full_defconfig` builds the 4 KiB XNU with source
+corecrypto, pthread, NativeUfs, NativeAES, mockfs, PMGR, the public storage
+headers and the GOP legacy display, and prelinks it into `uke-kernel-full`.
+The device is not connected yet, so the storage/root runtime path is untested.
 
 Progress, remaining work and the update rule: **[docs/PROGRESS.md](docs/PROGRESS.md)**.
-The first-console kernel and the PMGR-only full kernel are built in GitHub
-Actions; the payload and boot image are built on Linux. The userdata image
-still needs macOS `hdiutil` (or a Linux port of the DMG conversion).
+The kernels are built in GitHub Actions with a cached `out/` tree; the payload
+and boot image are built on Linux. The userdata image still needs macOS
+`hdiutil` (or a Linux port of the DMG conversion). GPU port preparation and the
+A732 values are in **[docs/GPU-PORT.md](docs/GPU-PORT.md)**.
 
 ## Layout
 
@@ -21,20 +26,30 @@ still needs macOS `hdiutil` (or a Linux port of the DMG conversion).
   corecrypto, `ArmDTPlatform`, `ArmCpu`, arch timer, PAN, panic region and the
   GOP legacy display. No UFS, AES, VirtIO, RamBlock, PMGR, Adreno or owner-root
   stack.
-- `configs/uke-full_defconfig` — the full sheng-derived configuration for
-  later stages.
+- `configs/uke-full_defconfig` — the reproducible stage-6 full configuration:
+  corecrypto, pthread, NativeUfs (bring-up transport), NativeAES with the
+  recorded original bindings, storage headers, mockfs, PMGR, arch timer, PAN,
+  panic region and the GOP legacy display. `CONFIG_XNU_BUILD_ARCHIVES=y` runs
+  the board archive list.
+- `configs/uke-full-plus_defconfig` — sheng parity: the full set plus the
+  storage ABI probes, verified root, VirtIO/RamBlock and owner-root. It needs
+  live storage metadata, signed policy bundles and the Adreno 732 firmware, so
+  it is not built by CI.
 - `configs/uke-full-minus-pmgr_defconfig` — PMGR + legacy display only; used
   to show that PMGR is not the root-device blocker.
 - `configs/bootstrap_defconfig` — no-device-archive bootstrap pass: compile
-  records plus the prelinked candidate the legacy display ABI builder needs.
+  records plus the prelinked candidate the legacy display ABI builder and the
+  UFS binder need.
 - `docs/PROGRESS.md` — current bring-up stage, completed work, remaining work,
   artifacts and the update rule. Keep it current after every CI/hardware run.
+- `docs/GPU-PORT.md` — Adreno 732 values, the A740/A732 differences and the
+  firmware the vendor partition must supply.
 - `scripts/build-xnu-4k-baseline.sh` — base script plus a
   `native_legacy_display_probe` logging stub that is used only when
   `NATIVE_LEGACY_DISPLAY` is off (the bootstrap pass).
 - `.github/workflows/build-kernel.yml` — the CI version of
-  `docs/MACOS-BUILD.md`: bootstrap → corecrypto → ArmDTPlatform / ArmCpu →
-  legacy display → first-console kernel + prelink.
+  `docs/MACOS-BUILD.md`: bootstrap → cached archive chain → first-console or
+  full kernel + prelink. The `full` job uses the board archive list.
 - `scripts/make-uke-adt.py` — XNU Apple device tree generator. GIC, UFS,
   timebase and DRAM base are the values read from the live stock DT; the root
   compatible is `xiaomi,uke` / `qcom,sm7675`.
@@ -99,13 +114,14 @@ cd UniXNU
 
 The CI has two kernel jobs. `uke-kernel` is the first-console kernel:
 BootShim/UEFI, UniXNU, the payload `xnu` entry, DarwinBoot, then XNU with the
-GOP legacy display. `uke-kernel-full-pmgr` adds `libShengPlatformPower.a` to
-the same path. Both reach the XNU entry (green bar); after it XNU waits for
-the root device. UFS/AES/owner-root are intentionally off in these two jobs,
-so storage/root is the next stage, not a missing-provider panic. See
-`docs/PROGRESS.md` for the current state and `KERNEL-BUILD.md` for the
-bootstrap/candidate/display sequence and the Xcode 26 requirement
-(`macos-14` / Xcode 15.4 fails with `-mach_msg2` and MIG).
+GOP legacy display. `uke-kernel-full` is the stage-6 kernel: the same bootstrap
+plus the board archive chain (corecrypto, ArmDTPlatform, ArmCpu, NativeAES with
+the recorded original bindings, storage headers, the NativeUfs bring-up
+transport with the original block-class bindings, mockfs, PMGR, pthread and the
+legacy display). Both reach the XNU entry (green bar); the full kernel can now
+publish a UFS block device, but the device has not been booted with it yet.
+Verified-root/owner-root, VirtIO/RamBlock and boot progress stay off until
+their live audit inputs exist. See `docs/PROGRESS.md` and `KERNEL-BUILD.md`.
 
 `board.toml` uses `size_mib = 80` for the payload; the prelinked kernel is
 about 50 MB and `boot_a` is 96 MiB. The uke ABL's `fastboot boot` returns
@@ -153,14 +169,18 @@ stall occasionally.
   512-byte sector, maps the initrd range in the GCD, and adds up to 2 GiB of
   DRAM. The ADT uses `owned_memory_size = 0x10000000` because the largest
   contiguous free run on uke is about 326 MiB.
-- Stages 1–5 are reached (XNU entry, green bar). Stage 6 is current: the native
-  UFS/storage driver, `native-ufs-root=1`, `userdata`, root UUID and the
-  APFS/AES/verified-root chain are not wired yet.
-- `uke-full_defconfig` has UFS/AES/Virtio/RamBlock/VerifiedRoot/owner-root and
-  `BOOT_PROGRESS`, but the required archives/audits are not all built in CI
-  yet. `uke-full-minus-pmgr_defconfig` is the PMGR-only subset.
-- The sheng page requires `sheng-pmgr=2` for `native-ufs-root=1`; our payload
-  has it, but the uke SM7675 GCC/clock/PHY path is not yet qualified.
+- Stages 1–5 are reached (XNU entry, green bar). Stage 6 now compiles: the
+  full kernel links NativeUfs and NativeAES, and the UFS block class binds to
+  the pinned original candidate. Runtime storage/root is untested; the device
+  is not connected.
+- The UFS block reads are **not authenticated** in the bring-up build. The
+  verified-root policy bundle (built from the real OS/SystemOS DMGs) and the
+  live storage ABI audit are the remaining gates for authenticated reads.
+- `userdata`, the root UUID and the APFS/launchd chain still need a device run.
+- `uke-full-plus_defconfig` lists the sheng-parity flags that are not built:
+  VirtIO/RamBlock, verified root, owner-root and boot progress.
+- The uke SM7675 GCC UFS block is at `0x177000`/`0x19e000`; the device
+  overrides `drivers/NativeUfs` with those offsets.
 - The vendor UFS/clock/PMIC stack (`UKE_VENDOR_HW = 1`) is not imported.
 - `panic_screen = false` because the panic-screen builder needs `Font.h`;
   enable it after fixing the include path so a real panic is captured.
@@ -169,7 +189,10 @@ stall occasionally.
 - The userdata image needs macOS `hdiutil`; a Linux port using
   `qemu-img convert -f dmg -O raw` plus the existing `SHNGROOT` writer is
   possible but not implemented here.
-- GPU, USB, audio and Wi-Fi are not part of the current pass.
+- GPU: the Adreno 732 values are recorded and checked; the driver still needs
+  the A732 firmware from the vendor partition and the GPU power path. See
+  `docs/GPU-PORT.md`.
+- USB, audio, Wi-Fi and sensors are not part of the current pass.
 
 See [docs/PROGRESS.md](docs/PROGRESS.md) for the full state, artifacts and
 maintenance rule.
