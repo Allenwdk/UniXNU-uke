@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x0001001B
+  BASE_NAME = UkePreflight
+  FILE_GUID = 624b1b42-3618-4a59-b6b3-d5843a49cd21
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 0.1
+  ENTRY_POINT = UefiMain
+
+[Sources]
+  UkePreflight.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+  MemoryAllocationLib
+
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid

@@ -1,0 +1,165 @@
+name: build-uke-kernel
+
+# Builds the first-console XNU kernel for the Xiaomi Pad 7 / POCO Pad X1
+# (uke, SM7675) on a macOS runner. The kernel step needs macOS: xnu's own
+# makefiles are driven with xcodebuild and the iPhoneOS SDK, and MIG ships
+# only inside Xcode. Linux stops at the missing MIG (see the piano port's
+# LINUX-BUILD.md).
+#
+# This mirrors docs/MACOS-BUILD.md:
+#
+#  1. bootstrap_defconfig builds a plain 4 KiB XNU and prelinks it; the prelink
+#     output is the original-class candidate the legacy display ABI builder
+#     needs, and the build leaves the compile records for every device archive.
+#  2. the namespaced corecrypto provider, ArmDTPlatform and ArmCpu are built
+#     from those records.
+#  3. build-native-legacy-display.py builds the GOP legacy display provider.
+#  4. uke_defconfig builds and prelinks the shipping first-console kernel.
+#
+# Runner note: the piano port proved that macos-14 / Xcode 15.4 is too old
+# (`-mach_msg2` is unknown and MIG has no SubSystem declaration). Use the
+# current macos-latest (macOS 26, Xcode 26.x); do not pin macos-14.
+#
+# The payload and boot image are built on Linux afterwards:
+#
+#   unixnu build payload --kernel <downloaded kernel.macho>
+#   unixnu bootimg --uefi <uefi-uke> --dtb <vendor_boot.dtb>
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'board.toml'
+      - 'configs/**'
+      - 'scripts/**'
+      - 'docs/MACOS-BUILD.md'
+      - '.github/workflows/build-kernel.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    runs-on: macos-latest       # Apple Silicon, newest Xcode (piano: 9m12s)
+    timeout-minutes: 240
+
+    steps:
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+        with:
+          path: UniXNU-uke
+
+      - name: Report the runner toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcode-select -p
+          xcrun -sdk iphoneos -find mig || echo 'mig not found for iphoneos'
+          xcrun -sdk iphoneos -find iig || echo 'iig not found for iphoneos'
+
+      - name: Install the host tools
+        run: |
+          brew install cmake ninja unifdef llvm mtools dtc
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify the tools unixnu checks for
+        run: |
+          for tool in git make clang cmake ninja unifdef mtools dtc xcodebuild; do
+            printf '%-10s %s\n' "$tool" "$(command -v "$tool" || echo MISSING)"
+          done
+
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: 64f5b76
+          path: UniXNU
+
+      - name: Select the device repository
+        working-directory: UniXNU
+        run: |
+          ./unixnu defconfig uke_defconfig -D ../UniXNU-uke
+          ./unixnu status
+
+      - name: Fetch the Apple references
+        working-directory: UniXNU
+        run: ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions -D ../UniXNU-uke
+
+      - name: Fetch the target IPSW members
+        working-directory: UniXNU
+        run: ./unixnu ipsw fetch -D ../UniXNU-uke
+
+      - name: Bootstrap kernel and prelinked candidate
+        working-directory: UniXNU
+        # bootstrap_defconfig disables every device archive. Its outputs are
+        # the compile records under build/xnu/ and the prelinked kernel.macho
+        # that build-native-legacy-display.py uses as its original candidate.
+        run: |
+          ./unixnu defconfig bootstrap_defconfig -D ../UniXNU-uke
+          ./unixnu build kernel -D ../UniXNU-uke
+          test -f out/uke/kernel/kernel.macho
+          mkdir -p out/uke/tree/build/native-prelink
+          cp out/uke/kernel/kernel.macho \
+             out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.macho
+          ls -l out/uke/tree/build/native-prelink/
+
+      - name: Build the pinned corecrypto provider
+        working-directory: UniXNU
+        run: |
+          ./unixnu tree -D ../UniXNU-uke
+          workspace=out/uke/tree
+          git clone --quiet https://github.com/ONLYA/corecrypto-2023 "$workspace/refer/corecrypto-2023"
+          git -C "$workspace/refer/corecrypto-2023" checkout --quiet 11fba65b12d8830630e248dfa8344caf8b065f26
+          git -C "$workspace/refer/corecrypto-2023" rev-parse HEAD
+          ( cd "$workspace" && python3 scripts/build-corecrypto-14.py )
+          ( cd "$workspace" && python3 scripts/build-corecrypto-14.py --namespace )
+          ls -l "$workspace/build/corecrypto-2023/"*.a
+
+      - name: Build the driver archives and legacy display provider
+        working-directory: UniXNU
+        # build-arm-driver.py compiles drivers/<name>/<name>.cpp from the base
+        # repository against the bootstrap kernel's recorded compile command.
+        # build-native-legacy-display.py runs the mobile-graphics ABI audit,
+        # builds the GOP legacy display provider and archives it.
+        run: |
+          workspace=out/uke/tree
+          ( cd "$workspace" && python3 scripts/gen-touch-firmware.py )
+          ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmDTPlatform )
+          ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmCpu )
+          ( cd "$workspace" && python3 scripts/build-native-legacy-display.py )
+          ls -l "$workspace/build/armdt-platform/" "$workspace/build/armcpu/" \
+                "$workspace/build/native-legacy-display/"
+
+      - name: Build and prelink the first-console kernel
+        working-directory: UniXNU
+        run: |
+          ./unixnu defconfig uke_defconfig -D ../UniXNU-uke
+          ./unixnu build kernel -D ../UniXNU-uke
+
+      - name: Record the result
+        working-directory: UniXNU
+        if: always()
+        run: |
+          mkdir -p ../artifacts
+          if [ -f out/uke/kernel/kernel.macho ]; then
+            cp out/uke/kernel/kernel.macho ../artifacts/
+            shasum -a 256 out/uke/kernel/kernel.macho | tee ../artifacts/kernel.macho.sha256
+          else
+            echo "kernel.macho was not produced" | tee ../artifacts/MISSING.txt
+          fi
+          cp out/uke/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf \
+             ../artifacts/ 2>/dev/null || true
+          cp -r out/uke/logs ../artifacts/logs 2>/dev/null || true
+          ls -l ../artifacts
+
+      - name: Upload the kernel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uke-kernel
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14

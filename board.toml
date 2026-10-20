@@ -1,0 +1,166 @@
+# Board description of the Xiaomi Pad 6S Pro (sheng, SM8550), read by the unixnu build driver.
+
+[board]
+name = "uke"
+soc = "SM7675"
+description = "Xiaomi Pad 7"
+kit = "uke"                      # the package/ of this repository appears as kits/sheng in the build tree
+
+# The target OS image: the unchanged iPad7,1 iPadOS 17.7.11 restore image. Give --ipsw PATH to use a local file; without
+# it the remote url is read with range requests, only the members that are needed.
+[ipsw]
+url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
+product = "iPad7,1"
+version = "17.7.11"
+build = "21H461"
+device_class = "j120ap"
+chip_id = 0x8011
+board_id = 12
+fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]   # the small components
+
+[ipsw.sha256]
+"044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
+"044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
+
+# The raw image for the userdata partition: the OS and SystemOS disk images of the IPSW behind a manifest.
+# first_lba and last_lba are the GPT entry "userdata" of LUN 0, read from the tablet.
+[userdata]
+first_lba = 0x2d3000
+last_lba = 0x3b147fa
+lba_bytes = 4096
+windows = [
+  { name = "OS", component = "OS" },
+  { name = "SystemOS", component = "Cryptex1,SystemOS" },
+]
+
+[kernel]
+defconfig = "uke_defconfig"
+
+[kernel.prelink]
+tool = "kits/NativePrelink/emit_prelink.py"
+kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
+kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
+slide = "-0x1000000"
+early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
+roots = [
+  "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
+  "com.apple.driver.AppleARMPlatform",
+  "com.apple.driver.AppleARMWatchdogTimer",
+  "com.apple.driver.AppleAudioClockLibs",
+  "com.apple.driver.AppleEffaceableStorage",
+  "com.apple.driver.AppleIISController",
+  "com.apple.driver.AppleM2ScalerCSCDriver",
+  "com.apple.driver.AppleMobileFileIntegrity",
+  "com.apple.driver.ApplePMGR",
+  "com.apple.driver.IODARTFamily",
+  "com.apple.filesystems.apfs",
+  "com.apple.iokit.CoreAnalyticsFamily",
+  "com.apple.iokit.IOAVFamily",
+  "com.apple.iokit.IOAudio2Family",
+  "com.apple.iokit.IOCECFamily",
+  "com.apple.iokit.IOCryptoAcceleratorFamily",
+  "com.apple.iokit.IOGPUFamily",
+  "com.apple.iokit.IOHDCPFamily",
+  "com.apple.iokit.IOMobileGraphicsFamily",
+  "com.apple.iokit.IOReportFamily",
+  "com.apple.iokit.IOSlowAdaptiveClockingFamily",
+  "com.apple.iokit.IOStorageFamily",
+  "com.apple.iokit.IOSurface",
+  "com.apple.kec.Libm",
+  "com.apple.kec.corecrypto",
+  "com.apple.kext.AppleMatch",
+  "com.apple.kext.CoreTrust",
+  "com.apple.security.AppleImage4",
+  "com.apple.security.sandbox",
+  "com.apple.iokit.IOHIDFamily",
+  "com.apple.iokit.IOHIDEventDriver",
+]
+
+[firmware]
+config = "uke"                   # Resources/Configs/uke.toml in the Mu-Silicium checkout (--uefi)
+dsc = "Platforms/Xiaomi/ukePkg/uke.dsc"
+fd = "Build/ukePkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+preflight = ["scripts/check-uke.py"]
+submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Silicium-ACPI", "Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl"]
+patches = ["Resources/MuPatches/Gic-Spurious.patch"]
+packages = [
+  "{uefi}",
+  "{uefi}/Platforms/Xiaomi",
+  "{tree}/package",
+  "{tree}/drivers/DarwinBoot",
+  "{edk2}",
+  "{uefi}/Common/Mu",
+  "{uefi}/Common/Mu_OEM_Sample",
+  "{uefi}/Silicon/Qualcomm",
+  "{uefi}/Silicon/Silicium",
+  "{uefi}/Silicium-ACPI",
+  "{uefi}/Silicium-ACPI/Platforms/Xiaomi",
+  "{uefi}/Silicium-ACPI/Silicon/Qualcomm",
+]
+
+[firmware.defines]
+ENABLE_SECUREBOOT = "1"
+DEVICE_MODEL = "uke"
+MEMORY_PROTECTION = "TRUE"
+SHIP_MODE = "FALSE"
+BUILDID_STRING = "uke-research"
+
+# The ramdisk of the boot image: a FAT volume with the UniXNU config, the kernel, its device tree and
+# the optional trust cache and Data seed. The loader (DarwinBoot) is part of the firmware volume.
+[payload]
+volume = "UKEESP"
+size_mib = 128
+loader = "firmware"
+title = "uke first boot: source 4K XNU to console"
+dram_size = "0x80000000"             # SMEM RAM table observed on the device
+skip_setup_tool = "scripts/seed-data-skip-setup.py"   # used by --skip-setup
+panic_screen = true                  # patch panic() screen output into the payload copy of the kernel
+kernel_args = [
+  "-v",
+  "serial=3",
+  "debug=0x14e",
+  "kt_fixed_zones=120",
+  "offline-legacy-register=1",
+  "offline-legacy-gop=1",
+  "offline-legacy-unit-scale=2",
+  "offline-legacy-pm=1",
+  "offline-legacy-validate=1",
+  "offline-legacy-transfer=1",
+  "offline-legacy-cpu-present=1",
+  "offline-hid-home=1",
+  "offline-hid-input=1",
+  "offline-legacy-phase=4",
+  "offline-mobile-graphics-client=1",
+  "offline-mobile-graphics-load=1",
+  "offline-apfs-load=1",
+  "boot-progress=2",
+  "-apfs_shared_datavolume",
+  "offline-key-events=1",
+  "sheng-pmgr=2",
+  "armcpu-diagnostics=1",
+  "sheng-disable-watchdogd=1",
+  "sheng-smp=1",
+  "armcpu-spi-ipi=1",
+  "-no_slto_panic",
+  "ml-timeout-lock-panic-scale=40",
+]
+
+[payload.adt]
+tool = "scripts/make-uke-adt.py"
+chip_id = "207"
+owned_memory_size = "0x40000000"
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
+cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
+packed_data_ramdisk = true
+ipad_identity = true
+unique_chip_id = "required"          # the platform seed is not stored in any repository
+
+# Image parameters come from the Mu-Silicium device config; [bootimg.image] would override them.
+
+# The stock ABL powers the panel off when the device tree has no splash region, so add it.
+[[bootimg.dtb_node]]
+path = "/reserved-memory/splash_region"
+props = [
+  { name = "label", type = "s", value = "cont_splash_region" },
+  { name = "reg", type = "x", value = ["0x0", "0xe3940000", "0x0", "0x2b00000"] },
+]

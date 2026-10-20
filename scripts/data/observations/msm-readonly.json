@@ -1,0 +1,83 @@
+{
+  "format_version": 1,
+  "existing_linux_driver": true,
+  "kernel_release": "7.2.6-sm8550-00103-g42f3b40c702a",
+  "ioctl": "0xc0186440",
+  "struct_bytes": 24,
+  "pipe": 16,
+  "source_revision": "42f3b40c702abbc37c3a04c95af008cd283aeaf3",
+  "device_open_mode": "read only",
+  "set_param": false,
+  "gpu_test_submission": false,
+  "gpu_smmu_active_registers_observed": false,
+  "params": {
+    "GPU_ID": {
+      "value": 0,
+      "hex": "0x0"
+    },
+    "GMEM_SIZE": {
+      "value": 3145728,
+      "hex": "0x300000"
+    },
+    "CHIP_ID": {
+      "value": 281471806147073,
+      "hex": "0xffff43050a01"
+    },
+    "MAX_FREQ": {
+      "value": 680000000,
+      "hex": "0x2887fa00"
+    },
+    "GMEM_BASE": {
+      "value": 0,
+      "hex": "0x0"
+    },
+    "PRIORITIES": {
+      "value": 12,
+      "hex": "0xc"
+    },
+    "FAULTS": {
+      "value": 0,
+      "hex": "0x0"
+    },
+    "SUSPENDS": {
+      "value": 196,
+      "hex": "0xc4"
+    },
+    "VA_START": {
+      "value": 4294967296,
+      "hex": "0x100000000"
+    },
+    "VA_SIZE": {
+      "value": 281470681743360,
+      "hex": "0xffff00000000"
+    },
+    "HIGHEST_BANK_BIT": {
+      "value": 16,
+      "hex": "0x10"
+    },
+    "RAYTRACING": {
+      "value": 1,
+      "hex": "0x1"
+    },
+    "UBWC_SWIZZLE": {
+      "value": 6,
+      "hex": "0x6"
+    },
+    "MACROTILE_MODE": {
+      "value": 1,
+      "hex": "0x1"
+    },
+    "UCHE_TRAP_BASE": {
+      "value": 562949953417216,
+      "hex": "0x1fffffffff000"
+    },
+    "HAS_PRR": {
+      "value": 1,
+      "hex": "0x1"
+    },
+    "AQE": {
+      "value": 0,
+      "hex": "0x0"
+    }
+  }
+}

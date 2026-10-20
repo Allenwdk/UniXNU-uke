@@ -1,0 +1,51 @@
+#!/bin/busybox sh
+# Linux reference run for the GPU (see build-linux-ref-boot.py). Runs from the initramfs only: no block device is mounted or written.
+# Results go to the screen and, when the USB controller comes up as a device, to a CDC ACM serial port with an interactive shell.
+/bin/busybox --install -s /bin
+mkdir -p /proc /sys /dev /run /tmp
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+mount -t debugfs debugfs /sys/kernel/debug
+mount -t configfs configfs /sys/kernel/config
+mount -t tmpfs tmpfs /run
+L=/run/ref.log
+O=${refout:-/dev/tty0}   # refout=/dev/console on the command line for an offline QEMU run
+say() { echo "$*" | tee -a $L > $O; }
+say "sheng linux-ref $(uname -r)"
+for m in /lib/modules/*.ko; do [ -e "$m" ] && insmod "$m" && say "loaded $m"; done
+
+# USB serial: device role, one ACM function. Failure here only loses the serial channel.
+gadget() {
+    for r in /sys/class/usb_role/*/role; do [ -e "$r" ] && echo device > "$r"; done
+    G=/sys/kernel/config/usb_gadget/ref
+    mkdir -p $G/strings/0x409 $G/configs/c.1 $G/functions/acm.usb0 || return
+    echo 0x1d6b > $G/idVendor; echo 0x0104 > $G/idProduct
+    echo shengref > $G/strings/0x409/serialnumber; echo sheng-linux-ref > $G/strings/0x409/product
+    ln -s $G/functions/acm.usb0 $G/configs/c.1/
+    for i in $(seq 1 20); do U=$(ls /sys/class/udc 2>/dev/null | head -n1); [ -n "$U" ] && break; sleep 1; done
+    [ -n "$U" ] && echo "$U" > $G/UDC && say "usb: acm on $U" || say "usb: no udc"
+}
+gadget
+
+for i in $(seq 1 30); do [ -e /dev/dri/renderD128 ] && break; sleep 1; done
+[ -e /dev/dri/renderD128 ] || say "no renderD128"
+D=$(ls -d /sys/kernel/debug/dri/*/gpu 2>/dev/null | head -n1)
+# Holding the render node open loads and initializes the GPU (msm_open), so the state below is Linux's state after hw_init, before any job.
+sleep 100000 < /dev/dri/renderD128 & H=$!   # a background holder: a failed open cannot end init
+sleep 1
+[ -n "$D" ] && cat "$D" > /run/gpu-before.txt 2>&1; say "gpu state before: $(wc -l < /run/gpu-before.txt 2>/dev/null) lines"
+/bin/msm-ref > /run/msm-ref.txt 2>&1; say "msm-ref exit $?"
+cat /run/msm-ref.txt | tee -a $L > $O
+[ -n "$D" ] && cat "$D" > /run/gpu-after.txt 2>&1
+n=0; for c in /sys/class/devcoredump/devcd*/data; do [ -e "$c" ] && cat "$c" > /run/coredump$n.txt && n=$((n+1)); done
+say "coredumps: $n"
+dmesg > /run/dmesg.txt
+dmesg | grep -i -E "msm|adreno|gpu|gmu|zap|smmu" | tail -n 12 > $O
+say "files in /run; shell on USB serial"
+kill $H 2>/dev/null
+
+while true; do
+    if [ -e /dev/ttyGS0 ]; then setsid sh -c 'exec sh -i </dev/ttyGS0 >/dev/ttyGS0 2>&1'; fi
+    sleep 1
+done

@@ -1,0 +1,11 @@
+{
+  "linux_revision": "42f3b40c702abbc37c3a04c95af008cd283aeaf3",
+  "mesa_revision": "85fda3b36405bcaea8bffc64aa4f2651dc90770d",
+  "files": {
+    ".cache/adreno-source/include/uapi/drm/msm_drm.h": "89f7e5248c4ffc59a564ba0f59f8dd2dbbb5cc9b4671c7d7b399a65e39765633",
+    ".cache/adreno-source/drivers/gpu/drm/msm/adreno/adreno_gpu.c": "34c2035512fb9e3e2196596f9c2879e89f1968975813ae4da862f179fef84aa4",
+    ".cache/adreno-source/drivers/gpu/drm/msm/adreno/a6xx_gpu.c": "833ec17decd679d0ae7738fa71843e009cb33012e138071cb7bb2c1a42ffe6d1",
+    ".cache/mesa-work/src/freedreno/common/freedreno_devices.py": "3a343e614b30509a01db4a22380eaa4604abafbb59552cd8b177c5912b29aef6",
+    ".cache/mesa-work/src/freedreno/common/freedreno_dev_info.c": "c26ac1937306ac15d5537ca8e3cfed1517cd644783ce88f7afbc75352175e6f7"
+  }
+}

@@ -1,0 +1,17 @@
+version = 1
+
+[boot]
+timeout = 3
+default = "preflight"
+
+[[entry]]
+id = "preflight"
+title = "sheng boot diagnostics"
+type = "efi"
+path = "Payloads/ShengPreflight.efi"
+
+[[entry]]
+id = "exit"
+title = "Return to firmware"
+type = "action"
+action = "exit"

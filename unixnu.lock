@@ -1,0 +1,4 @@
+# Resolved git sources, written by "unixnu fetch". Local sources are never recorded.
+
+[source."edk2"]
+commit = "cfb93724a06ff86ff5ba971413368a7809ee42a5"
