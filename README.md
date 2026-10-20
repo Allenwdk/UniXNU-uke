@@ -2,11 +2,16 @@
 
 Device repository for the Xiaomi Pad 7 / POCO Pad X1 (`uke`, SM7675).
 
-Stage 1 (UEFI firmware + UniXNU menu) works on the stock ABL. The first XNU
-kernel is built in GitHub Actions with
-`.github/workflows/build-kernel.yml`; the payload and boot image are built on
-Linux. The userdata image still needs macOS `hdiutil` (or a Linux port of the
-DMG conversion).
+Stages 1–5 are reached: the UEFI firmware, the UniXNU menu, the payload,
+DarwinBoot and the XNU kernel entry (green bar) work on the stock ABL. After
+the green bar XNU waits for the root device; `SecurityLock ...
+LockCapsuleInterface` is UEFI output, not the kernel hang. Stage 6 (native
+UFS/storage + userdata/root) is next.
+
+Progress, remaining work and the update rule: **[docs/PROGRESS.md](docs/PROGRESS.md)**.
+The first-console kernel and the PMGR-only full kernel are built in GitHub
+Actions; the payload and boot image are built on Linux. The userdata image
+still needs macOS `hdiutil` (or a Linux port of the DMG conversion).
 
 ## Layout
 
@@ -18,8 +23,12 @@ DMG conversion).
   stack.
 - `configs/uke-full_defconfig` — the full sheng-derived configuration for
   later stages.
+- `configs/uke-full-minus-pmgr_defconfig` — PMGR + legacy display only; used
+  to show that PMGR is not the root-device blocker.
 - `configs/bootstrap_defconfig` — no-device-archive bootstrap pass: compile
   records plus the prelinked candidate the legacy display ABI builder needs.
+- `docs/PROGRESS.md` — current bring-up stage, completed work, remaining work,
+  artifacts and the update rule. Keep it current after every CI/hardware run.
 - `scripts/build-xnu-4k-baseline.sh` — base script plus a
   `native_legacy_display_probe` logging stub that is used only when
   `NATIVE_LEGACY_DISPLAY` is off (the bootstrap pass).
@@ -88,50 +97,79 @@ cd UniXNU
     --dtb /path/to/vendor_boot.dtb
 ```
 
-The CI kernel is the first-console build: BootShim/UEFI, UniXNU, the payload
-`xnu` entry, DarwinBoot, then XNU with the GOP legacy display. UFS, PMGR and
-the owner-root/userland stack are off, so a panic that names a storage/root
-provider or AMFI's `No PMGR` is the expected milestone. See `KERNEL-BUILD.md`
-for the bootstrap/candidate/display sequence and the Xcode 26 requirement
+The CI has two kernel jobs. `uke-kernel` is the first-console kernel:
+BootShim/UEFI, UniXNU, the payload `xnu` entry, DarwinBoot, then XNU with the
+GOP legacy display. `uke-kernel-full-pmgr` adds `libShengPlatformPower.a` to
+the same path. Both reach the XNU entry (green bar); after it XNU waits for
+the root device. UFS/AES/owner-root are intentionally off in these two jobs,
+so storage/root is the next stage, not a missing-provider panic. See
+`docs/PROGRESS.md` for the current state and `KERNEL-BUILD.md` for the
+bootstrap/candidate/display sequence and the Xcode 26 requirement
 (`macos-14` / Xcode 15.4 fails with `-mach_msg2` and MIG).
 
-`board.toml` uses `size_mib = 128` for the payload; the prelinked kernel is
-about 50 MB and `boot_a` is 96 MiB. For the first kernel-only payload, use
-`size_mib = 64` or `80`. `fastboot boot` may accept a larger image, but
-keeping it at or below 96 MiB also keeps a later `fastboot flash boot`
-possible.
+`board.toml` uses `size_mib = 80` for the payload; the prelinked kernel is
+about 50 MB and `boot_a` is 96 MiB. The uke ABL's `fastboot boot` returns
+`Failed to load/authenticate boot image: Load Error`, so use the normal boot
+path (`fastboot flash boot` + `flash vendor_boot` + `reboot`) for hardware
+tests.
 
-## Stage 1 test
+## Current hardware test
 
-`fastboot boot` does not flash anything; the stock boot partitions stay
-untouched. Run this only when you are ready to leave Android:
+The uke ABL rejects `fastboot boot` with
+`Failed to load/authenticate boot image: Load Error`, so test by flashing the
+normal boot path:
 
 ```sh
 adb reboot bootloader
-fastboot boot out/uke/boot/boot.img
-```
-
-Expected: the panel shows the UniXNU menu (or the UEFI graphics console).
-If the firmware stalls, retry the same image once; the sheng port is known to
-stall occasionally. To return without booting the image:
-
-```sh
+fastboot flash boot out/uke/boot/boot.img
+fastboot flash vendor_boot /path/to/vendor_boot_uke_full.img
+fastboot set_active a
 fastboot reboot
 ```
+
+Expected: the UniXNU menu, the `xnu` entry after 5 s, DarwinBoot output, the
+green bar and XNU. After the green bar XNU waits for the root device; see
+`docs/PROGRESS.md`. The stock boot and vendor_boot images restore Android:
+
+```sh
+fastboot flash boot /path/to/boot_a.img
+fastboot flash vendor_boot /path/to/vendor_boot_a.img
+fastboot set_active a
+fastboot reboot
+```
+
+Use `fastboot set_active a` before each test: the ABL marks the slot
+unbootable after repeated non-Android boots.
+
+If the firmware stalls, retry the same image once; the sheng port is known to
+stall occasionally.
 
 ## Known gaps
 
 - `bootimg.py` now understands Android boot v4; the stock uke image is v4.
 - `MemoryMapLib.c` is generated from the live stock DT plus the Mu-Silicium
   FD/stack layout. `check-uke.py` reports 0 static errors (72 descriptors).
-- The first-console kernel has the GOP legacy display, but no UFS, PMGR,
-  owner-root or GPU. `uke-full_defconfig` is the later configuration.
-- The vendor UFS/clock/PMIC stack (`UKE_VENDOR_HW = 1`) is not imported yet;
-  XNU native UFS root needs it, or a kernel-side UFS init.
+- `UkeBootMemoryDxe` publishes the initrd after rounding its end down to a
+  512-byte sector, maps the initrd range in the GCD, and adds up to 2 GiB of
+  DRAM. The ADT uses `owned_memory_size = 0x10000000` because the largest
+  contiguous free run on uke is about 326 MiB.
+- Stages 1–5 are reached (XNU entry, green bar). Stage 6 is current: the native
+  UFS/storage driver, `native-ufs-root=1`, `userdata`, root UUID and the
+  APFS/AES/verified-root chain are not wired yet.
+- `uke-full_defconfig` has UFS/AES/Virtio/RamBlock/VerifiedRoot/owner-root and
+  `BOOT_PROGRESS`, but the required archives/audits are not all built in CI
+  yet. `uke-full-minus-pmgr_defconfig` is the PMGR-only subset.
+- The sheng page requires `sheng-pmgr=2` for `native-ufs-root=1`; our payload
+  has it, but the uke SM7675 GCC/clock/PHY path is not yet qualified.
+- The vendor UFS/clock/PMIC stack (`UKE_VENDOR_HW = 1`) is not imported.
+- `panic_screen = false` because the panic-screen builder needs `Font.h`;
+  enable it after fixing the include path so a real panic is captured.
 - The touch firmware object is empty, so the NT36532 probe stops before the
-  download stage. The protocol driver is present for the later firmware/pin
-  adaptation.
+  download stage.
 - The userdata image needs macOS `hdiutil`; a Linux port using
   `qemu-img convert -f dmg -O raw` plus the existing `SHNGROOT` writer is
   possible but not implemented here.
-- GPU, USB, audio and Wi-Fi are not part of the first console pass.
+- GPU, USB, audio and Wi-Fi are not part of the current pass.
+
+See [docs/PROGRESS.md](docs/PROGRESS.md) for the full state, artifacts and
+maintenance rule.
