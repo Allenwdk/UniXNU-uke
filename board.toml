@@ -158,6 +158,13 @@ unique_chip_id = "required"          # the platform seed is not stored in any re
 # Image parameters come from the Mu-Silicium device config; [bootimg.image] would override them.
 
 # The stock ABL powers the panel off when the device tree has no splash region, so add it.
+[bootimg.image]
+header_version = 0
+base           = 0x00000000
+kernel_offset  = 0x00008000
+tags_offset    = 0x01e00000
+pagesize       = 4096
+
 [[bootimg.dtb_node]]
 path = "/reserved-memory/splash_region"
 props = [
