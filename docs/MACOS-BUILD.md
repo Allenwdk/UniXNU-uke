@@ -96,6 +96,14 @@ All commands run in the assembled tree:
 
 ```sh
 cd ~/uke/UniXNU/out/uke/tree
+mkdir -p build/display-analysis
+python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('build/display-analysis/mobile-graphics-legacy-abi.json')
+if not p.exists():
+    p.write_text(json.dumps({'runtime_metadata_checkpoint_sha256': '3044c2beff552911605994c0dc7aa73182066cbb5aed0b396999ceeb5a96da2b'}) + '\n')
+PY
 python3 scripts/gen-touch-firmware.py        # empty firmware object is fine
 python3 scripts/build-corecrypto-14.py --namespace
 python3 scripts/build-arm-driver.py ArmDTPlatform

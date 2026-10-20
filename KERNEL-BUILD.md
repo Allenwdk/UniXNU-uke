@@ -50,8 +50,11 @@ So the workflow runs:
    `out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.{macho,json}`.
 2. Clone the pinned `ONLYA/corecrypto-2023` (`11fba65…`) into `refer/` and run
    `build-corecrypto-14.py` plain and `--namespace`.
-3. Build `ArmDTPlatform`, `ArmCpu`, the empty touch-firmware object and the
-   legacy display archive.
+3. Seed the original-class runtime observation hash, build `ArmDTPlatform`,
+   `ArmCpu`, the empty touch-firmware object and the legacy display archive.
+   The hash is the sheng-recorded observation of the unchanged iPad7,1
+   original class; uke pins the same kernelcache, and the audit accepts the
+   recorded hash when the GDB dump is absent.
 4. `uke_defconfig` → `unixnu build kernel`, which links the archives and
    prelinks against the iPad7,1 kernelcache.
 

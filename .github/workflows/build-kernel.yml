@@ -121,6 +121,22 @@ jobs:
           ( cd "$workspace" && python3 scripts/build-corecrypto-14.py --namespace )
           ls -l "$workspace/build/corecrypto-2023/"*.a
 
+      - name: Seed the original-class runtime observation cache
+        working-directory: UniXNU
+        # audit-mobile-graphics-legacy.py accepts the recorded runtime
+        # observation hash from its previous output when the GDB dump was
+        # pruned. The observation is of the unchanged iPad7,1 original class,
+        # not of the native uke kernel; uke pins the same kernelcache as sheng.
+        run: |
+          mkdir -p out/uke/tree/build/display-analysis
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('out/uke/tree/build/display-analysis/mobile-graphics-legacy-abi.json')
+          if not p.exists():
+              p.write_text(json.dumps({'runtime_metadata_checkpoint_sha256': '3044c2beff552911605994c0dc7aa73182066cbb5aed0b396999ceeb5a96da2b'}) + '\n')
+          PY
+
       - name: Build the driver archives and legacy display provider
         working-directory: UniXNU
         # build-arm-driver.py compiles drivers/<name>/<name>.cpp from the base
