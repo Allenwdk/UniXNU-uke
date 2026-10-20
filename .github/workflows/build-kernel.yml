@@ -291,6 +291,15 @@ jobs:
           ls -l "$workspace/build/armdt-platform/" "$workspace/build/armcpu/" \
                 "$workspace/build/native-legacy-display/"
 
+      - name: Stage the decompressed kernelcache for the PMGR audit
+        working-directory: UniXNU
+        run: |
+          mkdir -p out/uke/tree/.cache/firmware/kernelcache.macho
+          source=$(find out -name 'kernelcache.release.ipad7.decompressed' -print -quit)
+          test -n "$source"
+          echo "kernelcache: $source"
+          cp "$source" out/uke/tree/.cache/firmware/kernelcache.macho/kernelcache.release.ipad7.decompressed
+
       - name: Build the SHENG PMGR archive
         working-directory: UniXNU
         run: |
