@@ -32,6 +32,8 @@ on:
       - 'board.toml'
       - 'feeds.toml'
       - 'configs/**'
+      - 'drivers/**'
+      - 'kits/**'
       - 'package/**'
       - 'scripts/**'
       - 'docs/MACOS-BUILD.md'
