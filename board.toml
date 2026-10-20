@@ -47,6 +47,7 @@ archives = [
   "build-native-aes-bindings.py",
   "prepare-storage-headers.py",
   "build-arm-driver.py NativeUfs --unverified",
+  "build-ufs-original-bindings.py",
   "build-mockfs-fixture.py",
   "build-sheng-platform-power.py",
   "build-libpthread-kernel.py",
