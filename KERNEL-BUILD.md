@@ -47,7 +47,9 @@ So the workflow runs:
 1. `bootstrap_defconfig` → `unixnu build kernel` → compile records plus
    `out/uke/kernel/kernel.macho`; copy the prelink output and its
    `kernel.json` plan to
-   `out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.{macho,json}`.
+   `out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.{macho,json}`
+   and the HID builder alias
+   `native-owner-ufs-cpu-desktop-v9-hid-init-candidate.{macho,json}`.
 2. Clone the pinned `ONLYA/corecrypto-2023` (`11fba65…`) into `refer/` and run
    `build-corecrypto-14.py` plain and `--namespace`.
 3. Seed the original-class runtime observation hash, build `ArmDTPlatform`,

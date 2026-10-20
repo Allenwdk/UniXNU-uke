@@ -84,6 +84,10 @@ cp out/uke/kernel/kernel.macho \
    out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.macho
 cp out/uke/kernel/kernel.json \
    out/uke/tree/build/native-prelink/native-owner-mobile-graphics-candidate.json
+cp out/uke/kernel/kernel.macho \
+   out/uke/tree/build/native-prelink/native-owner-ufs-cpu-desktop-v9-hid-init-candidate.macho
+cp out/uke/kernel/kernel.json \
+   out/uke/tree/build/native-prelink/native-owner-ufs-cpu-desktop-v9-hid-init-candidate.json
 ```
 
 The bootstrap kernel does not have to boot. Its outputs are the XNU compile
