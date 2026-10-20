@@ -9,6 +9,7 @@
  * progress is disabled, which is the "no diagnostic writer" answer the
  * display probe expects.
  */
+#include <stdbool.h>
 #include <stdint.h>
 
 __attribute__((weak)) int
@@ -46,4 +47,47 @@ __attribute__((weak)) char boot_progress_ext_wide[2][112];
 __attribute__((weak)) void
 sheng_gpu_power_probe (void)
 {
+}
+
+/*
+ * NativeLegacyDisplay always references the GPU hand-off hooks, even when
+ * CONFIG_XNU_NATIVE_ADRENO is off and GpuPowerProbe.cpp is not compiled.
+ * The weak definitions keep the display-only kernel linkable; the Adreno
+ * configuration supplies the strong definitions and discards these.
+ */
+__attribute__((weak)) bool
+native_legacy_gpu_offer (void *display, void *memory, uint64_t stride,
+                         uint32_t width, uint32_t height)
+{
+  (void)display;
+  (void)memory;
+  (void)stride;
+  (void)width;
+  (void)height;
+  return false;
+}
+
+__attribute__((weak)) void
+native_legacy_gpu_fallback_observed (int status)
+{
+  (void)status;
+}
+
+__attribute__((weak)) void
+native_legacy_swap_stage (unsigned stage)
+{
+  (void)stage;
+}
+
+__attribute__((weak)) void
+native_legacy_surface_rejected (uint64_t width, uint64_t height, uint32_t format,
+                                uint32_t reason, uint64_t a, uint64_t b, uint64_t c)
+{
+  (void)width;
+  (void)height;
+  (void)format;
+  (void)reason;
+  (void)a;
+  (void)b;
+  (void)c;
 }
