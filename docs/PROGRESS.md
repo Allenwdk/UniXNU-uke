@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-10-21
 >
-> **当前一句话状态：** 阶段 1–5 已到达；阶段 6 的 **full 内核已完整编译并 prelink 成功**（UFS + AES + mockfs + PMGR + pthread + legacy display），产物 52,121,600 B / sha256 `e1119e44…`。设备未连接，存储/root 的实机路径尚未验证；`SecurityLock ... LockCapsuleInterface` 仍是 UEFI 输出，不是 XNU 挂点。
+> **当前一句话状态：** 阶段 1–5 已到达；阶段 6 的 **full 内核已完整编译并 prelink 成功**（UFS + AES + mockfs + PMGR + pthread + legacy display），产物 52,121,600 B / sha256 `62eac242…`（每次链接的 LC_UUID 不同，sha 会变，大小不变）。设备未连接，存储/root 的实机路径尚未验证；`SecurityLock ... LockCapsuleInterface` 仍是 UEFI 输出，不是 XNU 挂点。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -29,7 +29,7 @@
 | 3. 负载 | ✅ 完成 | `unixnu.toml`、`xnu` 条目、80 MiB payload、ADT 都被识别；initrd 对齐问题修复后出现 `uke first boot: source 4K XNU to console`。 |
 | 4. DarwinBoot | ✅ 完成 | `Exiting boot services`、entry pa、window 0x10000000、video base 0xE3940000、CurrentEL 1、SCTLR/ID_AA64 打印；绿条出现。 |
 | 5. 内核入口 | ✅ 到达 | 绿条后 XNU 已运行；`SecurityLock ... LockCapsuleInterface` 是 UEFI 输出，不是内核挂点。XNU 现在等根设备。 |
-| 6. 存储与根卷 | 🟡 编译完成，待实机 | `uke-full_defconfig` 已链接 `NativeUfs` + `NativeAES` + mockfs + PMGR + pthread + legacy display，CI run `39493263420` 绿色；UFS 块类已绑定到固定 prelink candidate。`userdata`/root UUID/APFS 实机路径待设备。 |
+| 6. 存储与根卷 | 🟡 编译完成，待实机 | `uke-full_defconfig` 已链接 `NativeUfs` + `NativeAES` + mockfs + PMGR + pthread + legacy display，CI run `39495271779` 绿色；UFS 块类已绑定到固定 prelink candidate。`userdata`/root UUID/APFS 实机路径待设备。 |
 | 7. 用户态 | ❌ 未开始 | launchd、Data 卷、SpringBoard/设置界面、显示服务均未到。 |
 
 ---
@@ -85,8 +85,8 @@
   - UFS 块类符号：新增 `build-ufs-original-bindings.py`，从固定 prelink candidate 推导 190-slot vtable、metaclass、构造/析构地址，补进 `libNativeUfs.a`。
   - PMGR audit 需要 `kernelcache.release.ipad7.decompressed` → staging 到 `.cache/firmware/kernelcache.macho/`。
   - Adreno 关闭时 `NativeLegacyDisplay` 的 4 个 GPU fallback 符号由 `package/LegacyDisplayStubs.c` 提供。
-- 成功 run：`39493263420`（`kernel` 与 `full` 均绿）。
-- full 产物：`uke-kernel-full/kernel.macho`，**52,121,600 B**，sha256 `e1119e44f39143b02fa84679e51193f41ec9568fa1f65b7517af050adc82616e`。
+- 成功 run：`39495271779`（`kernel` 与 `full` 均绿；`39493263420` 是首次 full 绿，`39495271779` 是文档/GPU 准备后的复跑）。
+- full 产物：`uke-kernel-full/kernel.macho`，**52,121,600 B**，sha256 `62eac24259d3beae2c84e795a662ca28c231bbc338d5736bf1ab93c517853f99`（每次链接的 LC_UUID 不同，sha 会变；以 artifact 内的 `.sha256` 为准。首次绿 run 的 sha 是 `e1119e44…`，大小相同）。
 - archive 证据：`out/uke/logs/archive-01..13-*.log`；UFS binder 输出 `PASS: 11 NativeUfs bindings ... 176 kernel method bindings, 190 slots`；AES 使用 recorded bindings。
 - 旧 full-pmgr 产物保留：51,994,624 B，sha256 `d2b28ced43e055bde0f234fdc0db18d60fba64118a7dbbdd1cf15847522d37e6`。
 
@@ -126,7 +126,7 @@
 - GPU 只完成了板级数据/校验（`docs/GPU-PORT.md`）；Adreno 732 固件和功率路径未收集，`CONFIG_XNU_NATIVE_ADRENO` 仍关闭。
 - 触摸、Wi-Fi/蓝牙、USB、音频、传感器、电池、suspend/resume 均未做。
 - `owned_memory_size` 目前 256 MiB；sheng 用 4.75 GiB。uke 的 DT reserved-memory 把最大连续块压到 326 MiB；如需更大窗口，要裁剪 reserved-memory，而不是只调大 `ADD_LIMIT`。
-- `kernel` 与 `full` 两个 CI job 已在 run `39493263420` 同时绿。
+- `kernel` 与 `full` 两个 CI job 已在 run `39495271779` 同时绿。
 
 ---
 
@@ -149,7 +149,7 @@
 | 产物 | 路径 | 说明 |
 |---|---|---|
 | UEFI FD | `uefi-uke/Build/ukePkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd` | 3 MiB，含 initrd 对齐/2 GiB/状态通道修复 |
-| **full 内核** | CI artifact `uke-kernel-full/kernel.macho` | **52,121,600 B，sha256 `e1119e44f39143b02fa84679e51193f41ec9568fa1f65b7517af050adc82616e`** |
+| **full 内核** | CI artifact `uke-kernel-full/kernel.macho` | **52,121,600 B，最新 sha256 `62eac242…`（每次链接会变，以 artifact `.sha256` 为准）** |
 | full 内核（本地副本） | `/home/allenwdk/uke-port/ci/uke-kernel-full/kernel.macho` | 下载后自行保存；payload 用它重建 |
 | 旧 full-pmgr 内核 | `/home/allenwdk/uke-port/ci/uke-kernel-full-pmgr/kernel.macho` | 51,994,624 B，sha256 `d2b28c...` |
 | payload | `out/uke/payload/payload.img` | 80 MiB，5 秒菜单，256 MiB owned memory（旧 full-pmgr payload） |
@@ -192,7 +192,7 @@ fastboot reboot
 
 - `workflow_dispatch` 或 push 到 `main`（触发路径见 workflow，含 `drivers/**`、`kits/**`）。
 - artifacts：`uke-kernel`（first-console）和 `uke-kernel-full`（stage-6 full）。
-- 最近成功 run：`39493263420`（两个 job 同时绿）。
+- 最近成功 run：`39495271779`（两个 job 同时绿；`39493263420` 为首次 full 绿）。
 - 缓存：`UniXNU/out` + `UniXNU-uke/.cache` + Homebrew 下载；第二次运行会复用 bootstrap 对象，冷启动约 15–17 分钟，缓存命中后约 8–10 分钟。
 - 日志：`out/uke/logs/kernel.log`、`prelink.log`、`archive-01..13-*.log`；artifact 内 `logs/`。
 
@@ -251,6 +251,7 @@ fastboot reboot
 | 2026-10-21 | full 配置/archives | `CONFIG_XNU_BUILD_ARCHIVES`、13 个 archive builder、`IOStorageFamily` feed、AES recorded bindings |
 | 2026-10-21 | UFS bring-up | 设备 override 修 tick 守卫 + GCC `0x177000`/`0x19e000`；`build-ufs-original-bindings.py` 生成块类绑定 |
 | 2026-10-21 | full CI 成功 | run `39493263420` 两 job 绿；`kernel.macho` 52,121,600 B，sha256 `e1119e44…` |
+| 2026-10-21 | 文档/GPU 准备后复跑 | run `39495271779` 两 job 绿；同尺寸内核 sha `62eac242…`（LC_UUID 变化） |
 | 2026-10-21 | CI 缓存 | `out/` + `.cache` + Homebrew 缓存；`concurrency` 取消旧 run；冷/热启动约 15–17 / 8–10 分钟 |
 | 2026-10-21 | GPU 准备 | A732 板级数据写入 `board.toml [gpu]`；`check-uke-gpu.py` 对照实机 DTB 通过；`docs/GPU-PORT.md` 记录剩余固件/功率输入 |
 
