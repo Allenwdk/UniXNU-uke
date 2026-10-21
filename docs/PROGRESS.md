@@ -126,6 +126,8 @@
   - 32 MiB APFS Data seed 在 userland 启动后很快耗尽；`sheng-data-persist=2` 的持久窗口存在，但 APFS 容器本身只有 32 MiB，无法扩容。
   - 另外有 `IOMFB: default_fb_surface: No Default FB Surface found. Return error`（显示/GPU 下一阶段）、`invalid denylist` 和 `logd ... crossed memory high watermark (16 MB)`（日志洪水副作用），不是当前启动阻塞。
 - 修复：`grow-data-seed.yml` 复用已有 `uke-data-seed` 32 MiB 产物，用 macOS `diskutil apfs resizeContainer` 把 APFS 容器扩到 **214 GiB**（userdata 241,617,055,744 B − root 9,382,658,048 B − 1 GiB log reserve − 4 MiB guard − 1 GiB margin），再打包为 `DBRDISK1`。结果：逻辑 229,780,750,336 B，encoded 1,085,568 B，encoded sha `9f3ffc70…`，seed 身份 `29c86166…`，卷 UUID 仍是 `292E72B9-…`。新 payload sha `ff367383…`，`vendor_boot_uke_data7.img` sha `17cd5c69…`；等设备充电后刷入验证 ENOSPC 是否消失。
+- 2026-10-21：data7 首次启动在 UniXNU 菜单返回 `Bad Buffer Size`。根因不是 seed 格式，而是 **boot.img 里的 DarwinBoot 太旧**：UEFI FD 于 00:15 编译时 `PackedRamdisk.h` 只允许 `Logical <= SIZE_2GB`（2 GiB）；214 GiB 的 packed seed 被 `RamdiskLayout` 拒绝，DarwinBoot 返回 `EFI_BAD_BUFFER_SIZE`。当前 submodule 的 commit `85332b3` 已把上限改为 1 TiB；重新执行 `unixnu build firmware` 后 FD sha `7ba803a6…`，新 boot image `boot_uke_1tib.img` sha `522fe6d0…`（1,515,520 B，DTB 仍是 `57e52bb8…`）。下次刷 `boot_uke_1tib.img` + `vendor_boot_uke_data7.img`。
+  - 固件 preflight 在本地 Linux 需要显式路径：`UNIXNU_UEFI=/home/allenwdk/uefi-uke UNIXNU_DTB=/home/allenwdk/UniXNU-uke/build/uke/uke.dtb`，并先 `mkdir -p out/uke/tree/build/uke`（check-uke.py 会写 `build/uke/check.json`）。
 
 ---
 
