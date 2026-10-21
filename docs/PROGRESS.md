@@ -117,6 +117,9 @@
 - 修复：用 DarwinBoot 自带的 `drivers/DarwinBoot/Test/packed_ramdisk.py` 把 32 MiB seed 打包成 `DBRDISK1`（995,408 B，sha `058109c4…`，逻辑 32 MiB，seed 身份仍是 `d92b2443…`）；payload 重建为 64 MiB，vendor_boot 69,005,312 B。新的 userland Data 内核 sha `a7317807…`，带 `OWNER_DATA_MOUNT`/`NATIVE_RAM_BLOCK`/`OWNER_UNION_SYSTEMOS`。
 - 2026-10-21：packed Data seed 启动后不再有 `Compromised Data`，内核 Data 挂载没有触发 `offline scratch Data mount failed`，launchd 继续跑到 `mount[3]`。结合上游检查，确认剩余失败是 `/chosen` 缺少 `boot-manifest-hash`。
 - 修复：`[payload.adt] boot_manifest_hash` 显式提供 48 字节 bring-up owner boot-set 身份（`SHA-384("UkeBringup.BootSet.v1\\0")`，不是 Apple personalization）；`make-uke-adt.py` 写入 `/chosen/boot-manifest-hash`，`payload.py` 从 board.toml 传参。新 payload sha `2da6f5ff…`，vendor_boot `vendor_boot_uke_data3.img` sha `0b79b7d8…`。
+- 2026-10-21：`mount[3]` 修复刷入后仍然看不到内核日志，屏幕黑掉后重启。定位到两个独立问题：
+  - DEVELOPMENT 内核的 `kprintf` 被 `disable_kprintf_output=true` 门控；`-v`/`debug=0x14e` 只放开串口输出，而 uke 没有 UART。已在 `[payload] kernel_args` 加 `-enable_kprintf_spam`。
+  - 启用 kprintf 后，`initialize_screen()` 把 DarwinBoot 传来的 GOP **物理** framebuffer 地址当成虚拟地址（`v_baseAddr` 4 字节对齐、bit0 未置位），第一次 console 写入就 fault，表现为黑屏/重启。内核补丁 `patches/xnu/zzzzz-video-console-physical-fb.patch` 在 `newVideoVirt < VM_MIN_KERNEL_ADDRESS` 时也走 `ml_io_map_unmappable()`；`PE_state.video.v_baseAddr` 保持物理地址，不影响 NativeGOPPresenter/NativeLegacyDisplay 的匹配。
 
 ---
 
@@ -305,6 +308,7 @@ fastboot reboot
 | 2026-10-21 | Data seed / RAM block | macOS CI 生成 32 MiB APFS seed；`OWNER_DATA_MOUNT`/`NATIVE_RAM_BLOCK` + RAM block binder；raw seed 触发 `EFI_COMPROMISED_DATA` |
 | 2026-10-21 | packed Data seed | `DBRDISK1` 995 KB；payload 64 MiB / vendor_boot 69,005,312 B；userland Data 内核 `a7317807…` |
 | 2026-10-21 | boot manifest hash | 上游检查证明 `mount[3]` 66 是缺 `/chosen/boot-manifest-hash`；ADT 写入 48 字节 bring-up hash；payload `2da6f5ff…` / vendor_boot `0b79b7d8…` |
+| 2026-10-21 | kernel logs | `-enable_kprintf_spam` 放开 DEVELOPMENT 的 kprintf；补 `zzzzz-video-console-physical-fb.patch` 把物理 framebuffer 交给 `ml_io_map_unmappable()`；待 CI 新内核 |
 
 ---
 

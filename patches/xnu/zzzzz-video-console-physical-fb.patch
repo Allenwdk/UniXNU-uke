@@ -1,0 +1,18 @@
+diff --git a/osfmk/console/video_console.c b/osfmk/console/video_console.c
+index 83be1a7..e9f2f0c 100644
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -2840,6 +2840,12 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
+ 		 */
+ 		newVideoVirt = boot_vinfo->v_baseAddr;
+-		makeMapping = (kernel_map == VM_MAP_NULL) || (0 != (1 & newVideoVirt));
++		/*
++		 * DarwinBoot hands over the GOP physical base without the low-bit
++		 * "physical" marker.  A base below the kernel VA range is still a
++		 * physical framebuffer and must be mapped before the console writes.
++		 */
++		makeMapping = (kernel_map == VM_MAP_NULL) || (0 != (1 & newVideoVirt)) ||
++		    (newVideoVirt < VM_MIN_KERNEL_ADDRESS);
+ 		if (makeMapping) {
+ 			newVideoVirt = 0;
+ 			new_vinfo.v_physaddr = boot_vinfo->v_baseAddr & ~3UL;           /* Get the physical address */
