@@ -1,9 +1,10 @@
 name: build-uke-data-seed
 
-# Build the 32 MiB APFS Data seed from the original iPad7,1 OS volume. The
-# owner Data mount uses it as the initial /private/var; sheng-data-persist=2
-# keeps later changes in the userdata store window. This needs macOS hdiutil,
-# so it is a separate workflow from the kernel build.
+# Build the APFS Data seed from the original iPad7,1 OS volume and grow its
+# container to the end of the uke userdata partition. The owner Data mount uses
+# it as the initial /private/var; sheng-data-persist=2 keeps later changes in
+# the userdata store window. This needs macOS hdiutil/diskutil, so it is a
+# separate workflow from the kernel build.
 
 on:
   workflow_dispatch:
@@ -28,6 +29,7 @@ jobs:
           repository: Allenwdk/UniXNU
           ref: uke
           path: UniXNU
+          submodules: recursive
 
       - name: Fetch the OS member
         working-directory: UniXNU
@@ -47,12 +49,28 @@ jobs:
           ls -l build/owner-data-fixture/
           cat build/owner-data-fixture/seed.json
 
+      - name: Grow the Data seed to the userdata window
+        working-directory: UniXNU
+        run: |
+          python3 -c "import sys; sys.path.insert(0, 'drivers/DarwinBoot/Test'); import packed_ramdisk; packed_ramdisk.pack('build/owner-data-fixture/owner-data-32.cdr', 'build/owner-data-fixture/owner-data-32.dbr')"
+          # userdata is 241,617,055,744 B; the root image is 9,382,658,048 B.
+          # --gib 214 leaves the root image, the 1 GiB log reserve, a 4 MiB
+          # guard and one more GiB of margin inside the partition.
+          python3 scripts/seed-data-grow.py --gib 214 \
+            build/owner-data-fixture/owner-data-32.dbr \
+            build/owner-data-fixture/owner-data-214.dbr \
+            | tee build/owner-data-fixture/grown.json
+          ls -l build/owner-data-fixture/
+
       - name: Upload the Data seed
         uses: actions/upload-artifact@v4
         with:
           name: uke-data-seed
           path: |
             UniXNU/build/owner-data-fixture/owner-data-32.cdr
+            UniXNU/build/owner-data-fixture/owner-data-32.dbr
+            UniXNU/build/owner-data-fixture/owner-data-214.dbr
             UniXNU/build/owner-data-fixture/seed.json
+            UniXNU/build/owner-data-fixture/grown.json
           if-no-files-found: error
           retention-days: 14
