@@ -35,6 +35,7 @@ on:
       - 'drivers/**'
       - 'kits/**'
       - 'package/**'
+      - 'patches/**'
       - 'scripts/**'
       - 'docs/MACOS-BUILD.md'
       - '.github/workflows/build-kernel.yml'
