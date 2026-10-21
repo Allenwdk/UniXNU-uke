@@ -71,6 +71,7 @@ for i in range(168,358):
     if i==184:header+=' virtual bool isMainDisplay();\n'
     elif i==188:header+=' virtual IOReturn getDotPitch(uint32_t *);\n'
     elif i==213:header+=' virtual IOReturn supportedFrameInfo(uint32_t,uint32_t *,char *,uint32_t *)=0;\n'
+    elif i==242:header+=' virtual IOReturn copyDefaultSurfacePortName(task_t,uint32_t *);\n'
     elif i==249:header+=' virtual void getDisplayDimensions(uint32_t *,uint32_t *);\n'
     elif i==290:header+=' virtual void kickSwapQueue();\n'
     elif i==296:header+=' virtual bool validateSwap(const OriginalLegacySwapRequest *);\n'
@@ -113,14 +114,19 @@ owned=[];native=[]
 for i,name in enumerate(compiled):
     expected=int(methods[i]['address'],16)
     if name.startswith(('__ZN19NativeLegacyDisplay','__ZNK19NativeLegacyDisplay')):
-        owned.append(i);require(i in (0,1,7,14,84,86,87,141,155,184,188,288,290,296) or i in pure,'Only qualified own methods and guarded leaves override')
+        owned.append(i);require(i in (0,1,7,14,84,86,87,141,155,184,188,242,288,290,296) or i in pure,'Only qualified own methods and guarded leaves override')
     elif '25IOMobileFramebufferLegacy' in name:
         require(i not in pure,'No unresolved original abstract backend target');bindings[name]=expected
     else:
         require(i<168 and names.get(name)==expected,'Actual inherited native base symbol '+str(i));native.append(i)
-require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,288,290,296]+pure),'Exact owned method set')
+require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,242,288,290,296]+pure),'Exact owned method set')
 undefined={n for n,_,k in symbols if k==1 and 'IOMobileFramebufferLegacy' in n}
 require(undefined==set(bindings),'All and only actual original-class imports qualified')
+# The default-surface port fallback calls the original slot242 and the original
+# surface -> Mach-port helper. They are not original-class imports, so bind
+# their exact addresses after the class-import assertion.
+bindings['_uke_original_default_surface_port']=0xfffffff00578b390
+bindings['_uke_surface_copy_port_name']=0xfffffff004baa90c
 # Exact original IOSurface getters, independently observed through the real
 # original swap request. These aliases call original code; no object layout
 # is substituted and no original method/vtable is patched.
