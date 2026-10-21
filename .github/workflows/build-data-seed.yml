@@ -1,0 +1,58 @@
+name: build-uke-data-seed
+
+# Build the 32 MiB APFS Data seed from the original iPad7,1 OS volume. The
+# owner Data mount uses it as the initial /private/var; sheng-data-persist=2
+# keeps later changes in the userdata store window. This needs macOS hdiutil,
+# so it is a separate workflow from the kernel build.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  data-seed:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+        with:
+          path: UniXNU-uke
+
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: Allenwdk/UniXNU
+          ref: uke
+          path: UniXNU
+
+      - name: Fetch the OS member
+        working-directory: UniXNU
+        run: ./unixnu ipsw fetch OS -D ../UniXNU-uke
+
+      - name: Build the Data seed
+        working-directory: UniXNU
+        run: |
+          mount=.cache/firmware/target-volumes/os-mount
+          mkdir -p "$mount"
+          dmg=$(find out/ipsw -name '044-76040-038.dmg' -print -quit)
+          test -n "$dmg"
+          echo "OS image: $dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount" || true' EXIT
+          python3 scripts/prepare-owner-data-fixture.py
+          ls -l build/owner-data-fixture/
+          cat build/owner-data-fixture/seed.json
+
+      - name: Upload the Data seed
+        uses: actions/upload-artifact@v4
+        with:
+          name: uke-data-seed
+          path: |
+            UniXNU/build/owner-data-fixture/owner-data-32.cdr
+            UniXNU/build/owner-data-fixture/seed.json
+          if-no-files-found: error
+          retention-days: 14
