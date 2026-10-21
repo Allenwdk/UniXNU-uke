@@ -33,9 +33,11 @@
 #define UKE_USB_DWC3_DCTL            0xc704U
 #define UKE_USB_DWC3_DEVTEN          0xc708U
 #define UKE_USB_DWC3_DSTS            0xc70cU
-#define UKE_USB_DWC3_DEPCMDPAR0(n)   (0xc720U + 16U * (n))
+// DWC3_DEP_BASE(n) = 0xc700 + 0x20 + 0x10*n; the four words are
+// PAR2, PAR1, PAR0, CMD (Linux core.h lines 168-171).
+#define UKE_USB_DWC3_DEPCMDPAR2(n)   (0xc720U + 16U * (n))
 #define UKE_USB_DWC3_DEPCMDPAR1(n)   (0xc724U + 16U * (n))
-#define UKE_USB_DWC3_DEPCMDPAR2(n)   (0xc728U + 16U * (n))
+#define UKE_USB_DWC3_DEPCMDPAR0(n)   (0xc728U + 16U * (n))
 #define UKE_USB_DWC3_DEPCMD(n)       (0xc72cU + 16U * (n))
 
 // GCTL.

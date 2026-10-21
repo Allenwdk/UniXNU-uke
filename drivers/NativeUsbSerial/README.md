@@ -2,17 +2,19 @@
 
 uke (Xiaomi Pad 7, SM7675) USB2 peripheral debug driver.
 
-**Current revision: read-only probe.** The driver maps the DWC3 wrapper,
-QSCRATCH, eUSB2 PHY, GCC/GDSC, TCSR and apps-SMMU windows and dumps the state
-ABL/UEFI left behind. It does not write a register, allocate DMA or start a
-thread. The CDC-ACM + msgbuf log path is the next revision.
+**Current revision: read-only probe plus an opt-in warm CDC-ACM/msgbuf path.**
+The probe maps the DWC3 wrapper, QSCRATCH, eUSB2 PHY, GCC/GDSC, TCSR and
+apps-SMMU windows and dumps the state ABL/UEFI left behind. With
+`native-usb-serial=1` the driver performs the warm handoff, enumerates a
+CDC-ACM device and relays the kernel msgbuf. The warm path has not been
+hardware-validated yet; the probe is the first hardware gate.
 
 ## Boot arguments
 
 | Argument | Meaning |
 | --- | --- |
 | `native-usb-probe=1` | Read-only dump; no enumeration |
-| `native-usb-serial=1` | Reserved for the CDC-ACM/log path (currently logs that it is not enabled) |
+| `native-usb-serial=1` | Warm handoff, CDC-ACM enumeration and msgbuf relay |
 | `native-usb-serial-log=1` | Reserved: msgbuf relay |
 | `native-usb-serial-dump=1` | Reserved: send the full msgbuf |
 | `native-usb-serial-cold=1` | Reserved: WCD939x/repeater cold init |

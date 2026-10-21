@@ -1,7 +1,7 @@
 # USB serial debug channel (uke)
 
-Status: **read-only probe landed on `uke-usbserial`; CDC-ACM + msgbuf log is
-the next revision.**
+Status: **read-only probe plus the warm CDC-ACM/msgbuf implementation are on
+`uke-usbserial`; the serial path is opt-in and awaits hardware validation.**
 
 ## Why
 
@@ -68,7 +68,7 @@ the probe result into the existing pram log ring.
 - A zero/`0xffffffff` PHY snapshot usually means the PHY rail or reference
   clock is off; that is the signal to add the cold-init path.
 
-## Next revision: CDC-ACM + msgbuf
+## Warm CDC-ACM + msgbuf (implemented, opt-in)
 
 1. Warm init: GDSC on, USB branch gates/resets, eUSB2 PHY 19.2 MHz sequence,
    QSCRATCH UTMI pipe clock + VBUS override, DWC3 soft reset, apps-SMMU
@@ -84,6 +84,11 @@ the probe result into the existing pram log ring.
    ```
 
    The baud rate is nominal for CDC-ACM; the device ignores it.
+
+The default board command line still selects `native-usb-probe=1`; add
+`native-usb-serial=1` (for example with `--kernel-arg native-usb-serial=1`) to
+start the warm path. Both arguments together dump the probe first and then
+enumerate.
 
 The first version deliberately does **not** become the `kprintf` console and
 does **not** implement KDP. Those need early-boot or polled paths and are a

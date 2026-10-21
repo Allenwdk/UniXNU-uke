@@ -346,7 +346,7 @@ fastboot reboot
 | 2026-10-22 | watchdog 首次生效 | 一次启动里 `watchdog` 变为 launchd SIGKILL；越过 `amfi: Exiting Early Boot`、launchd tasks、IOACPIFamily、IOHIDSystem；系统进入 userland |
 | 2026-10-22 | watchdog 复现 | 后续日志再次出现 `pid 195 ... namespace 2 subcode 0x5`（SIGTRAP）与 `coredump (watchdogd, pid 105)`；策略未完全消除 watchdog，显示仍是主阻塞；`logd`/CommCenter watermark、`MobileGestalt` unnest 为非致命噪声 |
 | 2026-10-22 | 当前阻塞 | 系统 alive（`CommCenter`/`logd`/`coresymbolicationd`/APFS tx），但 `IOMFB: default_fb_surface: No Default FB Surface found` + `display type is 0`，屏幕停在 Apple logo；下一步 NativeMobileDisplay / Adreno 732（暂不启动） |
-| 2026-10-22 | USB serial probe | 独立 worktree `uke-usbserial` 新增 `NativeUsbSerial` 只读探针；`native-usb-probe=1` dump DWC3/PHY/GCC/SMMU；CDC-ACM/msgbuf 日志流为下一阶段 |
+| 2026-10-22 | USB serial | 独立 worktree `uke-usbserial` 新增 `NativeUsbSerial`：`native-usb-probe=1` 只读 dump DWC3/PHY/GCC/SMMU；`native-usb-serial=1` 实现热接管 CDC-ACM + msgbuf 日志流，待实机验证 |
 
 ---
 
