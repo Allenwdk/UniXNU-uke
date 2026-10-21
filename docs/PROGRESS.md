@@ -151,7 +151,7 @@
 
 - 2026-10-22：为拿到默认 surface 的原始状态，构建了 gated panic 诊断内核（commit `8069f96`，kernel `c95afc51…`、payload `eed9ee7b…`、`vendor_boot_uke_surface_panic.img` `3ce3a67b…`），在 `start()` 后直接 `panic("UKE display: st=… root=… reg=… temp=… surf=… sid=… flag=… dims=… fmt=…")`；已刷入两个槽位，等屏上 panic 文本。`surf=0` 是预期的（panic 在 adopt 之前），关键是 `temp`、`sid`、`reg`、`flag`。
 
-- 2026-10-22：panic 诊断结果：`st=1 root=0x… reg=0x… temp=0x… sid=1 flag=1 dims=3200x2136 fmt=42475241/1/4`。`temp` 非空且 `sid=1` → 原厂 slot299 用我们预置的 32 MiB 系统内存 region 成功创建并注册了默认 surface；`surf=0` 只是 adopt 之前的状态。下一步改成第一个 `newUserClient` 时 panic（commit `d284317`，CI run `39659831112`），确认显示客户端是否打开、adopt 是否生效，以及后面 presentation/watchdog 的行为。该诊断内核 `f8637059…`、payload `f36fdc2b…`、`vendor_boot_uke_client_panic.img` `71dcd576…` 已刷入两个槽位，等 `UKE client: type=… pid=… surf=… temp=… sid=…`。
+- 2026-10-22：panic 诊断结果：`st=1 root=0x… reg=0x… temp=0x… sid=1 flag=1 dims=3200x2136 fmt=42475241/1/4`。`temp` 非空且 `sid=1` → 原厂 slot299 用我们预置的 32 MiB 系统内存 region 成功创建并注册了默认 surface；`surf=0` 只是 adopt 之前的状态。下一步改成第一个 `newUserClient` 时 panic（commit `d284317`，CI run `39659831112`），确认显示客户端是否打开、adopt 是否生效，以及后面 presentation/watchdog 的行为。该诊断内核 `f8637059…`、payload `f36fdc2b…`、`vendor_boot_uke_client_panic.img` `71dcd576…` 已刷入两个槽位。实机结果：**没有 panic**——复位发生在任何显示 user client 打开之前，所以默认 surface 不是这次复位的直接原因。随后用 v2 内核加 `wdt=-1` 生成 `vendor_boot_uke_wdt_off.img`（payload `0f224e9d…`，sha `a2501050…`）刷入两个槽位，测试内核 watchdog 是否是复位源。
 
 ---
 
