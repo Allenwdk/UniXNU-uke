@@ -2,6 +2,7 @@
 // Bounded offline original lifecycle instrument; no desktop claim.
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IODeviceMemory.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOUserClient.h>
@@ -397,16 +398,29 @@ void native_legacy_display_late_probe(void) {
                     if(attached){
                         if(defaultSurface) {
                             unsigned char *fb=reinterpret_cast<unsigned char *>(display);
-                            // Audit-qualified platform state: the original Legacy
-                            // start reads this enable byte and the mode block when
-                            // slot 299 creates the default surface.
-                            fb[0x1780]|=1;
+                            // The original create_default_fb_surface asks the
+                            // IOSurfaceRoot for PurpleGfxMem, which only the absent
+                            // platform/GPU driver provides. Without it the surface's
+                            // +0x28 stays null and layout_buffers faults at
+                            // 0xfffffff00578d110. Seed the original region cache at
+                            // +0x17c0 with a plain system-memory descriptor; the
+                            // 0x80-aligned rows need about 27.6 MB.
+                            IOBufferMemoryDescriptor *region=
+                                IOBufferMemoryDescriptor::withCapacity(0x2000000,kIODirectionOutIn);
                             uint32_t format=0x42475241,planes=1,bpp=4;
                             memset(fb+0x1700,0,0x70);
                             memcpy(fb+0x1700,&format,sizeof(format));
                             memcpy(fb+0x1704,&planes,sizeof(planes));
                             memcpy(fb+0x1708,&bpp,sizeof(bpp));
                             fb[0x1748]=0;
+                            if(region) {
+                                memcpy(fb+0x17c0,&region,sizeof(region));
+                                fb[0x1780]|=1;
+                                IOLog("UKE: default surface region=%p bytes=%llu\n",
+                                    region,(unsigned long long)region->getLength());
+                            } else {
+                                IOLog("UKE: default surface region allocation failed; slot299 disabled\n");
+                            }
                         }
                         native_legacy_stage=5;started=display->start(nub);native_legacy_start_result=started;
                     }
