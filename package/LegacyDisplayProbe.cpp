@@ -207,6 +207,19 @@ void native_legacy_registration_observed(IOService *display) {
 void native_legacy_client_enter(task_t task,uint32_t type) {
     native_legacy_client_calls=native_legacy_client_calls+1;native_legacy_client_task=(uintptr_t)task;
     native_legacy_client_type=type;native_legacy_client_pid=task?proc_pid((proc_t)get_bsdtask_info(task)):0;
+    unsigned clientPanic=0;
+    PE_parse_boot_argn("offline-legacy-client-panic",&clientPanic,sizeof(clientPanic));
+    if(clientPanic) {
+        unsigned char *fb=reinterpret_cast<unsigned char *>((uintptr_t)native_legacy_object);
+        void *surface=nullptr,*temp=nullptr;uint32_t sid=0;
+        if(fb) {
+            memcpy(&surface,fb+0x1618,sizeof(surface));
+            memcpy(&temp,fb+0x1620,sizeof(temp));
+            if(temp)memcpy(&sid,reinterpret_cast<unsigned char *>(temp)+0x10,sizeof(sid));
+        }
+        panic("UKE client: type=%u pid=%d task=%p surf=%p temp=%p sid=%u",
+            (unsigned)type,(int)native_legacy_client_pid,task,surface,temp,(unsigned)sid);
+    }
 }
 void native_legacy_client_observed(IOReturn status,IOUserClient *client) {
     native_legacy_client_status=status;native_legacy_client_object=(uintptr_t)client;
