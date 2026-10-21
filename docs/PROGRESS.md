@@ -1,8 +1,8 @@
 # UniXNU on Xiaomi Pad 7 (uke) — 进度文档
 
-> **Last updated:** 2026-10-21
+> **Last updated:** 2026-10-22
 >
-> **当前一句话状态：** union mount 已生效，launchd 已启动；Data seed 已按 DarwinBoot 要求打包成 `DBRDISK1`（995 KB，逻辑 32 MiB），新的 userland Data 内核/payload/vendor_boot 已就绪，等待刷入。此前 raw APFS seed 触发的 `EFI_COMPROMISED_DATA` 已定位并修复。
+> **当前一句话状态：** AMFI launch-constraint 和 watchdogd 两个复位源都已解决，内核已进入 userland 并运行 `CommCenter`/`logd`/`coresymbolicationd`；目前停在 Apple logo，唯一阻塞是显示/GPU 的 default FB surface（`IOMFB: default_fb_surface: No Default FB Surface found`，`display type is 0`）。下一步是 NativeMobileDisplay / Adreno 732（按用户要求暂不启动）。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -328,6 +328,12 @@ fastboot reboot
 | 2026-10-21 | kernel logs | `-enable_kprintf_spam` 放开 DEVELOPMENT 的 kprintf；补 `zzzzz-video-console-physical-fb.patch` 把物理 framebuffer 交给 `ml_io_map_unmappable()`；待 CI 新内核 |
 | 2026-10-21 | userland 日志 | `zzzzzz-video-console-text.patch` + `-uketextconsole` 后日志正常；launchd 及 `cfprefsd`/`accountsd`/`MobileGestaltHelper` 等启动，Apple logo 可见 |
 | 2026-10-21 | Data ENOSPC | 32 MiB seed 太小；`grow-data-seed.yml` 复用旧产物扩到 214 GiB，encoded 1,085,568 B，seed `29c86166…`；payload `ff367383…` / vendor_boot `17cd5c69…` 待复测 |
+| 2026-10-21 | CI 拆分/缓存 | `build-kernel.yml` 改为 dispatch-only；新增 `ci.yml` push 校验 + `check-xnu-patch-set.sh`；cache key 改为 exact source identity（v6，无 restore-keys） |
+| 2026-10-21 | AMFI kill switch | payload 加 `amfi_get_out_of_my_way=1`；`AMFI: Launch Constraint Violation (enforcing)` 消失，launchd 系统服务继续启动 |
+| 2026-10-21 | watchdog 根因 | `sheng-disable-watchdogd=1` 的调用被 `XNU_BOOT_PROGRESS` 编译掉；`watchdogd` SIGTRAP（namespace 2 subcode 0x5）复位 |
+| 2026-10-22 | watchdog policy | 新 patch `zzzzzzzz-uke-watchdog-policy.patch` + `CONFIG_XNU_WATCHDOG_POLICY=y`；`BootWatchdogPolicy.c` 编入 `libUkeLastLog.a`；内核 `7ec6670e…` / payload `b503aef5…` / vendor_boot `c55c6eb5…` |
+| 2026-10-22 | watchdog 解决 | `watchdog` 变为 launchd SIGKILL；越过 `amfi: Exiting Early Boot`、launchd tasks、IOACPIFamily、IOHIDSystem；系统进入 userland |
+| 2026-10-22 | 当前阻塞 | 系统 alive（`CommCenter`/`logd`/`coresymbolicationd`/APFS tx），但 `IOMFB: default_fb_surface: No Default FB Surface found` + `display type is 0`，屏幕停在 Apple logo；下一步 NativeMobileDisplay / Adreno 732（暂不启动） |
 
 ---
 
