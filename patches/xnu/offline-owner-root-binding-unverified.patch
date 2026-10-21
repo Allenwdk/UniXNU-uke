@@ -1,0 +1,21 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 94243c9..59ab1df 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1071,6 +1071,7 @@ bsd_init(void)
+ 			/* enforce sealedness */
+ 			int autherr = VNOP_IOCTL(rootvnode, FSIOC_KERNEL_ROOTAUTH, NULL, 0, vfs_context_kernel());
+ 			int owner_authorized = 0;
++			int allow_unverified = 0; PE_parse_boot_argn("native-ufs-allow-unverified", &allow_unverified, sizeof(allow_unverified));
+ #if defined(XNU_OWNER_ROOT_AUDIT) && XNU_OWNER_ROOT_AUDIT
+ 			{
+ 				extern int native_verified_block_root_authorized(dev_t);
+@@ -1094,7 +1095,7 @@ bsd_init(void)
+ 				native_owner_root_checkpoint(autherr, owner, device);
+ 			}
+ #endif
+-			if (autherr && !owner_authorized) {
++			if (autherr && !owner_authorized && !allow_unverified) {
+ 				panic("rootvp not authenticated after mounting");
+ 			}
+ #if defined(XNU_OWNER_ROOT_TRUST) && XNU_OWNER_ROOT_TRUST
