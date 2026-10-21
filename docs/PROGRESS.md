@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-10-21
 >
-> **当前一句话状态：** 阶段 1–5 已到达；阶段 6 的 full 内核已完整编译并 prelink，**UFS 读路径已在实机验证**：`userdata 2d3000..3b147fa` 读到了，block0 可读，`manifest status=1` 只是因为当前还是 Android 的 userdata（没有 `SHNGROOT`）。下一步是构建/刷入 userdata 并开启 `native-ufs-root=1`（bring-up 用 `native-ufs-allow-unverified=1`）。`SecurityLock ... LockCapsuleInterface` 仍是 UEFI 输出，不是 XNU 挂点。
+> **当前一句话状态：** 阶段 6 的 UFS 读路径和 root 路径都已实机验证到 manifest 检查：`native-ufs-probe=10` 读到 GPT/userdata/block0，`native-ufs-root=1` 能走到 `root manifest rejected`（当前 userdata 还是 Android 数据）。已验证的 8.74 GiB `SHNGROOT` userdata 镜像已生成，尚未刷入；设备已恢复 Android + KernelSU，userdata 未动。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -92,14 +92,17 @@
 
 ### 3.5 实机结果
 
-- 2026-10-21：full 内核 + `native-ufs-probe=10`（只读）启动，panic screen 显示：
-  - `NATIVE_UFS root check`
-  - `userdata first=2d3000 last=3b147fa`（与 `board.toml` 一致）
-  - `block0 magic 17bc1e8b f86dfb83 ext4magic=ae7b ext4blocks=253525236`
-  - `manifest status=1 windows=0`（Android userdata，没有 `SHNGROOT`）
-  - `TCR=0x00000022a51a251a`、`SCTLR=0x000000003454599d`、`pages=0xbaee`、`free=0xaf52`
-- 结论：**UFS host bring-up、LUN 0 GPT 解析、userdata 分区读取都成功**；GCC 的 uke 偏移 `0x177000`/`0x19e000` 有效。之前的“闪一下黑屏重启”就是 probe=10 的主动 panic；开启 panic screen 后文本稳定显示。
-- 早期阶段 1–5 的既有结果：菜单、payload、`xnu` 条目、DarwinBoot 的 `entry pa`/`window 0x10000000`/`video base 0xE3940000 3200x2136`/`CurrentEL 1`、绿条。
+- 2026-10-21：`native-ufs-root=1` + `native-ufs-allow-unverified=1` + `native-ufs-diagnostics=1`（不刷 userdata）启动，诊断页显示：
+  - `UFS ROOT FAILURE: root manifest rejected`
+  - `HC cap=d5c7031f ver=00000400 hcs=0000010f hce=00000001 db=00000000 is=00000000`
+  - `DMA=acaf0000 UTRL=0 SMMU smr=80000060 s2cr=00000046 cbar=00010000 sctlr=00000000`
+  - `CMD n=7 type=01 op=28 lun=00 ocs=00 rsp=21000000 scsi=0000 power=33`
+  - `PROTOCOL reject=0 residual=0 sense=000000 SMMU slot=109 id1=60000047`
+  - `QUEUE rsr=0 ahit=0 polls=11 dbSeen=1 isSeen=0 isBefore=400 contiguous=22000`
+  - `GPT/read lba=2d3000 userdata=2d3000..3b147fa magic=17bc1e8b f86dfb83 manifest=1`
+  - `WINDOWS found=0 prepared=0 published=0`
+- 结论：UFS host、SMMU、队列、UIC、GPT 读取和 root 模式都正常；唯一的失败是当前 userdata 没有 `SHNGROOT`（manifest status 1）。诊断模式把软失败变成了诊断 panic；不带 `native-ufs-diagnostics=1` 时会软失败并继续等根设备。
+- 之后按用户选择**恢复 Android**：刷回 KernelSU `boot_a_kernelsu.img` / `vendor_boot_a_kernelsu.img`，`sys.boot_completed=1`，`su` 正常，`/sdcard` 可访问；userdata 未刷入，Android 数据完好。
 
 ---
 
@@ -108,11 +111,12 @@
 ### 4.1 阶段 6：UFS / 存储 / root
 
 - **编译已完成**：`NativeUfs`、`NativeAES`、mockfs、PMGR、pthread 和 legacy display 都已链接进 `uke-full_defconfig`，prelink 成功。
-- **UFS 读路径已验证**：`native-ufs-probe=10` 在实机读到 GPT 和 userdata block0；当前 userdata 是 Android 数据，所以没有 `SHNGROOT`。
-- `userdata` 镜像（OS + SystemOS + manifest）尚未构建/刷入；root UUID、APFS 挂载和 launchd 仍待验证。
+- **UFS 读路径已验证**：`native-ufs-probe=10` 在实机读到 GPT 和 userdata block0；`native-ufs-root=1` 走到 manifest 检查。
+- **userdata 镜像已构建并校验，但未刷入**：`out/uke/userdata/userdata-root.img`，9,382,658,048 B（8.74 GiB），sha256 `fd43ee7035ce185ce4215ac93fdc006fd784a54b3b7442e21457c226cbe03093`；`SHNGROOT` count=2，OS 窗口 sha256 `e5634d04…`、SystemOS 窗口 sha256 `b4908cde…`，OS 卷 UUID `04769d26…`。
+- root UUID、APFS 挂载和 launchd 仍待刷入 userdata 后验证；设备当前已恢复 Android，userdata 未动。
 - UFS 块读取目前是 **unverified bring-up**：块类已绑定到原始 class，但每次读不做 policy 校验。`native-ufs-root=1` 在未认证构建里默认拒绝发布；新加的 `native-ufs-allow-unverified=1` 是明确的 bring-up 开关，只用于发布窗口，不改变读取认证状态。认证读取仍需要 verified-root policy bundle 和 live storage ABI audit。
 - UFS GCC 窗口已按 uke/SM7675 改为 `0x177000`/`0x19e000`，实机读取通过。
-- `native-ufs-probe=1` 才触碰 MMIO；当前 payload 还没有加 `native-ufs-root=1`。
+- payload 已带 `native-ufs-root=1` + `native-ufs-allow-unverified=1` 的 root-mode 版本（`vendor_boot_uke_root_nodata.img`）；未刷 userdata 时会停在 manifest 检查。
 - VerifiedRoot/owner-root、VirtIO/RamBlock、BOOT_PROGRESS 仍被 live audit/策略包门控，见 `uke-full-plus_defconfig`。
 
 ### 4.2 参考实现
@@ -134,9 +138,9 @@
 
 ## 5. 下一步（按优先级）
 
-1. **构建 userdata 镜像**：用 Linux 的 `qemu-img convert -f dmg -O raw` 代替 `hdiutil`，把 OS（`044-76040-038.dmg`）和 SystemOS（`044-76034-038.dmg`）放进 `SHNGROOT` 布局；先写 `out/uke/userdata/userdata-root.img`，刷入前确认（会清空 Android userdata）。
-2. **发布 root 窗口**：等 CI 用新的 `native-ufs-allow-unverified=1` 重建 full 内核，payload 加 `native-ufs-root=1` + `native-ufs-allow-unverified=1`；验证 OS/SystemOS 块设备、APFS 卷和 `root_match_volume_uuid`，再看 launchd。
-3. **认证读取/owner-root**：拿到 OS/SystemOS DMG 后生成 verified-root policy bundle，补 live storage ABI snapshot，再开 `VERIFIED_ROOT_PROBE`/`OWNER_ROOT_*`/`BOOT_PROGRESS`（`uke-full-plus_defconfig`）。
+1. **刷 userdata（需用户确认，会清空 Android 数据）**：`fastboot flash userdata out/uke/userdata/userdata-root.img`，再刷 boot + root-mode payload；验证 `SHNGROOT`、OS/SystemOS 窗口、APFS 卷和 `root_match_volume_uuid`。
+2. **启动到 root/launchd**：观察 `NativeUfs: published ...` 日志、OS 卷挂载和 launchd；若失败，用 panic screen / `native-ufs-diagnostics=1` 定位。
+3. **认证读取/owner-root**：OS/SystemOS DMG 已拉取并校验；生成 verified-root policy bundle，补 live storage ABI snapshot，再开 `VERIFIED_ROOT_PROBE`/`OWNER_ROOT_*`/`BOOT_PROGRESS`（`uke-full-plus_defconfig`）。
 4. **GPU**：固件已收集（`gen71100_*`）；按 `docs/GPU-PORT.md` 改 `build-native-adreno-kits.py` 的 pin/路径，加 Adreno archives，再开 `CONFIG_XNU_NATIVE_ADRENO`。
 5. **阶段 7**：launchd、Data 卷、SpringBoard/设置界面；之后再处理显示/触摸/GPU 运行时。
 6. `panic_screen` 已启用；后续 panic 直接看屏。
@@ -152,7 +156,10 @@
 |---|---|---|
 | UEFI FD | `uefi-uke/Build/ukePkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd` | 3 MiB，含 initrd 对齐/2 GiB/状态通道修复 |
 | **full 内核** | CI artifact `uke-kernel-full/kernel.macho` | **52,121,600 B，最新 sha256 `62eac242…`（每次链接会变，以 artifact `.sha256` 为准）** |
-| full 内核（本地副本） | `/home/allenwdk/uke-port/ci/uke-kernel-full/kernel.macho` | 下载后自行保存；payload 用它重建 |
+| full 内核（本地副本） | `/home/allenwdk/uke-port/ci/uke-kernel-full/kernel.macho` | 52,121,600 B，sha256 `62eac242…` |
+| **root-mode 内核** | `/home/allenwdk/uke-port/ci/uke-kernel-full-allow/kernel.macho` | 带 `native-ufs-allow-unverified`，52,121,600 B，sha256 `f81e81b7…` |
+| **userdata 镜像** | `/home/allenwdk/UniXNU/out/uke/userdata/userdata-root.img` | 8.74 GiB，sha256 `fd43ee70…`，未刷入 |
+| root-mode payload | `/home/allenwdk/uke-port/data/vendor_boot_uke_root_nodata.img` | 85,782,528 B，`native-ufs-root=1` + allow-unverified |
 | 旧 full-pmgr 内核 | `/home/allenwdk/uke-port/ci/uke-kernel-full-pmgr/kernel.macho` | 51,994,624 B，sha256 `d2b28c...` |
 | payload | `out/uke/payload/payload.img` | 80 MiB，5 秒菜单，256 MiB owned memory（旧 full-pmgr payload） |
 | vendor_boot | `/home/allenwdk/uke-port/data/vendor_boot_uke_full.img` | 85,782,528 B，80 MiB payload + full DTB |
@@ -216,6 +223,9 @@ fastboot reboot
 - **`native-ufs-allow-unverified=1`**：未认证构建里 `native-ufs-root=1` 默认拒绝发布；该参数是明确的 bring-up 开关，只发布 OS/SystemOS 窗口，读取仍不认证。发布线程在 unverified 模式下等待任意 media 后代，而不是签名 UUID。
 - **UFS 实机探针**：`native-ufs-probe=10` 只读，panic 输出 `userdata first/last`、block0 magic、ext4 magic、manifest status；`probe=11` 检查每个窗口的 GPT。panic 会停在屏上，长按电源重启。
 - **panic screen**：`scripts/Font.h` 是 Mu-Silicium 的 BSD 字体表；`patch-xnu-entry-probe.py` 在找不到 UEFI checkout 时回退到 `scripts/`。
+- **大文件解压要留足空间**：之前 8.2 GB DMG 在磁盘接近满时解压出内容错误（尺寸对、sha 不对）；清理后 `unzip` 解出的 sha 与 pin 完全一致。构建 userdata 前保持 >20 GB 空闲，并先校验 sha。
+- **Linux userdata 构建**：`build-userdata-root-image.py` 用 `7z x -tDmg -so` 解 OS 的 UDIF 整盘流，SystemOS 是裸 APFS 容器直接用；生成后核对 `SHNGROOT` 头、窗口 sha 和 GPT/APFS magic。
+- **`native-ufs-diagnostics=1`**：会把 manifest 拒绝等软失败变成诊断 panic；正常启动不要带它，或只看诊断。
 - **CI 缓存 key**：包含 UniXNU commit + `board.toml`/`feeds.toml`/`configs/**`/`scripts/**` 哈希；改这些文件会换主 key，但 `restore-keys` 仍会复用旧 `out/` 树。`drivers/**` 不影响 bootstrap 对象，故不在 key 里。
 - **`BOOT_PROGRESS`**：仍然要求 audited UFS/owner-root + VirtIO + source-corecrypto；full 配置保持关闭。
 - **Adreno 关闭**：`NativeLegacyDisplay` 需要 4 个 GPU fallback weak stubs。
@@ -263,6 +273,9 @@ fastboot reboot
 | 2026-10-21 | UFS bring-up 开关 | `native-ufs-allow-unverified=1` 允许未认证发布窗口；CI 重新构建 full 内核 |
 | 2026-10-21 | CI 缓存 | `out/` + `.cache` + Homebrew 缓存；`concurrency` 取消旧 run；冷/热启动约 15–17 / 8–10 分钟 |
 | 2026-10-21 | GPU 准备 | A732 板级数据写入 `board.toml [gpu]`；`check-uke-gpu.py` 对照实机 DTB 通过；`docs/GPU-PORT.md` 记录剩余固件/功率输入 |
+| 2026-10-21 | UFS root 诊断 | `native-ufs-root=1` 走到 manifest 检查；host/SMMU/queue/GPT 正常；`manifest=1`（当前是 Android data） |
+| 2026-10-21 | userdata 镜像 | 8.74 GiB，sha `fd43ee70…`；OS `e5634d04…` / SystemOS `b4908cde…` 与 verified-root 期望一致 |
+| 2026-10-21 | 恢复 Android | KernelSU boot/vendor_boot 刷回；`sys.boot_completed=1`；userdata 未刷入，数据完好 |
 
 ---
 

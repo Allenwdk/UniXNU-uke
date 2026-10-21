@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Build the raw image flashed to the sheng `userdata` partition: the unchanged iPadOS OS and
+"""Build the raw image flashed to the uke `userdata` partition: the unchanged iPadOS OS and
 SystemOS disk images, byte for byte, behind a small manifest.
+
+macOS attaches the dmg with hdiutil; Linux converts it to a raw image with
+qemu-img (the same result without a mount).
 
 Layout (all offsets from the first byte of the image, which is the first byte of `userdata`):
 
@@ -18,6 +21,7 @@ SHA-256s are checked against the recorded IPSW extraction, the image is refused 
 hashes. See docs/native-ufs.md for the flash command and the GPT checks around it.
 """
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -32,8 +36,8 @@ ROOT = Path(__file__).resolve().parents[1]
 VOLUMES = ROOT / '.cache/firmware/target-volumes'
 OUT = ROOT / 'build/userdata-root'
 MIB = 1024 * 1024
-# LUN 0 GPT entry 28 "userdata", read from the tablet (docs/native-ufs.md): LBAs 0x2f3840..0x3d0abfa
-USERDATA_BYTES = (0x3d0abfa - 0x2f3840 + 1) * 4096
+# LUN 0 GPT entry "userdata", read from the uke tablet: LBAs 0x2d3000..0x3b147fa.
+USERDATA_BYTES = (0x3b147fa - 0x2d3000 + 1) * 4096
 WINDOWS = (('OS', '044-76040-038.dmg'), ('SystemOS', '044-76034-038.dmg'))
 CHUNK = 8 * MIB
 
@@ -67,24 +71,77 @@ def detach(device):
     subprocess.run(['hdiutil', 'detach', device], capture_output=True)
 
 
+def is_udif(dmg):
+    with open(dmg, 'rb') as handle:
+        handle.seek(-512, 2)
+        return handle.read(4) == b'koly'
+
+
+def image_size(dmg):
+    if shutil.which('hdiutil'):
+        info = subprocess.run(['hdiutil', 'imageinfo', '-plist', str(dmg)], capture_output=True, check=True).stdout
+        import plistlib
+        return plistlib.loads(info)['Size Information']['Total Bytes']
+    if is_udif(dmg):
+        listing = subprocess.run(['7z', 'l', '-slt', str(dmg)], capture_output=True, text=True).stdout
+        match = re.search(r'^unpack-size:\s*(\d+)$', listing, re.M)
+        if not match:
+            raise SystemExit(f'Cannot read the disk size from {dmg}')
+        return int(match.group(1))
+    # The SystemOS member is a bare APFS container, not a GPT disk image.
+    with open(dmg, 'rb') as handle:
+        handle.seek(32)
+        if handle.read(4) != b'NXSB':
+            raise SystemExit(f'{dmg} is neither a UDIF image nor a raw APFS container')
+    return dmg.stat().st_size
+
+
+@contextlib.contextmanager
+def raw_image(dmg, label, size, workdir):
+    """A readable raw whole-disk image: hdiutil's rdisk, a 7z Dmg stream, or the bare APFS file."""
+    if shutil.which('hdiutil'):
+        device, _ = attach(dmg)
+        try:
+            yield device.replace('/dev/disk', '/dev/rdisk')
+        finally:
+            detach(device)
+    elif is_udif(dmg):
+        # 7-Zip's Dmg handler decodes the LZFSE chunks and writes the whole
+        # GPT+APFS stream. It reports a CRC warning on the Apple images and
+        # still produces the correct size; require the GPT signature.
+        raw = workdir / (label + '.raw')
+        try:
+            with raw.open('wb') as target:
+                result = subprocess.run(['7z', 'x', '-tDmg', '-so', str(dmg)], stdout=target,
+                                        stderr=subprocess.PIPE, text=True)
+            if raw.stat().st_size != size:
+                raise SystemExit(f'7z produced {raw.stat().st_size} bytes, expected {size}: {result.stderr[-400:]}')
+            with raw.open('rb') as handle:
+                handle.seek(512)
+                if handle.read(8) != b'EFI PART':
+                    raise SystemExit('the 7z stream has no GPT header')
+            yield str(raw)
+        finally:
+            raw.unlink(missing_ok=True)
+    else:
+        yield str(dmg)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--output', type=Path, default=OUT / 'userdata-root.img')
+    parser.add_argument('--volumes', type=Path, default=VOLUMES, help='directory holding the two dmg members')
     parser.add_argument('--dry-run', action='store_true', help='check sizes and source hashes only')
     args = parser.parse_args()
 
     sources = []
     for name, member in WINDOWS:
-        dmg = VOLUMES / member
-        record = json.loads(dmg.with_suffix('.json').read_text())
+        dmg = args.volumes / member
+        record = json.loads(dmg.with_name(dmg.name + '.json').read_text())
         sources.append((name, dmg, record))
     layout, cursor = [], MIB
-    sizes = {}
     for name, dmg, record in sources:
-        info = subprocess.run(['hdiutil', 'imageinfo', '-plist', str(dmg)], capture_output=True, check=True).stdout
-        import plistlib
-        size = plistlib.loads(info)['Size Information']['Total Bytes']
-        sizes[name] = size
+        size = image_size(dmg)
         layout.append((name, cursor, size))
         cursor += (size + MIB - 1) // MIB * MIB
     image_bytes = cursor
@@ -105,9 +162,7 @@ def main():
     with open(args.output, 'wb') as out:
         out.truncate(image_bytes)
         for (name, offset, size), (_, dmg, record) in zip(layout, sources):
-            device, total = attach(dmg)
-            try:
-                raw = device.replace('/dev/disk', '/dev/rdisk')
+            with raw_image(dmg, name, size, args.output.parent) as raw:
                 digest = hashlib.sha256()
                 out.seek(offset)
                 done = 0
@@ -120,8 +175,6 @@ def main():
                         digest.update(data)
                         out.write(data)
                         done += want
-            finally:
-                detach(device)
             entries.append((name, offset, size, digest.digest()))
             print(f'{name}: {size} bytes at {offset:#x} sha256 {digest.hexdigest()}')
         header = bytearray(4096)
