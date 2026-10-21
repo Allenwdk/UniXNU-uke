@@ -120,6 +120,7 @@
 - 2026-10-21：`mount[3]` 修复刷入后仍然看不到内核日志，屏幕黑掉后重启。定位到两个独立问题：
   - DEVELOPMENT 内核的 `kprintf` 被 `disable_kprintf_output=true` 门控；`-v`/`debug=0x14e` 只放开串口输出，而 uke 没有 UART。已在 `[payload] kernel_args` 加 `-enable_kprintf_spam`。
   - 启用 kprintf 后，`initialize_screen()` 把 DarwinBoot 传来的 GOP **物理** framebuffer 地址当成虚拟地址（`v_baseAddr` 4 字节对齐、bit0 未置位），第一次 console 写入就 fault，表现为黑屏/重启。内核补丁 `patches/xnu/zzzzz-video-console-physical-fb.patch` 在 `newVideoVirt < VM_MIN_KERNEL_ADDRESS` 时也走 `ml_io_map_unmappable()`；`PE_state.video.v_baseAddr` 保持物理地址，不影响 NativeGOPPresenter/NativeLegacyDisplay 的匹配。
+  - 映射修好后仍有第三道门：`PE_create_console()` 走 `kPEGraphicsMode`，`gc_graphics_boot=TRUE`；`vcattach()` 只在 `gc_graphics_boot == FALSE` 时启用文字 console，所以图形启动下 `vcputc` 仍然丢弃输出。补丁加 `-uketextconsole`：`vcattach()` 里调用 `initialize_screen(NULL, kPETextScreen)`，设置 `gc_desire_text`，随后的 `kPEAcquireScreen` 以 `gc_enable(TRUE)` 打开文字 console。
 
 ---
 

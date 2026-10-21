@@ -187,8 +187,10 @@ kernel_args = [
   "serial=3",
   "debug=0x14e",
   # DEVELOPMENT kernels keep kprintf off unless this is set; uke has no UART,
-  # so kprintf then falls back to the framebuffer video console.
+  # so kprintf then falls back to the framebuffer video console. Graphics boot
+  # suppresses text until -uketextconsole switches the console to text mode.
   "-enable_kprintf_spam",
+  "-uketextconsole",
   "kt_fixed_zones=120",
   "offline-legacy-register=1",
   "offline-legacy-gop=1",
