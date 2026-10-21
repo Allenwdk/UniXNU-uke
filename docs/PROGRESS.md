@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-10-21
 >
-> **当前一句话状态：** userdata 已刷入，UFS 窗口已发布，OS APFS 卷已挂载；当前阻塞是 `bsd_init.c:1098` 的 `rootvp not authenticated`（自定义 boot 链没有 Apple root seal）。已加 `native-ufs-allow-unverified=1` 的 root-auth bring-up 放行补丁，CI 正在重建内核，之后重刷 payload 继续。
+> **当前一句话状态：** union mount 已生效：SystemOS 覆盖到 `/`，launchd 已经启动并加载 libSystem；当前阻塞是 Data 卷缺失，`mount[3]` 以 exit 66（`EX_NOINPUT`）退出后 panic。sheng 的最新 `sheng-data-persist=2`（userdata 末尾的持久 Data 窗口）是下一步；设备停在 panic 画面。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -108,6 +108,11 @@
   - `TCR=0x00000022a51a251a`、`SCTLR=0x000000003454599d`、`pages=0xbaee`、`free=0xaed2`
   - 含义：root 已经挂载，失败的是 iOS 的 `FSIOC_KERNEL_ROOTAUTH` sealedness 检查（自定义 boot 链没有 Apple root seal），不是 UFS 读失败。
 - 已加设备侧 XNU patch `patches/xnu/offline-owner-root-binding-audit.patch`：`native-ufs-allow-unverified=1` 时跳过该 panic；默认 owner-root 路径不变。补丁已在完整 xnu patch 序列上本地验证；CI run `39549662508` 正在构建新内核。
+- 2026-10-21（后续）：root-auth 放行 + 原始 trust cache（`7416ca4f…`）后，launchd 成功 exec；随后报 `Library not loaded: /usr/lib/libSystem.B.dylib`，因为 dyld cache 在 SystemOS。
+- 加 `OWNER_CACHE_MOUNT`/`OWNER_CACHE_STARTUP` 后 launchd 仍找不到 libSystem（env var 路径不够）；改为 **`OWNER_UNION_SYSTEMOS=y`**，把 SystemOS 以 `MNT_UNION` 覆盖到 `/`。union 内核（sha `f75d4a19…`）启动后 launchd 加载了 libSystem，新的失败是：
+  - `mount[3] exited -- no exit reason available -- (signal 0, exit status 66 )`
+  - exit 66 = `EX_NOINPUT`，即 Data 卷缺失。
+- sheng 最新 commit `7562a77` 加了 `sheng-data-persist=2`：Data 盘由 userdata 末尾的读写窗口提供，重启后保留；核心 `NativeUfs`（persistent store window）和 `NativeRamBlock`（overlay）已实现。sheng 还开 `OWNER_DATA_MOUNT`/`OWNER_BOOT_MANIFEST` 并用 `--data-ramdisk` 提供 32 MiB APFS Data seed（`prepare-owner-data-fixture.py`，需要 macOS hdiutil）。
 
 ---
 
@@ -119,6 +124,8 @@
 - **UFS 读路径已验证**：`native-ufs-probe=10` 在实机读到 GPT 和 userdata block0；`native-ufs-root=1` 走到 manifest 检查。
 - **userdata 已刷入**：8.74 GiB `SHNGROOT` 镜像已写入 userdata（Android 数据已清空，用户确认）。root-mode 启动能发布窗口并挂载 OS APFS 卷。
 - **root-auth 阻塞**：`bsd_init.c:1098` 的 `FSIOC_KERNEL_ROOTAUTH` 在自定义 boot 链上返回错误，触发 `rootvp not authenticated after mounting`。已加设备侧 patch：`native-ufs-allow-unverified=1` 时跳过该 panic；等 CI 新内核。
+- **root/launchd 已到达**：root-auth 放行 + trust cache 后 launchd exec；union mount 后 libSystem 可加载。
+- **当前阻塞：Data 卷**：`mount[3]` exit 66（`EX_NOINPUT`）。需要 `OWNER_DATA_MOUNT`/`OWNER_BOOT_MANIFEST` + `NATIVE_RAM_BLOCK` + 32 MiB APFS Data seed，或 sheng 的 `sheng-data-persist=2` 持久窗口。
 - root UUID、APFS 挂载已到达；launchd/Data 卷仍待启动验证。
 - UFS 块读取目前是 **unverified bring-up**：块类已绑定到原始 class，但每次读不做 policy 校验。`native-ufs-root=1` 在未认证构建里默认拒绝发布；新加的 `native-ufs-allow-unverified=1` 是明确的 bring-up 开关，只用于发布窗口，不改变读取认证状态。认证读取仍需要 verified-root policy bundle 和 live storage ABI audit。
 - UFS GCC 窗口已按 uke/SM7675 改为 `0x177000`/`0x19e000`，实机读取通过。
@@ -166,6 +173,8 @@
 | **root-mode 内核** | `/home/allenwdk/uke-port/ci/uke-kernel-full-allow/kernel.macho` | 带 `native-ufs-allow-unverified`，52,121,600 B，sha256 `f81e81b7…` |
 | **userdata 镜像** | `/home/allenwdk/UniXNU/out/uke/userdata/userdata-root.img` | 8.74 GiB，sha256 `fd43ee70…`，已刷入 userdata |
 | root-mode payload | `/home/allenwdk/uke-port/data/vendor_boot_uke_root_nodata.img` | 85,782,528 B，`native-ufs-root=1` + allow-unverified |
+| trust-cache payload | `/home/allenwdk/uke-port/data/vendor_boot_uke_root_auth_trust.img` | + 原始 Static/System trust cache |
+| userland union payload | `/home/allenwdk/uke-port/data/vendor_boot_uke_userland_union.img` | + `OWNER_CACHE_MOUNT/STARTUP/UNION_SYSTEMOS`，launchd 已启动 |
 | 旧 full-pmgr 内核 | `/home/allenwdk/uke-port/ci/uke-kernel-full-pmgr/kernel.macho` | 51,994,624 B，sha256 `d2b28c...` |
 | payload | `out/uke/payload/payload.img` | 80 MiB，5 秒菜单，256 MiB owned memory（旧 full-pmgr payload） |
 | vendor_boot | `/home/allenwdk/uke-port/data/vendor_boot_uke_full.img` | 85,782,528 B，80 MiB payload + full DTB |
@@ -284,6 +293,8 @@ fastboot reboot
 | 2026-10-21 | 恢复 Android | KernelSU boot/vendor_boot 刷回；`sys.boot_completed=1`；userdata 未刷入，数据完好 |
 | 2026-10-21 | 刷 userdata + root | 8.74 GiB sparse 写入 40.9s；UFS 发布窗口并挂载 OS APFS；`bsd_init` root-auth panic |
 | 2026-10-21 | root-auth 放行 patch | `native-ufs-allow-unverified=1` 跳过 `FSIOC_KERNEL_ROOTAUTH` panic；补丁本地验证；CI run `39549662508` |
+| 2026-10-21 | trust cache + launchd | 原始 `7416ca4f…` bundle 后 launchd exec；缺 libSystem（dyld cache 在 SystemOS） |
+| 2026-10-21 | union SystemOS | `OWNER_UNION_SYSTEMOS=y` + UFS unverified 授权函数；launchd 加载 libSystem，`mount[3]` exit 66（Data 缺失） |
 
 ---
 
