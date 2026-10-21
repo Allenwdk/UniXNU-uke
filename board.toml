@@ -180,7 +180,7 @@ loader = "firmware"
 title = "uke first boot: source 4K XNU to console"
 dram_size = "0x80000000"             # SMEM RAM table observed on the device
 skip_setup_tool = "scripts/seed-data-skip-setup.py"   # used by --skip-setup
-panic_screen = false                 # native XNU panic output; the custom screen needs Font.h
+panic_screen = true                  # native XNU panic output; Font.h is vendored in scripts/
 kernel_args = [
   "-v",
   "serial=3",

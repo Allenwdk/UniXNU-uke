@@ -1545,15 +1545,20 @@ static bool gPendingAttached[4];
 static char gPendingUuid[4][37];
 static UfsRootPlan gPublicationPlan;
 static NativeUfs *gPendingProvider;
+// Bring-up escape hatch: publish the OS/SystemOS windows without the owner
+// policy bundle. The block reads stay unauthenticated; the shipping
+// configuration keeps this false and requires the verified path.
+static bool gAllowUnverifiedRoot;
 
 static bool mediaWithUuidExists (const char *uuid, NativeUfsBlock *window)
 {
+  const bool anyUuid = !uuid || !uuid[0];
   OSDictionary *matching = IOService::serviceMatching ("IOMedia");
-  OSDictionary *properties = OSDictionary::withCapacity (1);
-  OSString *wanted = OSString::withCString (uuid);
+  OSDictionary *properties = anyUuid ? nullptr : OSDictionary::withCapacity (1);
+  OSString *wanted = anyUuid ? nullptr : OSString::withCString (uuid);
   bool found = false;
-  if (matching && properties && wanted && properties->setObject ("UUID", wanted) &&
-      matching->setObject ("IOPropertyMatch", properties)) {
+  if (matching && (anyUuid || (properties && wanted && properties->setObject ("UUID", wanted) &&
+      matching->setObject ("IOPropertyMatch", properties)))) {
     OSIterator *iterator = IOService::getMatchingServices (matching);
     if (iterator) {
       for (unsigned matches = 0; matches < 64 && !found; ++matches) {
@@ -1732,9 +1737,11 @@ static void mediaReportThread (void *, wait_result_t)
 
 bool NativeUfs::start (IOService *provider)
 {
-  unsigned probe = 0, rootMode = 0;
+  unsigned probe = 0, rootMode = 0, allowUnverified = 0;
   PE_parse_boot_argn ("native-ufs-probe", &probe, sizeof (probe));
   PE_parse_boot_argn ("native-ufs-root", &rootMode, sizeof (rootMode));
+  PE_parse_boot_argn ("native-ufs-allow-unverified", &allowUnverified, sizeof (allowUnverified));
+  gAllowUnverifiedRoot = allowUnverified == 1;
   native_ufs_probe_requested = probe != 0;
   // Default: match for observability only, never touch the controller. Hardware work runs once,
   // from the root-device personality; the ufshc nub match stays observation-only.
@@ -1925,7 +1932,14 @@ bool NativeUfs::startRoot (IOService *provider)
       }
       return true;
 #else
-      return false; // Root publication requires owner verification in every build.
+      if (!gAllowUnverifiedRoot) {
+        return false; // Root publication requires owner verification in every build.
+      }
+      // Bring-up only: ufsBuildRootPlan already required distinct OS/SystemOS
+      // labels. Leave the UUIDs empty so the publisher waits for any media
+      // descendant of each window instead of a signed volume identity.
+      for (unsigned i = 0; i < gPending; ++i) gPendingUuid[i][0] = 0;
+      return true;
 #endif
     }
     bool schedule () {
