@@ -8,7 +8,6 @@
 #include <stddef.h>
 #include <string.h>
 #include <sys/appleapiopts.h>
-#include <sys/types.h>
 #include <mach/vm_types.h>
 #include <kern/debug.h>
 #include <kern/misc_protos.h>

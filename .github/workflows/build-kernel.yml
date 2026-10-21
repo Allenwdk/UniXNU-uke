@@ -53,7 +53,11 @@ permissions:
   contents: read
 
 env:
-  CACHE_SCHEMA: v1
+  # The cache key is the source identity: fork commit, patch set, archive
+  # sources, board/config and this workflow. A patch change must miss the
+  # cache and start from a clean tree; no restore-key may fall back to a
+  # different patch state.
+  CACHE_SCHEMA: v6
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
 
@@ -93,10 +97,7 @@ jobs:
           path: |
             UniXNU/out
             UniXNU-uke/.cache
-          key: unixnu-out-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-${{ hashFiles('UniXNU-uke/board.toml', 'UniXNU-uke/feeds.toml', 'UniXNU-uke/configs/**', 'UniXNU-uke/scripts/**') }}
-          restore-keys: |
-            unixnu-out-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-
-            unixnu-out-${{ env.CACHE_SCHEMA }}-
+          key: unixnu-kernel-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-${{ hashFiles('UniXNU-uke/board.toml', 'UniXNU-uke/feeds.toml', 'UniXNU-uke/unixnu.lock', 'UniXNU-uke/configs/**', 'UniXNU-uke/scripts/**', 'UniXNU-uke/patches/**', 'UniXNU-uke/package/**', 'UniXNU-uke/drivers/**', 'UniXNU-uke/kits/**', 'UniXNU/patches/**', 'UniXNU-uke/.github/workflows/build-kernel.yml') }}
 
       - name: Report the runner toolchain
         run: |
@@ -243,10 +244,7 @@ jobs:
           path: |
             UniXNU/out
             UniXNU-uke/.cache
-          key: unixnu-out-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-${{ hashFiles('UniXNU-uke/board.toml', 'UniXNU-uke/feeds.toml', 'UniXNU-uke/configs/**', 'UniXNU-uke/scripts/**') }}
-          restore-keys: |
-            unixnu-out-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-
-            unixnu-out-${{ env.CACHE_SCHEMA }}-
+          key: unixnu-full-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-${{ inputs.defconfig || 'uke-full_defconfig' }}-${{ hashFiles('UniXNU-uke/board.toml', 'UniXNU-uke/feeds.toml', 'UniXNU-uke/unixnu.lock', 'UniXNU-uke/configs/**', 'UniXNU-uke/scripts/**', 'UniXNU-uke/patches/**', 'UniXNU-uke/package/**', 'UniXNU-uke/drivers/**', 'UniXNU-uke/kits/**', 'UniXNU/patches/**', 'UniXNU-uke/.github/workflows/build-kernel.yml') }}
 
       - name: Report the runner toolchain
         run: |
