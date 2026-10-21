@@ -35,6 +35,12 @@ UFS_HC = 0x1d84000
 UFS_HC_SIZE = 0x3000
 UFS_PHY = 0x1d80000
 UFS_PHY_SIZE = 0x2000
+# Reserved DRAM for XNU's embedded panic log. The kernel's check_for_panic_log
+# reads pram.reg and /chosen/embedded-panic-log-size; the UEFI memory map
+# reserves the same range and the UniXNU menu prints the first line on the
+# next boot. Must match MemoryMapLib.c and UniXNULib/Main.c.
+PANIC_LOG_BASE = 0xC4000000
+PANIC_LOG_SIZE = 0x00400000
 
 
 def node(name, properties=(), children=()):
@@ -155,6 +161,7 @@ def main():
                            if args.owned_memory_size else [] ),
                         ('dram-base', struct.pack('<Q', DRAM_BASE)),
                         ('dram-size', struct.pack('<Q', args.dram_size)),
+                        ('embedded-panic-log-size', struct.pack('<I', PANIC_LOG_SIZE)),
                         # Image4 hash algorithm. The target iPad's DT specifies sha2-384 in /chosen; this
                         # selects the algorithm only and asserts nothing about Apple silicon or fuses.
                         ('crypto-hash-method', b'sha2-384\0'),
@@ -180,6 +187,10 @@ def main():
         # root-domain policy input rather than allowing the CPU to park forever.
         node('defaults', [('sleep-disabled', struct.pack('<I', 1))]),
         node('options', []),
+        # XNU's embedded panic log: pe_init.c maps pram.reg and records the
+        # panic header/text there. The memory map keeps it out of DarwinBoot's
+        # owned window and the menu reads it before XNU clears it.
+        node('pram', [('reg', struct.pack('<QQ', PANIC_LOG_BASE, PANIC_LOG_SIZE))]),
         # The original AppleImage4 panics without a product node. Name and model are the
         # board DT's own strings.
         *( [node('buttons', [('compatible', b'buttons\0'), ('device_type', b'buttons\0'),
