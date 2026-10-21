@@ -1,0 +1,17 @@
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -103,6 +103,13 @@
+     "     'IOMatchCategory' = NativeUfsRoot;"
+     "     'IOProviderClass' = IOPlatformExpertDevice;"
+     "     'IOProbeScore'    = 500:32;"
+     "   }"
+ #endif
++#if defined(XNU_NATIVE_USB_SERIAL) && XNU_NATIVE_USB_SERIAL
++    "   ,{"
++    "     'IOClass'         = NativeUsbSerial;"
++    "     'IOProviderClass' = IOPlatformDevice;"
++    "     'IOProbeScore'    = 1000:32;"
++    "   }"
++#endif
+     ")";

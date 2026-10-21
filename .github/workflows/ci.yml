@@ -68,3 +68,7 @@ jobs:
       - name: Apply the XNU patch set to a clean tree
         working-directory: UniXNU-uke
         run: bash scripts/check-xnu-patch-set.sh
+
+      - name: Run the USB serial host checks
+        working-directory: UniXNU-uke
+        run: bash drivers/NativeUsbSerial/tests/run.sh

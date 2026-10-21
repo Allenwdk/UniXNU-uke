@@ -48,6 +48,7 @@ archives = [
   "prepare-storage-headers.py",
   "build-arm-driver.py NativeUfs --unverified",
   "build-ufs-original-bindings.py",
+  "build-arm-driver.py NativeUsbSerial",
   "build-arm-driver.py NativeRamBlock",
   "build-mockfs-fixture.py",
   "build-sheng-platform-power.py",
@@ -217,6 +218,9 @@ kernel_args = [
   "armcpu-spi-ipi=1",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
+  # Read-only USB2 probe: maps DWC3/PHY/GCC/SMMU and dumps what ABL left.
+  # Replace with native-usb-serial=1 once the CDC-ACM/log path is enabled.
+  "native-usb-probe=1",
 ]
 
 [payload.adt]

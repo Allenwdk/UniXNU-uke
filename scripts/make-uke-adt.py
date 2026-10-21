@@ -219,7 +219,10 @@ def main():
               # UFS (0x1d84000) lies below the arm-io window, so a child reg offset would be
               # negative. The node exists only for class matching; NativeUfs takes its
               # physical windows from the board DT constants in GccUfs.h.
-              node('ufshc', [('compatible', b'qcom,sm8550-ufshc\0')])]),
+              node('ufshc', [('compatible', b'qcom,sm8550-ufshc\0')]),
+              # USB (0xa600000) is below the arm-io window too. The node is
+              # only a match point; NativeUsbSerial maps the board constants.
+              node('usb', [('compatible', b'qcom,dwc-usb3-msm\0')])]),
     ])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(tree)
