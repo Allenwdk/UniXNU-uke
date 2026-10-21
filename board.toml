@@ -78,11 +78,29 @@ gmem_bytes = "0x180000"          # 1.5 MiB, the 0x43030c00 sibling's catalog ent
 gmu_chip_id = "0x70f0000"
 gmu_cgc_mode = "0x00020222"
 preempt_record_bytes = "0x418000"  # 4192 KiB
-# The vendor tree ships either the gen71500 names used by the mainline catalog
-# entry above this chip id, or A732-named copies. The first existing file wins.
-firmware_sqe = ["gen71500_sqe.fw", "a732_sqe.fw"]
-firmware_gmu = ["gen71500_gmu.bin", "a732_gmu.bin"]
-firmware_zap = ["gen71500_zap.mbn", "a732_zap.mbn", "a732_zap.mdt"]
+# Collected from the rooted device on 2026-10-21. The firmware is gen71100
+# (matching compatible qcom,adreno-gpu-gen7-11-0), not the gen71500 sibling.
+frequencies_mhz = [950, 900, 835, 736, 684, 633, 500, 353, 255]
+num_pwrlevels = 9
+initial_pwrlevel = 8
+min_pwrlevel = 8
+max_pwrlevel = 0
+firmware_sqe = ["gen71100_sqe.fw", "gen71500_sqe.fw", "a732_sqe.fw"]
+firmware_gmu = ["gen71100_gmu.bin", "gen71500_gmu.bin", "a732_gmu.bin"]
+firmware_zap = ["gen71100_zap.mbn", "gen71500_zap.mbn", "a732_zap.mbn"]
+firmware_source = "/vendor/firmware + /odm/firmware"
+
+[gpu.firmware_pins."gen71100_sqe.fw"]
+bytes = 66036
+sha256 = "b6df660d109504dbea5a266910b037a33d893a11c6de52f524a5fd112008c401"
+
+[gpu.firmware_pins."gen71100_gmu.bin"]
+bytes = 80680
+sha256 = "435c7bac9a328b8a100df930b84b65b4d579e42be44785d0e60e3729291bb864"
+
+[gpu.firmware_pins."gen71100_zap.mbn"]
+bytes = 12088
+sha256 = "1294992888e8c7c7fcd8a6d0a672cc666eff3c95e666ce5840db7e03edcc500d"
 
 [kernel.prelink]
 tool = "kits/NativePrelink/emit_prelink.py"

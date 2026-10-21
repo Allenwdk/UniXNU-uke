@@ -31,26 +31,33 @@ The closest mainline catalog entry (newer than the pinned source) is the
 `0x43030c00` sibling: family `ADRENO_7XX_GEN2`, `gen71500_sqe.fw` /
 `gen71500_gmu.bin`, GMEM 1.5 MiB, GMU chip id `0x70f0000`, GMU CGC mode
 `0x00020222`, preemption record 4192 KiB, and the `a740_hwcg` / `a730_protect`
-tables. Those values are in `[gpu]` of `board.toml` as the starting point.
+tables.
+
+The rooted device (2026-10-21) supplied the actual firmware, which is
+**gen71100**, not gen71500:
+
+| File | Bytes | sha256 |
+| --- | --- | --- |
+| `/vendor/firmware/gen71100_sqe.fw` | 66,036 | `b6df660d…` |
+| `/vendor/firmware/gen71100_gmu.bin` | 80,680 | `435c7bac…` |
+| `/odm/firmware/gen71100_zap.mbn` | 12,088 | `12949928…` |
+
+KGSL reports 9 power levels: 950, 900, 835, 736, 684, 633, 500, 353 and
+255 MHz; `min_pwrlevel` 8, `max_pwrlevel` 0, and the DT `initial-pwrlevel`
+is 8. `board.toml [gpu]` now carries these values and the three pins.
 
 ## Missing inputs
 
-The vendor partition supplies the GPU firmware. The stock `vendor_boot`
-ramdisk does not contain it, so it must be pulled from a booted Android:
-
-```sh
-adb shell 'ls -l /vendor/firmware /vendor/firmware_mnt/image' | grep -Ei 'a732|gen71500|sqe|gmu|zap'
-adb pull /vendor/firmware/gen71500_sqe.fw   # or a732_sqe.fw
-adb pull /vendor/firmware/gen71500_gmu.bin  # or a732_gmu.bin
-adb pull /vendor/firmware/gen71500_zap.mbn  # or a732_zap.mdt
-```
-
-Also needed before the first GPU boot:
+The firmware files are collected. Still needed before the first GPU boot:
 
 - the GPU CX/GX rail and clock votes (the A740 code uses sheng's PMGR values);
 - the A732 GMU firmware header values (`gmu_chipid`, CGC mode, GMEM size);
 - the SMMU context-bank assignment (the DT gives the stream IDs, not the bank);
 - the ZAP shader region binding.
+
+The stock Android dmesg was already rotated; reboot Android and capture the
+first `kgsl` lines if the GMU firmware header values are not in the catalog.
+
 
 ## Checking the current state
 
@@ -68,10 +75,10 @@ hashes it finds. It never touches MMIO and never enables
 
 Once the firmware is available:
 
-1. Put the three files under the device `.cache/firmware/uke-gpu/` tree and add
-   their sizes and sha256 values to a device data file.
+1. Put the three files under `.cache/firmware/uke-gpu/` and copy the pins from
+   `board.toml [gpu.firmware_pins]`.
 2. Generalise `scripts/build-native-adreno-kits.py` to select the A732 pins and
-   the `gen71500_*` names instead of the sheng `.cache/firmware/sheng-gpu`
+   the `gen71100_*` names instead of the sheng `.cache/firmware/sheng-gpu`
    paths.
 3. Add the three Adreno builders to `[kernel] archives` in `board.toml`
    (`build-arm-driver.py NativeAdreno`, `build-native-adreno-kits.py`,
