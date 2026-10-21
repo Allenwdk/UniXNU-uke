@@ -355,12 +355,21 @@ if [ "$(cat "$OWNER_ROOT_STAMP" 2>/dev/null || echo 0:0:0:0:0:0)" != "$OWNER_ROO
   rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o"
   printf '%s\n' "$OWNER_ROOT_PROBE:$OWNER_ROOT_AUDIT:$OWNER_ROOT_TRUST:$ADRENO_FIRMWARE_PROBE:$ADRENO_PM4_PROBE:$SMMU4K_PROBE:$CONSTANT_UPLOADS_PROBE:$NATIVE_LEGACY_DISPLAY:$NATIVE_OFFLINE_GPU" > "$OWNER_ROOT_STAMP"
 fi
+BRINGUP_OWNER_CACHE=${XNU_BRINGUP_OWNER_CACHE:-0}
+if [ "$BRINGUP_OWNER_CACHE" != 0 ] && [ "$BRINGUP_OWNER_CACHE" != 1 ]; then
+  echo 'XNU_BRINGUP_OWNER_CACHE must be 0 or 1' >&2
+  exit 1
+fi
 OWNER_CACHE_MOUNT=${XNU_OWNER_CACHE_MOUNT:-0}
 if [ "$OWNER_CACHE_MOUNT" != 0 ] && [ "$OWNER_CACHE_MOUNT" != 1 ]; then
   echo 'XNU_OWNER_CACHE_MOUNT must be 0 or 1' >&2
   exit 1
 fi
-if [ "$OWNER_CACHE_MOUNT" = 1 ] && [ "$OWNER_ROOT_TRUST" != 1 ]; then
+# The unverified UFS bring-up supplies native_verified_block_root_authorized and
+# native_verified_block_volume_device itself, so it can mount the published
+# SystemOS volume without the owner policy bundle. A shipping build keeps this
+# opt-in off and still requires OWNER_ROOT_TRUST.
+if [ "$OWNER_CACHE_MOUNT" = 1 ] && [ "$OWNER_ROOT_TRUST" != 1 ] && [ "$BRINGUP_OWNER_CACHE" != 1 ]; then
   echo 'The offline SystemOS mount requires real independent owner root enforcement' >&2
   exit 1
 fi

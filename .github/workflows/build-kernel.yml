@@ -26,6 +26,11 @@ name: build-uke-kernel
 
 on:
   workflow_dispatch:
+    inputs:
+      defconfig:
+        description: 'Device defconfig to build'
+        required: false
+        default: 'uke-full_defconfig'
   push:
     branches: [main]
     paths:
@@ -324,7 +329,7 @@ jobs:
         # recorded original bindings, the public storage headers, the NativeUfs
         # bring-up transport, mockfs, PMGR, pthread and the legacy display.
         run: |
-          ./unixnu defconfig uke-full_defconfig -D ../UniXNU-uke
+          ./unixnu defconfig "${{ github.event.inputs.defconfig || 'uke-full_defconfig' }}" -D ../UniXNU-uke
           ./unixnu status
           ./unixnu build kernel -D ../UniXNU-uke
 

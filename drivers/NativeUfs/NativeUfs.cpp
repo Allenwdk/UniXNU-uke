@@ -8,6 +8,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_map.h>
 #include <sys/param.h>
+#include <sys/types.h>
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
 #include "verified_root.h"
 #include "VerifiedBlockPolicy.h"
@@ -1578,6 +1579,73 @@ static bool mediaWithUuidExists (const char *uuid, NativeUfsBlock *window)
   OSSafeReleaseNULL (properties);
   OSSafeReleaseNULL (matching);
   return found;
+}
+
+// The owner SystemOS mount in kern_exec.c calls these two helpers. The
+// verified VirtIO driver authorizes each volume against the owner policy; this
+// UFS bring-up build accepts only the explicit native-ufs-allow-unverified
+// mode and resolves the published SystemOS volume by its APFS UUID.
+extern "C" int native_verified_block_root_authorized (dev_t device)
+{
+  (void) device;
+  return gAllowUnverifiedRoot ? 1 : 0;
+}
+
+extern "C" int native_verified_block_volume_device (const char *uuid, dev_t *device, char *path, size_t size)
+{
+  if (!uuid || !device || !path || size < 6 || strlen (uuid) != 36) return 0;
+  *device = NODEV;
+  path[0] = 0;
+  if (!gAllowUnverifiedRoot) return 0;
+  // The APFS volume media appears asynchronously after the root window starts.
+  // launchd is loaded immediately after root mount, so wait for the volume.
+  for (unsigned attempt = 0; attempt < 100; ++attempt) {
+    OSDictionary *matching = IOService::serviceMatching ("IOMedia");
+    OSDictionary *properties = OSDictionary::withCapacity (1);
+    OSString *wanted = OSString::withCString (uuid);
+    bool ready = matching && properties && wanted && properties->setObject ("UUID", wanted) &&
+                 matching->setObject ("IOPropertyMatch", properties);
+    OSSafeReleaseNULL (wanted);
+    OSSafeReleaseNULL (properties);
+    OSIterator *iterator = ready ? IOService::getMatchingServices (matching) : nullptr;
+    OSSafeReleaseNULL (matching);
+    dev_t candidate = NODEV;
+    char candidatePath[64] = {};
+    unsigned matches = 0;
+    bool found = false;
+    while (iterator) {
+      OSObject *object = iterator->getNextObject ();
+      if (!object) break;
+      IOService *media = OSDynamicCast (IOService, object);
+      if (!media) continue;
+      if (++matches != 1) {
+        found = false;
+        break;
+      }
+      OSString *identity = OSDynamicCast (OSString, media->getProperty ("UUID"));
+      OSString *name = OSDynamicCast (OSString, media->getProperty (kIOBSDNameKey));
+      OSNumber *mjr = OSDynamicCast (OSNumber, media->getProperty (kIOBSDMajorKey));
+      OSNumber *mnr = OSDynamicCast (OSNumber, media->getProperty (kIOBSDMinorKey));
+      if (!identity || strcmp (identity->getCStringNoCopy (), uuid) || !name || !mjr || !mnr ||
+          !name->getLength () || name->getLength () >= sizeof (candidatePath) - 6 ||
+          name->getLength () >= size - 6 || mjr->unsigned64BitValue () > 255 ||
+          mnr->unsigned64BitValue () > 0xffffff) {
+        continue;
+      }
+      candidate = static_cast<dev_t> (makedev (mjr->unsigned32BitValue (), mnr->unsigned32BitValue ()));
+      if (!native_verified_block_root_authorized (candidate)) continue;
+      snprintf (candidatePath, sizeof (candidatePath), "/dev/%s", name->getCStringNoCopy ());
+      found = true;
+    }
+    OSSafeReleaseNULL (iterator);
+    if (found && matches == 1) {
+      *device = candidate;
+      strlcpy (path, candidatePath, size);
+      return 1;
+    }
+    IOSleep (100);
+  }
+  return 0;
 }
 
 static void captureMissingMedia (const char *uuid)

@@ -1,0 +1,70 @@
+# Userland bring-up: the stage-6 full kernel plus the SystemOS owner-cache
+# mount, so launchd can find the dyld shared cache. The UFS driver supplies the
+# two authorization helpers in unverified bring-up mode; the owner policy path
+# stays the default for shipping builds.
+#
+# Everything here is reproducible from the pinned sources and the pinned
+# kernelcache alone: the AES subclass binds to the recorded original
+# addresses in scripts/data/native-aes-original-bindings.S, and NativeUfs is
+# built in the bring-up ("adopt the running controller") mode, without a
+# verified-root policy bundle. CONFIG_XNU_BUILD_ARCHIVES makes the unixnu
+# driver run the board archive list before the final link; the bootstrap pass
+# and the first-console configurations leave it unset.
+#
+# CONFIG_XNU_<NAME> becomes XNU_<NAME> for the kernel build.
+
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_BRINGUP_OWNER_CACHE=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_UFS=y
+CONFIG_XNU_NATIVE_AES=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_SOURCE_MOCKFS=y
+CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+CONFIG_XNU_SHENG_PMGR=y
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_ZONE_PGZ_ALIGNMENT_PROBE=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
+
+#
+# Hardware-qualification gates, kept for configs/uke-full-plus_defconfig.
+# Each one needs inputs that only a device run or the target-volume DMGs can
+# produce, so they are deliberately not part of the reproducible full build:
+#
+#   NATIVE_VIRTIO_BLOCK / NATIVE_RAM_BLOCK
+#       build/storage-abi/interface-audit.json needs a live guest snapshot
+#       (gdb-stop.json) of the original IOBlockStorageDevice metadata.
+#   VERIFIED_ROOT_PROBE / OWNER_ROOT_AUDIT / OWNER_ROOT_TRUST
+#       need a signed policy bundle generated from the real OS/SystemOS DMGs.
+#   OWNER_CACHE_* / OWNER_BOOT_MANIFEST / OWNER_DATA_MOUNT /
+#   OWNER_UNION_SYSTEMOS
+#       follow from the owner-root trust path.
+#   BOOT_PROGRESS
+#       the base build refuses it without the audited UFS/owner-root, VirtIO
+#       and source-crypto set.
+#   NATIVE_ADRENO
+#       the driver currently knows the Adreno 740; the uke GPU is an
+#       Adreno 732 and its firmware/power values are not collected yet.
+#
+# CONFIG_XNU_NATIVE_VIRTIO_BLOCK is not set
+# CONFIG_XNU_NATIVE_RAM_BLOCK is not set
+# CONFIG_XNU_VERIFIED_ROOT_PROBE is not set
+# CONFIG_XNU_OWNER_ROOT_AUDIT is not set
+# CONFIG_XNU_OWNER_ROOT_TRUST is not set
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+# CONFIG_XNU_OWNER_BOOT_MANIFEST is not set
+# CONFIG_XNU_OWNER_DATA_MOUNT is not set
+# CONFIG_XNU_OWNER_UNION_SYSTEMOS is not set
+# CONFIG_XNU_BOOT_PROGRESS is not set
+# CONFIG_XNU_NATIVE_ADRENO is not set
+
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_EXTRA_LD_ARCHIVES=""
+CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
+CONFIG_XNU_ARMVIRT_PLATFORM=n
