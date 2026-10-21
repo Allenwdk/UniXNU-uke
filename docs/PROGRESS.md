@@ -121,6 +121,11 @@
   - DEVELOPMENT 内核的 `kprintf` 被 `disable_kprintf_output=true` 门控；`-v`/`debug=0x14e` 只放开串口输出，而 uke 没有 UART。已在 `[payload] kernel_args` 加 `-enable_kprintf_spam`。
   - 启用 kprintf 后，`initialize_screen()` 把 DarwinBoot 传来的 GOP **物理** framebuffer 地址当成虚拟地址（`v_baseAddr` 4 字节对齐、bit0 未置位），第一次 console 写入就 fault，表现为黑屏/重启。内核补丁 `patches/xnu/zzzzz-video-console-physical-fb.patch` 在 `newVideoVirt < VM_MIN_KERNEL_ADDRESS` 时也走 `ml_io_map_unmappable()`；`PE_state.video.v_baseAddr` 保持物理地址，不影响 NativeGOPPresenter/NativeLegacyDisplay 的匹配。
   - 映射修好后仍有第三道门：`PE_create_console()` 走 `kPEGraphicsMode`，`gc_graphics_boot=TRUE`；`vcattach()` 只在 `gc_graphics_boot == FALSE` 时启用文字 console，所以图形启动下 `vcputc` 仍然丢弃输出。补丁 `patches/xnu/zzzzzz-video-console-text.patch` 加 `-uketextconsole`：`vcattach()` 里调用 `initialize_screen(NULL, kPETextScreen)`，设置 `gc_desire_text`，随后的 `kPEAcquireScreen` 以 `gc_enable(TRUE)` 打开文字 console。
+- 2026-10-21（实机）：三种补丁后**内核日志和 userland 都起来了**。第二次重启能看到 Apple logo，日志显示 launchd 之后的 `cfprefsd`、`accountsd`、`fseventsd`、`thermalmonitord`、`wirelessinsightsd`、`UserEventAgent`、`MobileGestaltHelper` 等进程。主要错误是 Data 卷太小：
+  - `fs_tx_enter_internal:27549: disk1s1 cfprefsd: ENOSPC: ttype DELETE num_blocks 6010 free_blocks 5420 ...`
+  - 32 MiB APFS Data seed 在 userland 启动后很快耗尽；`sheng-data-persist=2` 的持久窗口存在，但 APFS 容器本身只有 32 MiB，无法扩容。
+  - 另外有 `IOMFB: default_fb_surface: No Default FB Surface found. Return error`（显示/GPU 下一阶段）、`invalid denylist` 和 `logd ... crossed memory high watermark (16 MB)`（日志洪水副作用），不是当前启动阻塞。
+- 修复：`grow-data-seed.yml` 复用已有 `uke-data-seed` 32 MiB 产物，用 macOS `diskutil apfs resizeContainer` 把 APFS 容器扩到 **214 GiB**（userdata 241,617,055,744 B − root 9,382,658,048 B − 1 GiB log reserve − 4 MiB guard − 1 GiB margin），再打包为 `DBRDISK1`。结果：逻辑 229,780,750,336 B，encoded 1,085,568 B，encoded sha `9f3ffc70…`，seed 身份 `29c86166…`，卷 UUID 仍是 `292E72B9-…`。新 payload sha `ff367383…`，`vendor_boot_uke_data7.img` sha `17cd5c69…`；等设备充电后刷入验证 ENOSPC 是否消失。
 
 ---
 
@@ -133,8 +138,8 @@
 - **userdata 已刷入**：8.74 GiB `SHNGROOT` 镜像已写入 userdata（Android 数据已清空，用户确认）。root-mode 启动能发布窗口并挂载 OS APFS 卷。
 - **root-auth 阻塞**：`bsd_init.c:1098` 的 `FSIOC_KERNEL_ROOTAUTH` 在自定义 boot 链上返回错误，触发 `rootvp not authenticated after mounting`。已加设备侧 patch：`native-ufs-allow-unverified=1` 时跳过该 panic；等 CI 新内核。
 - **root/launchd 已到达**：root-auth 放行 + trust cache 后 launchd exec；union mount 后 libSystem 可加载。
-- **当前阻塞：mount phase 1 的 boot manifest hash**：`mount[3]` exit 66 已定位为 `/chosen` 没有 `boot-manifest-hash`；Data 卷由内核 `native_owner_data_prepare` 从 packed seed 挂载，未触发 Data panic。ADT 现在显式写入 48 字节 bring-up hash，待实机验证下一阶段（`data-protection`/keybag/`tzinit`）。
-- root UUID、APFS 挂载已到达；launchd 已启动并 spawn `mount -P 1`。
+- **userland 已启动**：root-auth 放行 + trust cache + union SystemOS + boot manifest hash + 文字 console 后，launchd 启动，`cfprefsd`/`accountsd`/`fseventsd`/`thermalmonitord`/`wirelessinsightsd`/`UserEventAgent`/`MobileGestaltHelper` 等进程都出现在日志里，Apple logo 也能显示。
+- **当前阻塞：Data 卷容量**：32 MiB APFS seed 在 userland 启动后不断 `ENOSPC`（`disk1s1 ... free_blocks 5xxx ... num_blocks 6010`）。已生成 214 GiB 的 `owner-data-214.dbr` 和 `vendor_boot_uke_data7.img`，待设备充电后刷入复测。之后的下一个已知问题是 `IOMFB: default_fb_surface: No Default FB Surface found. Return error`（显示/GPU 默认 surface），以及 `logd` 的 16 MB watermark。
 - UFS 块读取目前是 **unverified bring-up**：块类已绑定到原始 class，但每次读不做 policy 校验。`native-ufs-root=1` 在未认证构建里默认拒绝发布；新加的 `native-ufs-allow-unverified=1` 是明确的 bring-up 开关，只用于发布窗口，不改变读取认证状态。认证读取仍需要 verified-root policy bundle 和 live storage ABI audit。
 - UFS GCC 窗口已按 uke/SM7675 改为 `0x177000`/`0x19e000`，实机读取通过。
 - payload 已带 `native-ufs-root=1` + `native-ufs-allow-unverified=1` 的 root-mode 版本（`vendor_boot_uke_root_nodata.img`）；未刷 userdata 时会停在 manifest 检查。
@@ -310,6 +315,8 @@ fastboot reboot
 | 2026-10-21 | packed Data seed | `DBRDISK1` 995 KB；payload 64 MiB / vendor_boot 69,005,312 B；userland Data 内核 `a7317807…` |
 | 2026-10-21 | boot manifest hash | 上游检查证明 `mount[3]` 66 是缺 `/chosen/boot-manifest-hash`；ADT 写入 48 字节 bring-up hash；payload `2da6f5ff…` / vendor_boot `0b79b7d8…` |
 | 2026-10-21 | kernel logs | `-enable_kprintf_spam` 放开 DEVELOPMENT 的 kprintf；补 `zzzzz-video-console-physical-fb.patch` 把物理 framebuffer 交给 `ml_io_map_unmappable()`；待 CI 新内核 |
+| 2026-10-21 | userland 日志 | `zzzzzz-video-console-text.patch` + `-uketextconsole` 后日志正常；launchd 及 `cfprefsd`/`accountsd`/`MobileGestaltHelper` 等启动，Apple logo 可见 |
+| 2026-10-21 | Data ENOSPC | 32 MiB seed 太小；`grow-data-seed.yml` 复用旧产物扩到 214 GiB，encoded 1,085,568 B，seed `29c86166…`；payload `ff367383…` / vendor_boot `17cd5c69…` 待复测 |
 
 ---
 
