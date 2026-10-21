@@ -1,0 +1,103 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7424,6 +7424,81 @@
+ 	return execve(p, &init_exec_args, retval);
+ }
+ 
++
++#include <kern/debug.h>
++#include <IOKit/IOLib.h>
++
++/*
++ * Uke bring-up log: copy the kernel message buffer into the reserved pram
++ * region once a second. The next boot's check_for_panic_log reads the same
++ * header and pe_print_last_panic() prints the newest lines, so a userspace
++ * reboot or watchdog reset still leaves the last logs on the screen.
++ */
++struct uke_boot_log_msgbuf {
++	int msg_magic;
++	int msg_size;
++	int msg_bufx;
++	int msg_bufr;
++	char *msg_bufc;
++};
++extern struct uke_boot_log_msgbuf *msgbufp;
++extern vm_offset_t gPanicBase;
++extern unsigned int gPanicSize;
++
++static void
++uke_last_log_writer(void *arg, wait_result_t result)
++{
++	(void)arg;
++	(void)result;
++
++	for (;;) {
++		if (gPanicBase && gPanicSize > sizeof(struct embedded_panic_header) + 64) {
++			struct uke_boot_log_msgbuf *m = msgbufp;
++			if (m && m->msg_bufc && m->msg_size > 0 && m->msg_size <= (1 << 20)) {
++				struct embedded_panic_header *h = (struct embedded_panic_header *)gPanicBase;
++				char *out = (char *)gPanicBase + sizeof(*h);
++				size_t cap = gPanicSize - sizeof(*h);
++				size_t n = 0;
++				int size = m->msg_size;
++				int x = m->msg_bufx;
++				if (x < 0 || x >= size) {
++					x = 0;
++				}
++				for (int i = 0; i < size && n < cap; i++) {
++					char c = m->msg_bufc[(x + i) % size];
++					if (c) {
++						out[n++] = c;
++					}
++				}
++				bzero(h, sizeof(*h));
++				h->eph_magic = EMBEDDED_PANIC_MAGIC;
++				h->eph_version = EMBEDDED_PANIC_HEADER_CURRENT_VERSION;
++				h->eph_panic_log_offset = sizeof(*h);
++				h->eph_panic_log_len = (uint32_t)n;
++				__asm__ volatile("dsb sy" ::: "memory");
++			}
++		}
++		IOSleep(1000);
++	}
++}
++
++static void
++uke_start_last_log_writer(void)
++{
++	uint32_t mode = 0;
++	thread_t thread;
++
++	if (!PE_parse_boot_argn("sheng-log", &mode, sizeof(mode)) || mode != 1) {
++		return;
++	}
++	if (!gPanicBase || gPanicSize <= sizeof(struct embedded_panic_header)) {
++		return;
++	}
++	if (kernel_thread_start_priority(uke_last_log_writer, NULL, BASEPRI_KERNEL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
++}
++
+ static const char * init_programs[] = {
+ #if DEBUG
+ 	"/usr/appleinternal/sbin/launchd.debug",
+@@ -7474,6 +7549,7 @@
+ 	mach_vm_size_t map_page_size = vm_map_page_size(map);
+ 
+ 	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
++	uke_start_last_log_writer();
+ 	user_addr_t init_envp = USER_ADDR_NULL;
+ #if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
+ 	boot_progress_stage("SystemOS mount enter");
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -186,7 +186,7 @@
+ 		if ((offset >= sizeof(*panic_info)) && (offset < gPanicSize) && (length != 0) &&
+ 		    (length <= gPanicSize - offset)) {
+ 			size_t copy = length < (sizeof(last_panic_text) - 1) ? length : (sizeof(last_panic_text) - 1);
+-			memcpy(last_panic_text, (const void *)(gPanicBase + offset), copy);
++			memcpy(last_panic_text, (const void *)(gPanicBase + offset + length - copy), copy);
+ 			last_panic_text[copy] = '\0';
+ 			last_panic_text_valid = TRUE;
+ 		}
