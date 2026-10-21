@@ -23,8 +23,12 @@ import native_prelink as np
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--candidate', type=Path,
                     default=ROOT / 'build/native-prelink/native-owner-mobile-graphics-candidate.macho')
-parser.add_argument('--objects-dir', type=Path, default=ROOT / 'build/native-ufs')
+parser.add_argument('--component', choices=('NativeUfs', 'NativeRamBlock'), default='NativeUfs')
+parser.add_argument('--objects-dir', type=Path, default=None)
 args = parser.parse_args()
+component = args.component
+args.objects_dir = (args.objects_dir or
+                    ROOT / ('build/native-ufs' if component == 'NativeUfs' else 'build/native-ram-block'))
 
 KERNELCACHE_SHA256 = 'f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7'
 SOURCE_REVISION = 'e45fbe30a7879e0b16e26dddb78538f1b00e0bff'
@@ -165,11 +169,11 @@ possible.update({'__ZN20IOBlockStorageDeviceC2EPK11OSMetaClass': constructors[0]
                  '__ZN20IOBlockStorageDevice10gMetaClassE': meta,
                  '__ZTV20IOBlockStorageDevice': table})
 
-object_path = out / 'NativeUfs.o'
-require(object_path.is_file(), 'Build NativeUfs.o before this binder')
+object_path = out / (component + '.o')
+require(object_path.is_file(), f'Build {component}.o before this binder')
 undefined = subprocess.check_output(['xcrun', 'nm', '-u', '-j', object_path], text=True).split()
 undefined = [name for name in undefined if 'IOBlockStorageDevice' in name]
-require(undefined, 'No original block-storage imports found in NativeUfs.o')
+require(undefined, f'No original block-storage imports found in {component}.o')
 missing = [name for name in undefined if name not in possible]
 require(not missing, 'Unqualified original storage import: ' + ', '.join(missing))
 bindings = {name: possible[name] for name in undefined}
@@ -177,15 +181,16 @@ assembly = out / 'original-bindings.S'
 assembly.write_text(''.join(f'.globl {name}\n.set {name}, {value:#x}\n' for name, value in sorted(bindings.items())))
 subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror', '-Wno-incompatible-sysroot',
                 '-c', assembly, '-o', out / 'original-bindings.o'], check=True)
-archive = out / 'libNativeUfs.a'
+archive = out / ('lib' + component + '.a')
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, object_path, out / 'original-bindings.o'], check=True)
 (out / 'bindings.json').write_text(json.dumps(dict(
+    component=component,
     original_candidate_sha256=plan['candidate_sha256'], original_sha256=plan['original_sha256'],
     vtable=hex(table), original_metaclass=hex(meta), protected_constructor=hex(constructors[0]),
     original_base_destructor=hex(destructor), virtual_methods_checked=len(methods),
     kernel_bindings=matched, unresolved_original_imports=0,
     bindings={name: hex(value) for name, value in bindings.items()},
     live_qualified=False, actual_io_qualified=False), indent=2) + '\n')
-print(f'PASS: {len(bindings)} NativeUfs bindings from the pinned original candidate '
+print(f'PASS: {len(bindings)} {component} bindings from the pinned original candidate '
       f'({matched} kernel method bindings, {len(methods)} slots)')
