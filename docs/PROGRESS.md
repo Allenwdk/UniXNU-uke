@@ -157,7 +157,7 @@
 
 - 2026-10-22（串口抓到的显示日志，分析）：隔壁串口分支抓到本内核的 `UKE` 行（串口前缀被交错成 `dt_foreach`/`UPE`/`MKE`，数值仍可信）：
   - `default surface region=0x… bytes=33554432`：32 MiB 系统内存 region 生效。
-  - `display surface … flag=1 dims=3208x2136 mode=42475241/1/4 sid=1 mem=… desc=… debug=0`：默认 surface 创建成功；实际 `PE_Video` 宽度是 **3208**（不是 3200），`installBootDimensions`/mode/stride 已按 3208 计算，panel 可见区 3200，8 px 是 padding。
+  - `display surface … flag=1 dims=3208x2136 mode=42475241/1/4 sid=1 mem=… desc=… debug=0`：默认 surface 创建成功；串口里的 3208 是 OCR 误读，实际 `PE_Video` 宽度是 **3200**（与 panic 探针的 `dims=3200x2136` 一致）；`installBootDimensions`/mode/stride 仍按 3200 计算，stride 12928。
   - `UKE client: type=0 pid=86 surf=0x… temp=0x… sid=1`：adopt 生效（`surf == temp`），显示 user client 确实打开了；之前“没有 panic”是屏幕/日志没抓到，不是客户端没到。
   - 原厂 `IODisplayFrameBufferLegacy::start` 打印 `provider was not AppleARMIODevice`，但它继续完成；不是致命错误。
   - `debug=0`（`PE_i_can_has_debugger()` 为假）说明 slot242 的 entitlement 路径可能失败；下一步应优先做 `surface_copy_port_name` 后备，并在 client/`s_default_fb_surface` 之后加探针。复位发生在 client 打开之后；`wdt=-1` 只把复位推后到 Apple logo 之后，内核 watchdog 只是一个因素。
