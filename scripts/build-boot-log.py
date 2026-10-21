@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'build/uke-last-log'
 OUT.mkdir(parents=True, exist_ok=True)
 record = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/startup.o.json').read_text().strip().rstrip(','))
-source = ROOT / 'package/UkeLastLog.c'
+source = ROOT / 'kits/uke/UkeLastLog.c'
 obj = OUT / 'UkeLastLog.o'
 command = []
 args = record['arguments']
