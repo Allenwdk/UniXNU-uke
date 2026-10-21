@@ -210,6 +210,7 @@ kernel_args = [
   "boot-progress=2",
   "-apfs_shared_datavolume",
   "offline-key-events=1",
+  "sheng-log=1",
   "sheng-pmgr=2",
   "armcpu-diagnostics=1",
   "sheng-disable-watchdogd=1",
