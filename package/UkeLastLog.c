@@ -66,7 +66,7 @@ uke_last_log_write(void)
 	hdr->eph_crc = 0;
 	hdr->eph_version = EMBEDDED_PANIC_HEADER_CURRENT_VERSION;
 	hdr->eph_panic_flags = 0;
-	hdr->eph_panic_log_offset = sizeof(*hdr);
+	hdr->eph_panic_log_offset = (uint32_t)sizeof(*hdr);
 	hdr->eph_panic_log_len = (uint32_t)cap;
 	hdr->eph_stackshot_offset = 0;
 	hdr->eph_stackshot_len = 0;
