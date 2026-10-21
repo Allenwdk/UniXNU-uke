@@ -153,6 +153,8 @@
 
 - 2026-10-22：panic 诊断结果：`st=1 root=0x… reg=0x… temp=0x… sid=1 flag=1 dims=3200x2136 fmt=42475241/1/4`。`temp` 非空且 `sid=1` → 原厂 slot299 用我们预置的 32 MiB 系统内存 region 成功创建并注册了默认 surface；`surf=0` 只是 adopt 之前的状态。下一步改成第一个 `newUserClient` 时 panic（commit `d284317`，CI run `39659831112`），确认显示客户端是否打开、adopt 是否生效，以及后面 presentation/watchdog 的行为。该诊断内核 `f8637059…`、payload `f36fdc2b…`、`vendor_boot_uke_client_panic.img` `71dcd576…` 已刷入两个槽位。实机结果：**没有 panic**——复位发生在任何显示 user client 打开之前，所以默认 surface 不是这次复位的直接原因。随后用 v2 内核加 `wdt=-1` 生成 `vendor_boot_uke_wdt_off.img`（payload `0f224e9d…`，sha `a2501050…`）刷入两个槽位，测试内核 watchdog 是否是复位源。
 
+- 2026-10-22（日志转储，pram）：`UkeLastLog.c` 把 4 MiB pram 分成两半：低 2 MiB 保留 `FUNK` 记录（XNU 下次启动 `PREVIOUS XNU LOG` 打印），高 2 MiB（物理 `0xC4200000`，`0x200000`）按 Linux ramoops `persistent_ram_buffer` 格式（`sig=0x43474244`、`start/size` 环形缓冲、无 ECC）写 msgbuf 增量；`sheng-log=1` 已加入 `board.toml` 默认参数。该区域已在 pram 的 UEFI/ADT 保留范围内；reader 映射 `0xC4200000` 即可在 `/sys/fs/pstore/console-ramoops-0` 暴露。未修改 Linux 仓库。commit `bff40a7`，CI run `39664511819` 构建中。
+
 ---
 
 ## 4. 还没做 / 当前阻塞
