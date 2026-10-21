@@ -143,7 +143,9 @@
   - `slot333` 读 `IOMobileFramebufferLegacy + 0x1618`；整个 kernelcache 里该字段只有 `init`/`stop`/提交失败三处 `str xzr`，**没有任何非零写入**。原厂平台驱动（AppleCLCD/DisplayPipe 那层，未包含在 port 里）负责安装它。
   - 原厂 `start()`（slot 86）在 `startHardware`（slot 288，我们的实现）返回 true 后，若 `+0x1780` bit0 置位且宽高非零，会调用 `slot299` 创建临时 surface 到 `+0x1620`；`+0x1700` 是 mode 块（首字是 pixel format，`+0x1704` 是 plane 数，`+0x1708` 是每像素字节数，`+0x1748` 是 layout 标志）。
   - 新审计 `scripts/audit-mobile-graphics-default-surface.py` 绑定 slot174/242/299/333、user-client dispatch、`+0x1600/+0x1608/+0x1610/+0x1618/+0x1620/+0x17c0/+0x1780/+0x1700` 等字段；`build-native-legacy-display.py` 已在 legacy audit 之后接入。
-  - `package/LegacyDisplayProbe.cpp` 增加 `offline-legacy-default-surface=1`：`start()` 前设置 `+0x1780` 并填 BGRA/1 plane/4 bpp 的 mode 块，`start()` 后把 `+0x1620` retain 并写入 `+0x1618`，日志 `UKE: display surface root=… temp=… flag=… dims=… mode=… sid=…`；同时打印 `+0x17c0`（PurpleGfxMem 缓存）和 `PE_i_can_has_debugger`。本轮内核正在 CI 构建，待实机验证。
+  - `package/LegacyDisplayProbe.cpp` 增加 `offline-legacy-default-surface=1`：`start()` 前设置 `+0x1780` 并填 BGRA/1 plane/4 bpp 的 mode 块，`start()` 后把 `+0x1620` retain 并写入 `+0x1618`，日志 `UKE: display surface root=… temp=… flag=… dims=… mode=… sid=…`；同时打印 `+0x17c0`（PurpleGfxMem 缓存）和 `PE_i_can_has_debugger`。本轮内核已构建（见下一条）。
+
+- 2026-10-22：CI run `39649725296` 的 `full` job 成功（`uke-userland_defconfig`，含新审计、探针和 `NativeHidInput` touch sink）：kernel `dcf0b7d9…`，payload `baed2c67…`，vendor_boot `vendor_boot_uke_surface.img` `e3cca9fe…`（69,005,312 B，vendor ramdisk sha 与 payload 一致）。boot 仍用 `boot_uke_kpanicprint2.img`（`5be4b635…`）。下一步：设备进 fastboot 后刷两个槽位，读取 `UKE: display surface root=… temp=… flag=… dims=… mode=… sid=…`。
 
 ---
 
