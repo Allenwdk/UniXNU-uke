@@ -162,15 +162,9 @@ class NativeUsbSerial : public IOService {
 
 	struct Endpoint {
 		uint8_t phys = 0;
-		uint8_t type = 0;
-		bool in = false;
-		uint16_t mps = 0;
-		uint32_t fifo = 0;
 		UkeUsbTrb *trbs = nullptr;
 		uint64_t trbsPhys = 0;
 		uint32_t resource = 0;
-		uint8_t *buffer = nullptr;
-		uint64_t bufferPhys = 0;
 		uint32_t bufferSize = 0;
 		bool enabled = false;
 		bool busy = false;
@@ -197,8 +191,6 @@ class NativeUsbSerial : public IOService {
 	uint64_t fStatusPhys = 0;
 	uint8_t *fEp0Data = nullptr;
 	uint64_t fEp0DataPhys = 0;
-	uint8_t *fEp1Data = nullptr;
-	uint64_t fEp1DataPhys = 0;
 	uint8_t *fEp2Data = nullptr;
 	uint64_t fEp2DataPhys = 0;
 	uint8_t *fEp3Data = nullptr;
@@ -206,8 +198,6 @@ class NativeUsbSerial : public IOService {
 
 	UkeUsbDescriptors fDescriptors;
 	uint8_t fLineCoding[7] = {};
-	uint16_t fControlLineState = 0;
-	uint8_t fAddress = 0;
 	bool fConfigured = false;
 	bool fSerialReady = false;
 	bool fEp0Waiting = false;
@@ -532,18 +522,11 @@ NativeUsbSerial::dmaAllocate(void)
 	fEventsPhys = fDmaPhys + kEventOffset;
 	fEventHead = 0;
 
-	auto setupEndpoint = [this](Endpoint &ep, uint32_t trbOffset, uint32_t dataOffset,
-	    uint32_t dataSize, uint8_t phys, uint8_t type, bool in, uint16_t mps, uint32_t fifo) {
+	auto setupEndpoint = [this](Endpoint &ep, uint32_t trbOffset, uint32_t dataSize, uint8_t phys) {
 		ep.phys = phys;
-		ep.type = type;
-		ep.in = in;
-		ep.mps = mps;
-		ep.fifo = fifo;
 		ep.trbs = reinterpret_cast<UkeUsbTrb *>(fDmaVirt + trbOffset);
 		ep.trbsPhys = fDmaPhys + trbOffset;
 		ep.resource = 0;
-		ep.buffer = dataOffset ? fDmaVirt + dataOffset : nullptr;
-		ep.bufferPhys = dataOffset ? fDmaPhys + dataOffset : 0;
 		ep.bufferSize = dataSize;
 		ep.enabled = false;
 		ep.busy = false;
@@ -554,11 +537,11 @@ NativeUsbSerial::dmaAllocate(void)
 		link->ctrl = UKE_USB_DWC3_TRBCTL_LINK | UKE_USB_DWC3_TRB_HWO;
 	};
 
-	setupEndpoint(fEp0Out, kEp0OutTrbOffset, 0, 0, 0, UKE_USB_DWC3_EP_TYPE_CONTROL, false, 64, 0);
-	setupEndpoint(fEp0In, kEp0InTrbOffset, 0, 0, 1, UKE_USB_DWC3_EP_TYPE_CONTROL, true, 64, 0);
-	setupEndpoint(fEp1In, kEp1InTrbOffset, kEp1DataOffset, 64, 3, UKE_USB_DWC3_EP_TYPE_INTR, true, 16, 1);
-	setupEndpoint(fEp2In, kEp2InTrbOffset, kEp2DataOffset, 4096, 5, UKE_USB_DWC3_EP_TYPE_BULK, true, 512, 2);
-	setupEndpoint(fEp3Out, kEp3OutTrbOffset, kEp3DataOffset, 4096, 6, UKE_USB_DWC3_EP_TYPE_BULK, false, 512, 0);
+	setupEndpoint(fEp0Out, kEp0OutTrbOffset, 0, 0);
+	setupEndpoint(fEp0In, kEp0InTrbOffset, 0, 1);
+	setupEndpoint(fEp1In, kEp1InTrbOffset, 0, 3);
+	setupEndpoint(fEp2In, kEp2InTrbOffset, 0, 5);
+	setupEndpoint(fEp3Out, kEp3OutTrbOffset, 4096, 6);
 
 	fSetup = fDmaVirt + kSetupOffset;
 	fSetupPhys = fDmaPhys + kSetupOffset;
@@ -566,8 +549,6 @@ NativeUsbSerial::dmaAllocate(void)
 	fStatusPhys = fDmaPhys + kStatusOffset;
 	fEp0Data = fDmaVirt + kEp0DataOffset;
 	fEp0DataPhys = fDmaPhys + kEp0DataOffset;
-	fEp1Data = fDmaVirt + kEp1DataOffset;
-	fEp1DataPhys = fDmaPhys + kEp1DataOffset;
 	fEp2Data = fDmaVirt + kEp2DataOffset;
 	fEp2DataPhys = fDmaPhys + kEp2DataOffset;
 	fEp3Data = fDmaVirt + kEp3DataOffset;
@@ -874,10 +855,10 @@ NativeUsbSerial::handleSetup(const uint8_t *setup)
 			return;
 		}
 		case 0x05: { // SET_ADDRESS
-			fAddress = static_cast<uint8_t>(value & 0x7fU);
+			const uint32_t address = value & 0x7fU;
 			uint32_t dcfg = rd32(fWrapper, UKE_USB_DWC3_DCFG);
 			dcfg &= ~(0x7fU << 3);
-			dcfg |= static_cast<uint32_t>(fAddress) << 3;
+			dcfg |= address << 3;
 			wr32(fWrapper, UKE_USB_DWC3_DCFG, dcfg);
 			ep0Status(true);
 			return;
@@ -933,7 +914,6 @@ NativeUsbSerial::handleSetup(const uint8_t *setup)
 			ep0DataIn(fLineCoding, 7);
 			return;
 		case 0x22: // SET_CONTROL_LINE_STATE
-			fControlLineState = value;
 			ep0Status(true);
 			return;
 		default:
@@ -1231,8 +1211,6 @@ NativeUsbSerial::serialStart(void)
 	fEp0Waiting = false;
 	fLogPrimed = false;
 	fCmdLength = 0;
-	fAddress = 0;
-	fControlLineState = 0;
 	bzero(fLineCoding, sizeof(fLineCoding));
 	fDescriptors.build();
 
@@ -1296,10 +1274,10 @@ NativeUsbSerial::serialStop(void)
 	// The polled threads may still be sleeping. Keep the DMA/MMIO
 	// allocations for this boot instead of freeing memory under them.
 	if (!fSerialStarted) {
-		if (fDma != nullptr) {
-			fDma->release();
-			fDma = nullptr;
-		}
+		// Keep the physically-contiguous descriptor allocated, matching the
+		// NativeUfs bring-up pattern; a failed/never-started driver is rare
+		// and the buffer is released with the boot.
+		fDma = nullptr;
 		if (fTxMem != nullptr) {
 			IOFree(fTxMem, kTxBytes);
 			fTxMem = nullptr;
