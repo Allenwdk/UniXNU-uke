@@ -162,6 +162,8 @@
   - 原厂 `IODisplayFrameBufferLegacy::start` 打印 `provider was not AppleARMIODevice`，但它继续完成；不是致命错误。
   - `debug=0`（`PE_i_can_has_debugger()` 为假）说明 slot242 的 entitlement 路径可能失败；下一步应优先做 `surface_copy_port_name` 后备，并在 client/`s_default_fb_surface` 之后加探针。复位发生在 client 打开之后；`wdt=-1` 只把复位推后到 Apple logo 之后，内核 watchdog 只是一个因素。
 
+- 2026-10-22（slot242 后备）：`NativeLegacyDisplay` 覆盖 slot242；原厂 slot242 返回 `kIOReturnNotPrivileged` 时直接调用原厂 `surface_copy_port_name`（`0xfffffff004baa90c`），复用 send-right/port 逻辑。`NativeMobileDisplay` fork 到 `Allenwdk/NativeMobileDisplay`（分支 `uke-display-slot242`，commit `b1c39b5`），core `.gitmodules` 指向 fork，core `uke` `e79c156`；builder 绑定两个 C 别名并把 242 加入 owned。CI run `39668984510` 成功；kernel `eae840e7…`、payload `6727e844…`、`vendor_boot_uke_slot242.img` `a31175fc…`，带 `wdt=-1`，已刷入两个槽位。预期日志：`UKE: default surface port fallback root=… surface=… status=…` 或 `UKE: default surface port status=…`。
+
 ---
 
 ## 4. 还没做 / 当前阻塞
