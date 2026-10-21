@@ -1048,29 +1048,45 @@ extern "C" int native_ufs_store_open (uint64_t blocks, uint64_t *firstLba, const
 {
   const char *reason = "";
   int ok = 0;
+  unsigned waited = 0;
   if (!storeMode ()) reason = "off";
-  else if (!gStoreGeometry.valid || !gHost.ready) reason = "no root layout";
-  else if (gStoreRegionBlocks) reason = "already open";
   else {
-    uint64_t partition = gStoreGeometry.last - gStoreGeometry.first + 1;
-    uint64_t imageBlocks = (gStoreGeometry.imageBytes + 4095) / 4096;
-    const uint64_t reserve = reserveBlocks ();
-    if (!blocks || reserve >= partition || blocks > partition - reserve) reason = "size";
-    else if (partition - blocks - reserve < imageBlocks + 1024) reason = "overlaps the root image";
+    // NativeRamBlock attaches the Data seed before the UFS host/root layout is
+    // necessarily published. Wait briefly for the layout so the persistent
+    // window can open; otherwise the Data APFS mount stays read-only and
+    // vm_swap/dyld/shared_region fail before launchd reaches the display.
+    if (storeMode () == 2) {
+      while (waited < 500 && (!gStoreGeometry.valid || !gHost.ready)) {
+        IOSleep (10);
+        ++waited;
+      }
+    }
+    if (!gStoreGeometry.valid || !gHost.ready) reason = "no root layout";
+    else if (gStoreRegionBlocks) reason = "already open";
     else {
-      // The reserve at the end of the partition belongs to the diagnostic log (its last 32 MiB, with the export region below them);
-      // the store ends just below it.
-      uint64_t first = gStoreGeometry.last + 1 - reserve - blocks;
-      if (storeMode () == 2 && !hostStoreOpen (first, blocks)) reason = "window refused";
+      uint64_t partition = gStoreGeometry.last - gStoreGeometry.first + 1;
+      uint64_t imageBlocks = (gStoreGeometry.imageBytes + 4095) / 4096;
+      const uint64_t reserve = reserveBlocks ();
+      if (!blocks || reserve >= partition || blocks > partition - reserve) reason = "size";
+      else if (partition - blocks - reserve < imageBlocks + 1024) reason = "overlaps the root image";
       else {
-        gStoreRegionFirst = first;
-        gStoreRegionBlocks = blocks;
-        if (firstLba) *firstLba = first;
-        ok = 1;
+        // The reserve at the end of the partition belongs to the diagnostic log (its last 32 MiB, with the export region below them);
+        // the store ends just below it.
+        uint64_t first = gStoreGeometry.last + 1 - reserve - blocks;
+        if (storeMode () == 2 && !hostStoreOpen (first, blocks)) reason = "window refused";
+        else {
+          gStoreRegionFirst = first;
+          gStoreRegionBlocks = blocks;
+          if (firstLba) *firstLba = first;
+          ok = 1;
+        }
       }
     }
   }
   if (why) *why = reason;
+  IOLog ("NativeUfs: store open blocks=%llu first=%llx waited=%ums why=%s ok=%d\n",
+      (unsigned long long)blocks, (unsigned long long)(ok && firstLba ? *firstLba : 0),
+      waited * 10, reason, ok);
   return ok;
 }
 
