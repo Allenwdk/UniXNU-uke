@@ -157,6 +157,7 @@ jobs:
           ( cd "$workspace" && python3 scripts/build-corecrypto-14.py --namespace )
           ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmDTPlatform )
           ( cd "$workspace" && python3 scripts/build-arm-driver.py ArmCpu )
+          ( cd "$workspace" && python3 scripts/build-arm-driver.py NativeUsbSerial )
           mkdir -p "$workspace/build/display-analysis"
           python3 - <<'PY'
           import json
