@@ -87,7 +87,9 @@ if component=='NativeOfflineGPU':
 if component in ('NativeLegacyDisplay','NativeHidInput'):
     command += ['-I', str(out)]
 if component == 'NativeUsbSerial':
-    command += ['-I', str(ROOT / 'package'), '-mgeneral-regs-only']
+    # The device repo's package/ is assembled as kits/<board>; ROOT/package
+    # is the core repository package and does not carry SmmuBypass.h.
+    command += ['-I', str(ROOT / 'kits/uke'), '-mgeneral-regs-only']
 if component == 'NativeAdreno':
     command += ['-I', str(ROOT / 'kits/ArmSmmu4K'), '-I', str(ROOT / 'kits/AdrenoPM4'),
                 '-I', str(ROOT / 'kits/uke'), '-I', str(ROOT / 'kits/AdrenoFirmware'),
