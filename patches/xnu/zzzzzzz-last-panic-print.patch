@@ -1,6 +1,21 @@
+diff --git a/osfmk/console/video_console.c b/osfmk/console/video_console.c
+index 75a0567..bd2c6d4 100644
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -3078,6 +3078,8 @@ vcattach(void)
+ 	    PE_parse_boot_argn("-uketextconsole", &text_console, sizeof(text_console)) &&
+ 	    text_console) {
+ 		initialize_screen(NULL, kPETextScreen);
++		extern void pe_print_last_panic(void);
++		pe_print_last_panic();
+ 	}
+ 
+ #if defined(CONFIG_VC_PROGRESS_METER_SUPPORT)
+diff --git a/pexpert/arm/pe_init.c b/pexpert/arm/pe_init.c
+index f3532cc..8176034 100644
 --- a/pexpert/arm/pe_init.c
 +++ b/pexpert/arm/pe_init.c
-@@ -91,6 +91,11 @@
+@@ -91,6 +91,11 @@ static unsigned int panic_text_len;
  /* Whether a console is standing by for panic logging */
  static boolean_t panic_console_available = FALSE;
  
@@ -12,7 +27,7 @@
  /* socd trace ram attributes */
  static SECURITY_READ_ONLY_LATE(vm_offset_t) socd_trace_ram_base = 0;
  static SECURITY_READ_ONLY_LATE(vm_size_t) socd_trace_ram_size = 0;
-@@ -175,6 +180,18 @@
+@@ -175,6 +180,18 @@ check_for_panic_log(void)
  #endif
  	panic_info = (struct embedded_panic_header *)gPanicBase;
  
@@ -22,7 +37,7 @@
 +		if ((offset >= sizeof(*panic_info)) && (offset < gPanicSize) && (length != 0) &&
 +		    (length <= gPanicSize - offset)) {
 +			size_t copy = length < (sizeof(last_panic_text) - 1) ? length : (sizeof(last_panic_text) - 1);
-+			memcpy(last_panic_text, (const void *)(gPanicBase + offset), copy);
++			memcpy(last_panic_text, (const void *)(gPanicBase + offset + length - copy), copy);
 +			last_panic_text[copy] = '\0';
 +			last_panic_text_valid = TRUE;
 +		}
@@ -31,27 +46,19 @@
  	/* Check if a shared memory console is running in the panic buffer */
  	if (panic_info->eph_magic == 'SHMC') {
  		panic_console_available = TRUE;
-@@ -197,6 +214,15 @@
+@@ -197,6 +214,15 @@ check_for_panic_log(void)
  	bzero((void *)gPanicBase, gPanicSize);
  }
  
 +void
 +pe_print_last_panic(void)
 +{
-+	if (last_panic_text_valid) {
-+		printf("PREVIOUS XNU LOG:\n%s\n", last_panic_text);
-+		last_panic_text_valid = FALSE;
-+	}
++	printf("PREVIOUS XNU LOG (pram=%p size=%u valid=%d):\n%s\n",
++	    (void *)gPanicBase, gPanicSize, last_panic_text_valid ? 1 : 0,
++	    last_panic_text_valid ? last_panic_text : "(no previous log captured)");
++	last_panic_text_valid = FALSE;
 +}
 +
  int
  PE_initialize_console(PE_Video * info, int op)
  {
-@@ -265,6 +291,7 @@
- 	uint32_t        populate_registry_time_value = 0;
- 
- 	PE_init_printf(TRUE);
-+	pe_print_last_panic();
- 
- 	printf("iBoot version: %s\n", iBoot_version);
- #if defined(TARGET_OS_OSX) && defined(__arm64__)
