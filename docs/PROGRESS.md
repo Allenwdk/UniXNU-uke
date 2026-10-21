@@ -137,6 +137,13 @@
 - 2026-10-21：实现持久 panic 日志的读取。UEFI 端直接读 `0xC4000000` 的保留区在 `Reserv` 和 `BsData` 两种映射下都触发 `ArmCpuDxe` data abort，因此放弃 UEFI 读取。改为内核侧：ADT 加 `pram`/`embedded-panic-log-size`，`check_for_panic_log` 在清空前把上一轮日志复制到静态缓冲，`PE_init_printf(TRUE)` 后 `pe_print_last_panic()` 用 `PREVIOUS XNU LOG:` 打印到 framebuffer console。新 boot `boot_uke_kpanicprint.img` sha `4cef631b…`（含内存映射预留、无 UEFI 读取）；内核补丁 `patches/xnu/zzzzzzz-last-panic-print.patch` 正在 CI 构建。
 - 2026-10-21：`boot_uke_kpanicprint2.img` 去掉了新增的 UEFI 内存描述符，pram 改用已有的 `llcc_lpi_region@ff800000`（`0xFF800000`/`0x380000`），UEFI assert 消失。但第一次启动没有出现 `PREVIOUS XNU LOG`，说明这次重启没有走内核 panic 写入路径（更像用户态/watchdog 复位），reserved panic region 没有内容。
 - 2026-10-21：采用 `sheng-log` 的 msgbuf 环形缓冲思路（先不做 UFS reader）：`patches/xnu/zzzzzzzz-uke-last-log-ring.patch` 在 `load_init_program` 里用 `sheng-log=1` 启动内核线程，每秒把 `msgbufp` 写进 pram 区并写 `FUNK` 头；下一次启动 `check_for_panic_log` 复制**最新** 2 KiB，`pe_print_last_panic()` 打印。`zzzzzzzzz-uke-last-log-priority.patch` 修正 BSD 侧看不到 `MACH_KERNEL_PRIVATE` 里 `kernel_thread_start_priority` 声明和 `BASEPRI_KERNEL` 的编译错误。等 CI 成功后重打 payload（加 `--kernel-arg sheng-log=1`）。上游 UFS 版 writer/reader 结构见 `UniXNU-sheng/package/BootLog.c` 和 `package/linux-log`。
+- 2026-10-22：对原 iPad7,1 `IOMobileGraphicsFamily`（`__TEXT_EXEC` sha256 `2e044ee6…`）做指令级审计，确认 `default_fb_surface` 的根因**不是** `display type is 0`：
+  - `IOMobileFramebufferUserClient::s_map_display_type` 只是把 userland 传入的 scalar 写进 user client 的 `+0x10c` 并打印，然后返回 0；它是信息，不是失败。
+  - `s_default_fb_surface` 是 selector 3（2 个 scalar 输入、1 个 scalar 输出）→ helper `0xfffffff005777464` → `fb->slot174(w,h)` → `IOCommandGate::runAction` → `fb->slot333` → 返回 `IOSurfaceID`；随后 `slot242` 把该 surface 的 send-right 转成 Mach port name 作为 scalar 输出。
+  - `slot333` 读 `IOMobileFramebufferLegacy + 0x1618`；整个 kernelcache 里该字段只有 `init`/`stop`/提交失败三处 `str xzr`，**没有任何非零写入**。原厂平台驱动（AppleCLCD/DisplayPipe 那层，未包含在 port 里）负责安装它。
+  - 原厂 `start()`（slot 86）在 `startHardware`（slot 288，我们的实现）返回 true 后，若 `+0x1780` bit0 置位且宽高非零，会调用 `slot299` 创建临时 surface 到 `+0x1620`；`+0x1700` 是 mode 块（首字是 pixel format，`+0x1704` 是 plane 数，`+0x1708` 是每像素字节数，`+0x1748` 是 layout 标志）。
+  - 新审计 `scripts/audit-mobile-graphics-default-surface.py` 绑定 slot174/242/299/333、user-client dispatch、`+0x1600/+0x1608/+0x1610/+0x1618/+0x1620/+0x17c0/+0x1780/+0x1700` 等字段；`build-native-legacy-display.py` 已在 legacy audit 之后接入。
+  - `package/LegacyDisplayProbe.cpp` 增加 `offline-legacy-default-surface=1`：`start()` 前设置 `+0x1780` 并填 BGRA/1 plane/4 bpp 的 mode 块，`start()` 后把 `+0x1620` retain 并写入 `+0x1618`，日志 `UKE: display surface root=… temp=… flag=… dims=… mode=… sid=…`；同时打印 `+0x17c0`（PurpleGfxMem 缓存）和 `PE_i_can_has_debugger`。本轮内核正在 CI 构建，待实机验证。
 
 ---
 
@@ -150,7 +157,7 @@
 - **root-auth 阻塞**：`bsd_init.c:1098` 的 `FSIOC_KERNEL_ROOTAUTH` 在自定义 boot 链上返回错误，触发 `rootvp not authenticated after mounting`。已加设备侧 patch：`native-ufs-allow-unverified=1` 时跳过该 panic；等 CI 新内核。
 - **root/launchd 已到达**：root-auth 放行 + trust cache 后 launchd exec；union mount 后 libSystem 可加载。
 - **userland 已启动**：root-auth 放行 + trust cache + union SystemOS + boot manifest hash + 文字 console 后，launchd 启动，`cfprefsd`/`accountsd`/`fseventsd`/`thermalmonitord`/`wirelessinsightsd`/`UserEventAgent`/`MobileGestaltHelper` 等进程都出现在日志里，Apple logo 也能显示。
-- **当前阻塞：Data 卷容量**：32 MiB APFS seed 在 userland 启动后不断 `ENOSPC`（`disk1s1 ... free_blocks 5xxx ... num_blocks 6010`）。已生成 214 GiB 的 `owner-data-214.dbr` 和 `vendor_boot_uke_data7.img`，待设备充电后刷入复测。之后的下一个已知问题是 `IOMFB: default_fb_surface: No Default FB Surface found. Return error`（显示/GPU 默认 surface），以及 `logd` 的 16 MB watermark。
+- **当前阻塞：默认 FB surface**：Data 容量问题已由 214 GiB seed 解决，用户态已起来；但 `IOMobileFramebufferLegacy` 的默认 surface（实例 `+0x1618`）没有被安装。原厂 `start()` 在 `startHardware` 返回 true 后，只有 `+0x1780` bit0 置位时才会调用 slot299 创建临时 surface 到 `+0x1620`；原厂平台驱动（未包含在 port 里）负责把它安装到 `+0x1618`。`display type is 0` 只是 `s_map_display_type` 记录 userland 传入值，不是失败。修复与探针见上面的 2026-10-22 记录。
 - UFS 块读取目前是 **unverified bring-up**：块类已绑定到原始 class，但每次读不做 policy 校验。`native-ufs-root=1` 在未认证构建里默认拒绝发布；新加的 `native-ufs-allow-unverified=1` 是明确的 bring-up 开关，只用于发布窗口，不改变读取认证状态。认证读取仍需要 verified-root policy bundle 和 live storage ABI audit。
 - UFS GCC 窗口已按 uke/SM7675 改为 `0x177000`/`0x19e000`，实机读取通过。
 - payload 已带 `native-ufs-root=1` + `native-ufs-allow-unverified=1` 的 root-mode 版本（`vendor_boot_uke_root_nodata.img`）；未刷 userdata 时会停在 manifest 检查。
