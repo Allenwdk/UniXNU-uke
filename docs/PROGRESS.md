@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-10-21
 >
-> **当前一句话状态：** 阶段 6 的 UFS 读路径和 root 路径都已实机验证到 manifest 检查：`native-ufs-probe=10` 读到 GPT/userdata/block0，`native-ufs-root=1` 能走到 `root manifest rejected`（当前 userdata 还是 Android 数据）。已验证的 8.74 GiB `SHNGROOT` userdata 镜像已生成，尚未刷入；设备已恢复 Android + KernelSU，userdata 未动。
+> **当前一句话状态：** userdata 已刷入，UFS 窗口已发布，OS APFS 卷已挂载；当前阻塞是 `bsd_init.c:1098` 的 `rootvp not authenticated`（自定义 boot 链没有 Apple root seal）。已加 `native-ufs-allow-unverified=1` 的 root-auth bring-up 放行补丁，CI 正在重建内核，之后重刷 payload 继续。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -103,6 +103,11 @@
   - `WINDOWS found=0 prepared=0 published=0`
 - 结论：UFS host、SMMU、队列、UIC、GPT 读取和 root 模式都正常；唯一的失败是当前 userdata 没有 `SHNGROOT`（manifest status 1）。诊断模式把软失败变成了诊断 panic；不带 `native-ufs-diagnostics=1` 时会软失败并继续等根设备。
 - 之后按用户选择**恢复 Android**：刷回 KernelSU `boot_a_kernelsu.img` / `vendor_boot_a_kernelsu.img`，`sys.boot_completed=1`，`su` 正常，`/sdcard` 可访问；userdata 未刷入，Android 数据完好。
+- 2026-10-21（用户确认后）：刷入 8.74 GiB `SHNGROOT` userdata（12 个 sparse chunk，40.9 秒），再刷 boot + root-mode payload。UFS 成功发布窗口并挂载 root，但 `bsd_init.c:1098` 报：
+  - `rootvp not authenticated after mounting`
+  - `TCR=0x00000022a51a251a`、`SCTLR=0x000000003454599d`、`pages=0xbaee`、`free=0xaed2`
+  - 含义：root 已经挂载，失败的是 iOS 的 `FSIOC_KERNEL_ROOTAUTH` sealedness 检查（自定义 boot 链没有 Apple root seal），不是 UFS 读失败。
+- 已加设备侧 XNU patch `patches/xnu/offline-owner-root-binding-audit.patch`：`native-ufs-allow-unverified=1` 时跳过该 panic；默认 owner-root 路径不变。补丁已在完整 xnu patch 序列上本地验证；CI run `39549662508` 正在构建新内核。
 
 ---
 
@@ -112,8 +117,9 @@
 
 - **编译已完成**：`NativeUfs`、`NativeAES`、mockfs、PMGR、pthread 和 legacy display 都已链接进 `uke-full_defconfig`，prelink 成功。
 - **UFS 读路径已验证**：`native-ufs-probe=10` 在实机读到 GPT 和 userdata block0；`native-ufs-root=1` 走到 manifest 检查。
-- **userdata 镜像已构建并校验，但未刷入**：`out/uke/userdata/userdata-root.img`，9,382,658,048 B（8.74 GiB），sha256 `fd43ee7035ce185ce4215ac93fdc006fd784a54b3b7442e21457c226cbe03093`；`SHNGROOT` count=2，OS 窗口 sha256 `e5634d04…`、SystemOS 窗口 sha256 `b4908cde…`，OS 卷 UUID `04769d26…`。
-- root UUID、APFS 挂载和 launchd 仍待刷入 userdata 后验证；设备当前已恢复 Android，userdata 未动。
+- **userdata 已刷入**：8.74 GiB `SHNGROOT` 镜像已写入 userdata（Android 数据已清空，用户确认）。root-mode 启动能发布窗口并挂载 OS APFS 卷。
+- **root-auth 阻塞**：`bsd_init.c:1098` 的 `FSIOC_KERNEL_ROOTAUTH` 在自定义 boot 链上返回错误，触发 `rootvp not authenticated after mounting`。已加设备侧 patch：`native-ufs-allow-unverified=1` 时跳过该 panic；等 CI 新内核。
+- root UUID、APFS 挂载已到达；launchd/Data 卷仍待启动验证。
 - UFS 块读取目前是 **unverified bring-up**：块类已绑定到原始 class，但每次读不做 policy 校验。`native-ufs-root=1` 在未认证构建里默认拒绝发布；新加的 `native-ufs-allow-unverified=1` 是明确的 bring-up 开关，只用于发布窗口，不改变读取认证状态。认证读取仍需要 verified-root policy bundle 和 live storage ABI audit。
 - UFS GCC 窗口已按 uke/SM7675 改为 `0x177000`/`0x19e000`，实机读取通过。
 - payload 已带 `native-ufs-root=1` + `native-ufs-allow-unverified=1` 的 root-mode 版本（`vendor_boot_uke_root_nodata.img`）；未刷 userdata 时会停在 manifest 检查。
@@ -158,7 +164,7 @@
 | **full 内核** | CI artifact `uke-kernel-full/kernel.macho` | **52,121,600 B，最新 sha256 `62eac242…`（每次链接会变，以 artifact `.sha256` 为准）** |
 | full 内核（本地副本） | `/home/allenwdk/uke-port/ci/uke-kernel-full/kernel.macho` | 52,121,600 B，sha256 `62eac242…` |
 | **root-mode 内核** | `/home/allenwdk/uke-port/ci/uke-kernel-full-allow/kernel.macho` | 带 `native-ufs-allow-unverified`，52,121,600 B，sha256 `f81e81b7…` |
-| **userdata 镜像** | `/home/allenwdk/UniXNU/out/uke/userdata/userdata-root.img` | 8.74 GiB，sha256 `fd43ee70…`，未刷入 |
+| **userdata 镜像** | `/home/allenwdk/UniXNU/out/uke/userdata/userdata-root.img` | 8.74 GiB，sha256 `fd43ee70…`，已刷入 userdata |
 | root-mode payload | `/home/allenwdk/uke-port/data/vendor_boot_uke_root_nodata.img` | 85,782,528 B，`native-ufs-root=1` + allow-unverified |
 | 旧 full-pmgr 内核 | `/home/allenwdk/uke-port/ci/uke-kernel-full-pmgr/kernel.macho` | 51,994,624 B，sha256 `d2b28c...` |
 | payload | `out/uke/payload/payload.img` | 80 MiB，5 秒菜单，256 MiB owned memory（旧 full-pmgr payload） |
@@ -276,6 +282,8 @@ fastboot reboot
 | 2026-10-21 | UFS root 诊断 | `native-ufs-root=1` 走到 manifest 检查；host/SMMU/queue/GPT 正常；`manifest=1`（当前是 Android data） |
 | 2026-10-21 | userdata 镜像 | 8.74 GiB，sha `fd43ee70…`；OS `e5634d04…` / SystemOS `b4908cde…` 与 verified-root 期望一致 |
 | 2026-10-21 | 恢复 Android | KernelSU boot/vendor_boot 刷回；`sys.boot_completed=1`；userdata 未刷入，数据完好 |
+| 2026-10-21 | 刷 userdata + root | 8.74 GiB sparse 写入 40.9s；UFS 发布窗口并挂载 OS APFS；`bsd_init` root-auth panic |
+| 2026-10-21 | root-auth 放行 patch | `native-ufs-allow-unverified=1` 跳过 `FSIOC_KERNEL_ROOTAUTH` panic；补丁本地验证；CI run `39549662508` |
 
 ---
 
