@@ -111,10 +111,12 @@
 - 2026-10-21（后续）：root-auth 放行 + 原始 trust cache（`7416ca4f…`）后，launchd 成功 exec；随后报 `Library not loaded: /usr/lib/libSystem.B.dylib`，因为 dyld cache 在 SystemOS。
 - 加 `OWNER_CACHE_MOUNT`/`OWNER_CACHE_STARTUP` 后 launchd 仍找不到 libSystem（env var 路径不够）；改为 **`OWNER_UNION_SYSTEMOS=y`**，把 SystemOS 以 `MNT_UNION` 覆盖到 `/`。union 内核（sha `f75d4a19…`）启动后 launchd 加载了 libSystem，新的失败是：
   - `mount[3] exited -- no exit reason available -- (signal 0, exit status 66 )`
-  - exit 66 = `EX_NOINPUT`，即 Data 卷缺失。
+  - 上游 `scripts/check-mount-phase-checkpoints.py` 实际证明：exit 66 的根因是 `/sbin/mount -P 1` 取不到 `boot-manifest-hash`，不是 Data 卷缺失；原始 stderr 同时有 `data volume missing, but not required in env: 0`，但致命错误是 `failed to get boot-manifest-hash`。
 - sheng 最新 commit `7562a77` 加了 `sheng-data-persist=2`：Data 盘由 userdata 末尾的读写窗口提供，重启后保留；核心 `NativeUfs`（persistent store window）和 `NativeRamBlock`（overlay）已实现。sheng 还开 `OWNER_DATA_MOUNT`/`OWNER_BOOT_MANIFEST` 并用 `--data-ramdisk` 提供 32 MiB APFS Data seed（`prepare-owner-data-fixture.py`，需要 macOS hdiutil）。
 - 2026-10-21：首次带 Data seed 启动时 UniXNU 菜单返回 `Compromised Data`。原因：`[payload.adt] packed_data_ramdisk = true` 让 ADT 写 `PackedRAMDisk`，但 seed 是原始 APFS `.cdr`，DarwinBoot 的 `RamdiskPacked` 为 false，`DarwinBoot.c:536` 返回 `EFI_COMPROMISED_DATA`。
 - 修复：用 DarwinBoot 自带的 `drivers/DarwinBoot/Test/packed_ramdisk.py` 把 32 MiB seed 打包成 `DBRDISK1`（995,408 B，sha `058109c4…`，逻辑 32 MiB，seed 身份仍是 `d92b2443…`）；payload 重建为 64 MiB，vendor_boot 69,005,312 B。新的 userland Data 内核 sha `a7317807…`，带 `OWNER_DATA_MOUNT`/`NATIVE_RAM_BLOCK`/`OWNER_UNION_SYSTEMOS`。
+- 2026-10-21：packed Data seed 启动后不再有 `Compromised Data`，内核 Data 挂载没有触发 `offline scratch Data mount failed`，launchd 继续跑到 `mount[3]`。结合上游检查，确认剩余失败是 `/chosen` 缺少 `boot-manifest-hash`。
+- 修复：`[payload.adt] boot_manifest_hash` 显式提供 48 字节 bring-up owner boot-set 身份（`SHA-384("UkeBringup.BootSet.v1\\0")`，不是 Apple personalization）；`make-uke-adt.py` 写入 `/chosen/boot-manifest-hash`，`payload.py` 从 board.toml 传参。新 payload sha `2da6f5ff…`，vendor_boot `vendor_boot_uke_data3.img` sha `0b79b7d8…`。
 
 ---
 
@@ -127,8 +129,8 @@
 - **userdata 已刷入**：8.74 GiB `SHNGROOT` 镜像已写入 userdata（Android 数据已清空，用户确认）。root-mode 启动能发布窗口并挂载 OS APFS 卷。
 - **root-auth 阻塞**：`bsd_init.c:1098` 的 `FSIOC_KERNEL_ROOTAUTH` 在自定义 boot 链上返回错误，触发 `rootvp not authenticated after mounting`。已加设备侧 patch：`native-ufs-allow-unverified=1` 时跳过该 panic；等 CI 新内核。
 - **root/launchd 已到达**：root-auth 放行 + trust cache 后 launchd exec；union mount 后 libSystem 可加载。
-- **当前阻塞：Data 卷**：`mount[3]` exit 66（`EX_NOINPUT`）。需要 `OWNER_DATA_MOUNT`/`OWNER_BOOT_MANIFEST` + `NATIVE_RAM_BLOCK` + 32 MiB APFS Data seed，或 sheng 的 `sheng-data-persist=2` 持久窗口。
-- root UUID、APFS 挂载已到达；launchd/Data 卷仍待启动验证。
+- **当前阻塞：mount phase 1 的 boot manifest hash**：`mount[3]` exit 66 已定位为 `/chosen` 没有 `boot-manifest-hash`；Data 卷由内核 `native_owner_data_prepare` 从 packed seed 挂载，未触发 Data panic。ADT 现在显式写入 48 字节 bring-up hash，待实机验证下一阶段（`data-protection`/keybag/`tzinit`）。
+- root UUID、APFS 挂载已到达；launchd 已启动并 spawn `mount -P 1`。
 - UFS 块读取目前是 **unverified bring-up**：块类已绑定到原始 class，但每次读不做 policy 校验。`native-ufs-root=1` 在未认证构建里默认拒绝发布；新加的 `native-ufs-allow-unverified=1` 是明确的 bring-up 开关，只用于发布窗口，不改变读取认证状态。认证读取仍需要 verified-root policy bundle 和 live storage ABI audit。
 - UFS GCC 窗口已按 uke/SM7675 改为 `0x177000`/`0x19e000`，实机读取通过。
 - payload 已带 `native-ufs-root=1` + `native-ufs-allow-unverified=1` 的 root-mode 版本（`vendor_boot_uke_root_nodata.img`）；未刷 userdata 时会停在 manifest 检查。
@@ -299,9 +301,10 @@ fastboot reboot
 | 2026-10-21 | 刷 userdata + root | 8.74 GiB sparse 写入 40.9s；UFS 发布窗口并挂载 OS APFS；`bsd_init` root-auth panic |
 | 2026-10-21 | root-auth 放行 patch | `native-ufs-allow-unverified=1` 跳过 `FSIOC_KERNEL_ROOTAUTH` panic；补丁本地验证；CI run `39549662508` |
 | 2026-10-21 | trust cache + launchd | 原始 `7416ca4f…` bundle 后 launchd exec；缺 libSystem（dyld cache 在 SystemOS） |
-| 2026-10-21 | union SystemOS | `OWNER_UNION_SYSTEMOS=y` + UFS unverified 授权函数；launchd 加载 libSystem，`mount[3]` exit 66（Data 缺失） |
+| 2026-10-21 | union SystemOS | `OWNER_UNION_SYSTEMOS=y` + UFS unverified 授权函数；launchd 加载 libSystem，`mount[3]` exit 66 |
 | 2026-10-21 | Data seed / RAM block | macOS CI 生成 32 MiB APFS seed；`OWNER_DATA_MOUNT`/`NATIVE_RAM_BLOCK` + RAM block binder；raw seed 触发 `EFI_COMPROMISED_DATA` |
 | 2026-10-21 | packed Data seed | `DBRDISK1` 995 KB；payload 64 MiB / vendor_boot 69,005,312 B；userland Data 内核 `a7317807…` |
+| 2026-10-21 | boot manifest hash | 上游检查证明 `mount[3]` 66 是缺 `/chosen/boot-manifest-hash`；ADT 写入 48 字节 bring-up hash；payload `2da6f5ff…` / vendor_boot `0b79b7d8…` |
 
 ---
 

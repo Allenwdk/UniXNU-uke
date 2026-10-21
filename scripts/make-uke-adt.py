@@ -93,7 +93,17 @@ def main():
     parser.add_argument('--data-ramdisk', action='store_true',
                         help='/chosen/memory-map RAMDisk placeholder; the loader fills in the real range for a scratch Data seed')
     parser.add_argument('--trust-cache', action='store_true', help='Zeroed TrustCache sidecar handoff placeholder')
+    parser.add_argument('--boot-manifest-hash',
+                        help='96 hex characters for /chosen/boot-manifest-hash; mount(8) names /private/preboot/<hash> from it')
     args = parser.parse_args()
+    boot_manifest_hash = None
+    if args.boot_manifest_hash:
+        try:
+            boot_manifest_hash = bytes.fromhex(args.boot_manifest_hash)
+        except ValueError:
+            parser.error('--boot-manifest-hash must be hex')
+        if len(boot_manifest_hash) != 48:
+            parser.error('--boot-manifest-hash must be 48 bytes (96 hex characters)')
     if (args.unique_chip_id is None) != (args.chip_id is None):
         parser.error('--unique-chip-id and --chip-id must be supplied together')
     if args.unique_chip_id is not None and not (0 < args.unique_chip_id < 1 << 64 and 0 < args.chip_id < 1 << 32):
@@ -148,6 +158,10 @@ def main():
                         # Image4 hash algorithm. The target iPad's DT specifies sha2-384 in /chosen; this
                         # selects the algorithm only and asserts nothing about Apple silicon or fuses.
                         ('crypto-hash-method', b'sha2-384\0'),
+                        # mount(8) phase 1 exits with EX_NOINPUT when /chosen has no hash. The uke
+                        # bring-up chain has no Apple personalization manifest, so board.toml
+                        # supplies an explicit owner boot-set identity.
+                        *([('boot-manifest-hash', boot_manifest_hash)] if boot_manifest_hash else []),
                         *( [('root-matching', ('<dict><key>IOProviderClass</key><string>IOMedia</string>'
                                                '<key>IOPropertyMatch</key><dict><key>UUID</key><string>' +
                                                args.root_match_volume_uuid.upper() + '</string></dict></dict>\0').encode())]

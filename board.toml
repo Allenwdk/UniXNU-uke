@@ -217,6 +217,10 @@ tool = "scripts/make-uke-adt.py"
 chip_id = "207"
 owned_memory_size = "0x10000000"     # largest contiguous free run on uke is ~326 MiB
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
+# mount(8) phase 1 requires a boot manifest hash to name /private/preboot/<hash>.
+# uke has no Apple personalization manifest, so this is an explicit bring-up
+# owner boot-set identity (SHA-384 of "UkeBringup.BootSet.v1\0"), not Apple data.
+boot_manifest_hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5139ec7b580d63ca9319e218962a2236f23faca"
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
 packed_data_ramdisk = true
 ipad_identity = true
