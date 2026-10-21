@@ -149,6 +149,8 @@
 
 - 2026-10-22：probe 内核实机启动后在 `layout_buffers`（`0xfffffff00578d110`）data abort：`surface+0x28` 的 memory region 为 0（没有 GPU 时原厂 lookup 找不到 `PurpleGfxMem`），`ldr x8,[x0]` 空指针。修复：`start()` 前把 `+0x17c0` 预置为 32 MiB `IOBufferMemoryDescriptor`；已确认其 vtable `+0xb0` 与 `IOMemoryDescriptor::getLength` 是同一槽位，`layout_buffers` 用它做分配大小检查。`layout_buffers` 把行宽对齐到 0x80，得到 12928×2136≈27.6 MB，所以 surface stride 不是 GOP 的 12800，默认 surface 不能直接别名 GOP。commit `32bd7fa`；CI run `39652515090` 的 full job 成功，v2 kernel `0d90a045…`、payload `d89a53ff…`、`vendor_boot_uke_surface2.img` `96c996ca…` 已刷入两个槽位（boot 仍 `5be4b635…`）。现在等屏幕上的 `UKE: default surface region=…`、`UKE: display surface …` 和后续 swap 日志。
 
+- 2026-10-22：为拿到默认 surface 的原始状态，构建了 gated panic 诊断内核（commit `8069f96`，kernel `c95afc51…`、payload `eed9ee7b…`、`vendor_boot_uke_surface_panic.img` `3ce3a67b…`），在 `start()` 后直接 `panic("UKE display: st=… root=… reg=… temp=… surf=… sid=… flag=… dims=… fmt=…")`；已刷入两个槽位，等屏上 panic 文本。`surf=0` 是预期的（panic 在 adopt 之前），关键是 `temp`、`sid`、`reg`、`flag`。
+
 ---
 
 ## 4. 还没做 / 当前阻塞
