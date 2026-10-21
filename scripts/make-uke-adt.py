@@ -35,12 +35,13 @@ UFS_HC = 0x1d84000
 UFS_HC_SIZE = 0x3000
 UFS_PHY = 0x1d80000
 UFS_PHY_SIZE = 0x2000
-# Reserved DRAM for XNU's embedded panic log. The kernel's check_for_panic_log
-# reads pram.reg and /chosen/embedded-panic-log-size; the UEFI memory map
-# reserves the same range and the UniXNU menu prints the first line on the
-# next boot. Must match MemoryMapLib.c and UniXNULib/Main.c.
-PANIC_LOG_BASE = 0xC4000000
-PANIC_LOG_SIZE = 0x00400000
+# Reserved DRAM for XNU's embedded panic log. Use the existing llcc_lpi
+# reserved range (already in the UEFI memory map and outside DarwinBoot's
+# conventional window); the kernel maps pram.reg itself and prints the
+# previous log after the framebuffer console is up. Must match the live DT
+# llcc_lpi_region@ff800000 reservation.
+PANIC_LOG_BASE = 0xFF800000
+PANIC_LOG_SIZE = 0x00380000
 
 
 def node(name, properties=(), children=()):
