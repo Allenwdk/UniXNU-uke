@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-10-21
 >
-> **当前一句话状态：** 阶段 1–5 已到达；阶段 6 的 **full 内核已完整编译并 prelink 成功**（UFS + AES + mockfs + PMGR + pthread + legacy display），产物 52,121,600 B / sha256 `62eac242…`（每次链接的 LC_UUID 不同，sha 会变，大小不变）。设备未连接，存储/root 的实机路径尚未验证；`SecurityLock ... LockCapsuleInterface` 仍是 UEFI 输出，不是 XNU 挂点。
+> **当前一句话状态：** 阶段 1–5 已到达；阶段 6 的 full 内核已完整编译并 prelink，**UFS 读路径已在实机验证**：`userdata 2d3000..3b147fa` 读到了，block0 可读，`manifest status=1` 只是因为当前还是 Android 的 userdata（没有 `SHNGROOT`）。下一步是构建/刷入 userdata 并开启 `native-ufs-root=1`（bring-up 用 `native-ufs-allow-unverified=1`）。`SecurityLock ... LockCapsuleInterface` 仍是 UEFI 输出，不是 XNU 挂点。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -92,13 +92,14 @@
 
 ### 3.5 实机结果
 
-> 2026-10-21：设备未连接，本轮没有新的实机测试；以下为阶段 1–5 的既有结果。
-
-- UniXNU 菜单出现；payload 被识别；`xnu` 条目出现。
-- DarwinBoot 打印 `entry pa`、`args pa`、`window 0x10000000`、`video base 0xE3940000 3200x2136 row 12800 bytes 32 bpp`、`entry words`、`CurrentEL 1`、`SCTLR_EL1`、`TCR_EL1`、`ID_AA64MMFR0_EL1`、`ID_AA64PFR0_EL1`。
-- 绿条出现；XNU 已进入。
-- 之后画面静止，但结论已修正：这是 XNU 在等根设备，不是 `LockCapsuleInterface` 卡死。
-- 每次测试后已用 stock `boot_a.img` + `vendor_boot_a.img` 恢复 Android；当前设备在 Android。
+- 2026-10-21：full 内核 + `native-ufs-probe=10`（只读）启动，panic screen 显示：
+  - `NATIVE_UFS root check`
+  - `userdata first=2d3000 last=3b147fa`（与 `board.toml` 一致）
+  - `block0 magic 17bc1e8b f86dfb83 ext4magic=ae7b ext4blocks=253525236`
+  - `manifest status=1 windows=0`（Android userdata，没有 `SHNGROOT`）
+  - `TCR=0x00000022a51a251a`、`SCTLR=0x000000003454599d`、`pages=0xbaee`、`free=0xaf52`
+- 结论：**UFS host bring-up、LUN 0 GPT 解析、userdata 分区读取都成功**；GCC 的 uke 偏移 `0x177000`/`0x19e000` 有效。之前的“闪一下黑屏重启”就是 probe=10 的主动 panic；开启 panic screen 后文本稳定显示。
+- 早期阶段 1–5 的既有结果：菜单、payload、`xnu` 条目、DarwinBoot 的 `entry pa`/`window 0x10000000`/`video base 0xE3940000 3200x2136`/`CurrentEL 1`、绿条。
 
 ---
 
@@ -107,9 +108,10 @@
 ### 4.1 阶段 6：UFS / 存储 / root
 
 - **编译已完成**：`NativeUfs`、`NativeAES`、mockfs、PMGR、pthread 和 legacy display 都已链接进 `uke-full_defconfig`，prelink 成功。
-- `native-ufs-root=1`、`userdata` 镜像、root UUID、OS/SystemOS 窗口仍要在实机验证；设备当前未连接。
-- UFS 块读取目前是 **unverified bring-up**：块类已绑定到原始 class，但每次读不做 policy 校验。认证读取需要 verified-root policy bundle（由真实 OS/SystemOS DMG 生成）和 live storage ABI audit。
-- UFS GCC 窗口已按 uke/SM7675 改为 `0x177000`/`0x19e000`；UFS PHY、时钟/复位和 PMGR 的实机行为仍未验证。
+- **UFS 读路径已验证**：`native-ufs-probe=10` 在实机读到 GPT 和 userdata block0；当前 userdata 是 Android 数据，所以没有 `SHNGROOT`。
+- `userdata` 镜像（OS + SystemOS + manifest）尚未构建/刷入；root UUID、APFS 挂载和 launchd 仍待验证。
+- UFS 块读取目前是 **unverified bring-up**：块类已绑定到原始 class，但每次读不做 policy 校验。`native-ufs-root=1` 在未认证构建里默认拒绝发布；新加的 `native-ufs-allow-unverified=1` 是明确的 bring-up 开关，只用于发布窗口，不改变读取认证状态。认证读取仍需要 verified-root policy bundle 和 live storage ABI audit。
+- UFS GCC 窗口已按 uke/SM7675 改为 `0x177000`/`0x19e000`，实机读取通过。
 - `native-ufs-probe=1` 才触碰 MMIO；当前 payload 还没有加 `native-ufs-root=1`。
 - VerifiedRoot/owner-root、VirtIO/RamBlock、BOOT_PROGRESS 仍被 live audit/策略包门控，见 `uke-full-plus_defconfig`。
 
@@ -120,25 +122,25 @@
 
 ### 4.3 其他未做
 
-- `panic_screen=true` 因 `Font.h` 路径问题暂时关闭；需要修复后开启，以便捕获真正的 panic。
+- `panic_screen=true` 已启用；`Font.h` 从 Mu-Silicium vendored 到 `scripts/Font.h`，Linux/CI 无 UEFI checkout 也能打补丁。panic 文本现在能在屏上稳定显示。
 - `boot-progress=1/2` 仍需要 audited UFS/owner-root + VirtIO + source-corecrypto；当前 full 配置没有这些，所以保持关闭。
 - `sheng-platform-stage`、`sheng-aks=1`、`amfi_get_out_of_my_way=1`、`cs_debug`、`kextlog` 等 boot args 尚未系统测试；它们不是当前 root 阻塞的优先项。
-- GPU 只完成了板级数据/校验（`docs/GPU-PORT.md`）；Adreno 732 固件和功率路径未收集，`CONFIG_XNU_NATIVE_ADRENO` 仍关闭。
+- GPU 已收集 A732 的真实 `gen71100_*` 固件和 9 档频率（`docs/GPU-PORT.md`）；驱动仍是 A740 常量，`CONFIG_XNU_NATIVE_ADRENO` 关闭。
 - 触摸、Wi-Fi/蓝牙、USB、音频、传感器、电池、suspend/resume 均未做。
 - `owned_memory_size` 目前 256 MiB；sheng 用 4.75 GiB。uke 的 DT reserved-memory 把最大连续块压到 326 MiB；如需更大窗口，要裁剪 reserved-memory，而不是只调大 `ADD_LIMIT`。
-- `kernel` 与 `full` 两个 CI job 已在 run `39495271779` 同时绿。
+- `kernel` 与 `full` 两个 CI job 已在 run `39495271779` 同时绿；UFS 驱动改动后会触发新一轮 full 构建。
 
 ---
 
 ## 5. 下一步（按优先级）
 
-1. **设备连接后构建 full payload/boot**：用 `uke-kernel-full` 的 `kernel.macho` 重建 payload，加 `native-ufs-root=1`，保留 `sheng-pmgr=2`；先验证 UFS probe/块设备，再挂 root。
-2. **准备 userdata/root**：`build userdata`、`root_match_volume_uuid`、OS/SystemOS 窗口，确认 uke 的 Data 卷 UUID。
+1. **构建 userdata 镜像**：用 Linux 的 `qemu-img convert -f dmg -O raw` 代替 `hdiutil`，把 OS（`044-76040-038.dmg`）和 SystemOS（`044-76034-038.dmg`）放进 `SHNGROOT` 布局；先写 `out/uke/userdata/userdata-root.img`，刷入前确认（会清空 Android userdata）。
+2. **发布 root 窗口**：等 CI 用新的 `native-ufs-allow-unverified=1` 重建 full 内核，payload 加 `native-ufs-root=1` + `native-ufs-allow-unverified=1`；验证 OS/SystemOS 块设备、APFS 卷和 `root_match_volume_uuid`，再看 launchd。
 3. **认证读取/owner-root**：拿到 OS/SystemOS DMG 后生成 verified-root policy bundle，补 live storage ABI snapshot，再开 `VERIFIED_ROOT_PROBE`/`OWNER_ROOT_*`/`BOOT_PROGRESS`（`uke-full-plus_defconfig`）。
-4. **GPU**：按 `docs/GPU-PORT.md` 从 vendor 分区拉 A732 固件，改 `build-native-adreno-kits.py` 的 pin/路径，加 Adreno archives，再开 `CONFIG_XNU_NATIVE_ADRENO`。
+4. **GPU**：固件已收集（`gen71100_*`）；按 `docs/GPU-PORT.md` 改 `build-native-adreno-kits.py` 的 pin/路径，加 Adreno archives，再开 `CONFIG_XNU_NATIVE_ADRENO`。
 5. **阶段 7**：launchd、Data 卷、SpringBoard/设置界面；之后再处理显示/触摸/GPU 运行时。
-6. 修 `Font.h` 并开启 `panic_screen`。
-7. 每次测试后恢复 Android，并更新本文档。
+6. `panic_screen` 已启用；后续 panic 直接看屏。
+7. 每次测试后恢复 Android（KernelSU boot/vendor_boot 备份在 `uke-port/data/*_kernelsu.img`），并更新本文档。
 
 ---
 
@@ -211,6 +213,9 @@ fastboot reboot
 - **`CONFIG_XNU_BUILD_ARCHIVES`**：board archive list 只在配置打开时执行；bootstrap 和 first-console 不执行，避免依赖尚未生成的 prelink candidate。
 - **UFS unverified 构建**：`build-arm-driver.py NativeUfs --unverified` 跳过 `NATIVE_VERIFIED_BLOCK`；设备 override 把 `timerTicks`/`native_ufs_read_ticks` 移出 verified 守卫，并把 GCC UFS 窗口改为 uke 的 `0x177000`/`0x19e000`。
 - **UFS 块类绑定**：`build-ufs-original-bindings.py` 从固定 prelink candidate 推导 190-slot vtable、metaclass、构造/析构，生成 `libNativeUfs.a` 的 `original-bindings.o`；这是 bring-up 绑定，不是 live-qualified audit。
+- **`native-ufs-allow-unverified=1`**：未认证构建里 `native-ufs-root=1` 默认拒绝发布；该参数是明确的 bring-up 开关，只发布 OS/SystemOS 窗口，读取仍不认证。发布线程在 unverified 模式下等待任意 media 后代，而不是签名 UUID。
+- **UFS 实机探针**：`native-ufs-probe=10` 只读，panic 输出 `userdata first/last`、block0 magic、ext4 magic、manifest status；`probe=11` 检查每个窗口的 GPT。panic 会停在屏上，长按电源重启。
+- **panic screen**：`scripts/Font.h` 是 Mu-Silicium 的 BSD 字体表；`patch-xnu-entry-probe.py` 在找不到 UEFI checkout 时回退到 `scripts/`。
 - **CI 缓存 key**：包含 UniXNU commit + `board.toml`/`feeds.toml`/`configs/**`/`scripts/**` 哈希；改这些文件会换主 key，但 `restore-keys` 仍会复用旧 `out/` 树。`drivers/**` 不影响 bootstrap 对象，故不在 key 里。
 - **`BOOT_PROGRESS`**：仍然要求 audited UFS/owner-root + VirtIO + source-corecrypto；full 配置保持关闭。
 - **Adreno 关闭**：`NativeLegacyDisplay` 需要 4 个 GPU fallback weak stubs。
@@ -252,6 +257,10 @@ fastboot reboot
 | 2026-10-21 | UFS bring-up | 设备 override 修 tick 守卫 + GCC `0x177000`/`0x19e000`；`build-ufs-original-bindings.py` 生成块类绑定 |
 | 2026-10-21 | full CI 成功 | run `39493263420` 两 job 绿；`kernel.macho` 52,121,600 B，sha256 `e1119e44…` |
 | 2026-10-21 | 文档/GPU 准备后复跑 | run `39495271779` 两 job 绿；同尺寸内核 sha `62eac242…`（LC_UUID 变化） |
+| 2026-10-21 | 实机 full + UFS probe | `native-ufs-probe=10` 读到 GPT/userdata/block0；`manifest status=1`（Android data） |
+| 2026-10-21 | panic screen | `Font.h` vendored；`panic_screen=true`；panic 文本稳定显示 |
+| 2026-10-21 | GPU 固件 | root 读取 `gen71100_sqe.fw`/`gen71100_gmu.bin`/`gen71100_zap.mbn` + 9 档频率，写入 `board.toml [gpu]` |
+| 2026-10-21 | UFS bring-up 开关 | `native-ufs-allow-unverified=1` 允许未认证发布窗口；CI 重新构建 full 内核 |
 | 2026-10-21 | CI 缓存 | `out/` + `.cache` + Homebrew 缓存；`concurrency` 取消旧 run；冷/热启动约 15–17 / 8–10 分钟 |
 | 2026-10-21 | GPU 准备 | A732 板级数据写入 `board.toml [gpu]`；`check-uke-gpu.py` 对照实机 DTB 通过；`docs/GPU-PORT.md` 记录剩余固件/功率输入 |
 
