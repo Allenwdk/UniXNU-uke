@@ -134,6 +134,7 @@
   - `IOMobileFramebufferUserClient::s_map_display_type ... UserClient display type is 0`
   - 之后屏幕黑掉并重启；有时在跑码阶段就重启，存在不稳定性。
 - 诊断：又做了一个关闭 `offline-legacy-gop`/`offline-mobile-graphics-client`/`offline-mobile-graphics-load` 的 payload（`vendor_boot_uke_diag.img`，sha `db047b2d…`），仍然黑屏重启，说明不是显示驱动单独把 console 弄黑，panic 文本没有被画出来/没来得及画。现在缺少可持久化的 panic 或串口输出；下一步要么实现 panic region/`sheng-log` 持久化，要么先补显示 default surface。
+- 2026-10-21：实现持久 panic 日志的读取。UEFI 端直接读 `0xC4000000` 的保留区在 `Reserv` 和 `BsData` 两种映射下都触发 `ArmCpuDxe` data abort，因此放弃 UEFI 读取。改为内核侧：ADT 加 `pram`/`embedded-panic-log-size`，`check_for_panic_log` 在清空前把上一轮日志复制到静态缓冲，`PE_init_printf(TRUE)` 后 `pe_print_last_panic()` 用 `PREVIOUS XNU LOG:` 打印到 framebuffer console。新 boot `boot_uke_kpanicprint.img` sha `4cef631b…`（含内存映射预留、无 UEFI 读取）；内核补丁 `patches/xnu/zzzzzzz-last-panic-print.patch` 正在 CI 构建。
 
 ---
 
