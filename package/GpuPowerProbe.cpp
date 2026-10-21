@@ -103,6 +103,11 @@ extern "C" kmod_info_t g_kernel_kmod_info;
  * and the Metal rows stay quiet. */
 extern "C" volatile int native_gpu_addon_stage=0, native_gpu_addon_status=0,
     native_gpu_addon2_stage=0, native_gpu_addon2_status=0;
+/* NativeAdrenoPublish exports the Metal pipeline cache to the store through
+ * this hook. uke has no export region yet, so the image reports "not stored"
+ * instead of leaving a weak_import the XNU linker rejects. */
+extern "C" int boot_log_export_put(uint32_t, uint32_t, uint32_t, const void *, uint32_t)
+{return -1;}
 struct NativeAdrenoMetalDiagView {
     uint32_t opens, busy, bad, closes, reports, property_reads, foreign_opens, foreign_type, name_reads, calls, last_selector, last_status, ext_entries, ext_selector, ext_status, ext_in, ext_out, tunnel_calls, probes, sel_bits[8], mb_maps, mb_calls, marks_total, marks[16], chk_macf, chk_res, chk_type, type_pass_lo, type_pass_hi, attach_status, inflight, inflight_since_calls, forced_unmaps;
     char opener[3][17];

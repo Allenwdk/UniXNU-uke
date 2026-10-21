@@ -55,6 +55,7 @@ archives = [
   "prepare-uke-gmu.py",
   "build-arm-driver.py NativeAdreno",
   "build-native-adreno-kits.py",
+  "build-native-adreno-accelerator.py",
   "build-native-legacy-display.py",
   "build-boot-log.py",
 ]
