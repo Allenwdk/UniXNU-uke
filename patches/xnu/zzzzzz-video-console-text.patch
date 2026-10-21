@@ -1,0 +1,18 @@
+diff --git a/osfmk/console/video_console.c b/osfmk/console/video_console.c
+index e9f2f0c..a1c2d3e 100644
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -3056,5 +3056,13 @@ vcattach(void)
+ {
+ 	vm_initialized = TRUE;
+ 
++	/* kprintf is silent in graphics boot until the console is switched to text. */
++	boolean_t text_console = FALSE;
++	if (gc_graphics_boot &&
++	    PE_parse_boot_argn("-uketextconsole", &text_console, sizeof(text_console)) &&
++	    text_console) {
++		initialize_screen(NULL, kPETextScreen);
++	}
++
+ #if defined(CONFIG_VC_PROGRESS_METER_SUPPORT)
+ 	const boot_args * bootargs  = (typeof(bootargs))PE_state.bootArgs;
