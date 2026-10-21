@@ -18,11 +18,15 @@ name: build-uke-kernel
 # (`-mach_msg2` is unknown and MIG has no SubSystem declaration). Use the
 # current macos-latest (macOS 26, Xcode 26.x); do not pin macos-14.
 #
+# This workflow is dispatch-only: the push-time checks (syntax, patch series,
+# host tests) live in .github/workflows/ci.yml. An explicit defconfig selects
+# the kernel to build; the expensive macOS build is never started by a push.
+#
 # Both jobs restore the UniXNU out/ tree, the device firmware cache and the
-# Homebrew download cache. The bootstrap pass is the expensive part, so a
-# restored tree turns the next run into an incremental build. The cache key
-# includes the device configuration and the UniXNU fork commit; bump
-# CACHE_SCHEMA when the object layout changes in a way the key cannot see.
+# Homebrew download cache. The cache key is the exact source identity: fork
+# commit, patch set, archive sources, board/config and this workflow. A patch
+# change therefore misses the cache and starts from a clean tree; there is no
+# restore-key that could fall back to a different patch state.
 
 on:
   workflow_dispatch:
@@ -31,19 +35,6 @@ on:
         description: 'Device defconfig to build'
         required: false
         default: 'uke-full_defconfig'
-  push:
-    branches: [main]
-    paths:
-      - 'board.toml'
-      - 'feeds.toml'
-      - 'configs/**'
-      - 'drivers/**'
-      - 'kits/**'
-      - 'package/**'
-      - 'patches/**'
-      - 'scripts/**'
-      - 'docs/MACOS-BUILD.md'
-      - '.github/workflows/build-kernel.yml'
 
 concurrency:
   group: build-uke-kernel-${{ github.ref }}

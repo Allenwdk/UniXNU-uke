@@ -1,0 +1,70 @@
+name: validate
+
+# Fast push checks. The macOS kernel build is expensive and lives in
+# build-kernel.yml, which is dispatch-only. This workflow catches the errors
+# that used to surface only after a kernel build: malformed workflow/toml,
+# broken shell or Python syntax, and a patch series that no longer applies in
+# the kernel build's order.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'board.toml'
+      - 'feeds.toml'
+      - 'unixnu.lock'
+      - 'configs/**'
+      - 'drivers/**'
+      - 'kits/**'
+      - 'package/**'
+      - 'patches/**'
+      - 'scripts/**'
+      - 'docs/MACOS-BUILD.md'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+        with:
+          path: UniXNU-uke
+
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: Allenwdk/UniXNU
+          ref: uke
+          path: UniXNU
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the YAML parser
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Check the workflow, board and source syntax
+        working-directory: UniXNU-uke
+        run: |
+          python3 -c "import pathlib,tomllib,yaml; [yaml.safe_load(p.read_text()) for p in pathlib.Path('.github/workflows').glob('*.yml')]; tomllib.loads(pathlib.Path('board.toml').read_text()); tomllib.loads(pathlib.Path('feeds.toml').read_text()); tomllib.loads(pathlib.Path('unixnu.lock').read_text()); print('ok workflow/board/feeds/lock')"
+          for script in scripts/*.sh; do bash -n "$script"; done
+          find scripts -name '*.py' -print0 | xargs -0 python3 -m py_compile
+          echo 'ok shell and python syntax'
+
+      - name: Apply the XNU patch set to a clean tree
+        working-directory: UniXNU-uke
+        run: bash scripts/check-xnu-patch-set.sh
