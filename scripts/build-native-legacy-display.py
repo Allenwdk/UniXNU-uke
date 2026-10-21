@@ -15,6 +15,7 @@ def require(v,why):
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 print(run(['python3',ROOT/'scripts/audit-mobile-graphics-legacy.py'],text=True),end='')
 audit=json.loads((ROOT/'build/display-analysis/mobile-graphics-legacy-abi.json').read_text())
+print(run(['python3',ROOT/'scripts/audit-mobile-graphics-default-surface.py'],text=True),end='')
 pure=audit['abstract_slots'];methods=audit['methods']
 header='''// SPDX-License-Identifier: BSD-2-Clause-Patent
 // Opaque ABI storage for the exact original class, not source-level access

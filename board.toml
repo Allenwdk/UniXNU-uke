@@ -200,6 +200,7 @@ kernel_args = [
   "offline-legacy-validate=1",
   "offline-legacy-transfer=1",
   "offline-legacy-cpu-present=1",
+  "offline-legacy-default-surface=1",
   "offline-hid-home=1",
   "offline-hid-input=1",
   "offline-legacy-phase=4",

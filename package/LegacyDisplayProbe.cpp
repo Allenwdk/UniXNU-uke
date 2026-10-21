@@ -296,6 +296,43 @@ void native_legacy_display_probe(void) {
     native_legacy_stage=7;display->release();native_legacy_released=1;native_legacy_stage=8;
     native_legacy_display_checkpoint();
 }
+// Default framebuffer surface bring-up. The original Legacy class reads the
+// platform enable byte at +0x1780 and, when set, creates a temporary surface
+// at +0x1620 in slot 299. Only the absent platform driver ever installs the
+// default surface at +0x1618, so adopt the created surface there and let the
+// original slot 174/242 produce the IOSurfaceID and Mach port name.
+static void native_legacy_default_surface_state(IOService *display,bool adopt) {
+    unsigned char *fb=reinterpret_cast<unsigned char *>(display);
+    if(!fb)return;
+    void *root=nullptr,*gate=nullptr,*workloop=nullptr,*surface=nullptr,*temp=nullptr,*region=nullptr;
+    memcpy(&root,fb+0x1600,sizeof(root));
+    memcpy(&gate,fb+0x1608,sizeof(gate));
+    memcpy(&workloop,fb+0x1610,sizeof(workloop));
+    memcpy(&surface,fb+0x1618,sizeof(surface));
+    memcpy(&temp,fb+0x1620,sizeof(temp));
+    memcpy(&region,fb+0x17c0,sizeof(region));
+    uint32_t flag=fb[0x1780],width=0,height=0,format=0,planes=0,bpp=0,sid=0;
+    memcpy(&width,fb+0x16b0,sizeof(width));
+    memcpy(&height,fb+0x16b4,sizeof(height));
+    memcpy(&format,fb+0x1700,sizeof(format));
+    memcpy(&planes,fb+0x1704,sizeof(planes));
+    memcpy(&bpp,fb+0x1708,sizeof(bpp));
+    void *tempRegion=nullptr,*tempDescriptor=nullptr;
+    if(temp) {
+        memcpy(&sid,reinterpret_cast<unsigned char *>(temp)+0x10,sizeof(sid));
+        memcpy(&tempRegion,reinterpret_cast<unsigned char *>(temp)+0x28,sizeof(tempRegion));
+        memcpy(&tempDescriptor,reinterpret_cast<unsigned char *>(temp)+0x30,sizeof(tempDescriptor));
+    }
+    IOLog("UKE: display surface root=%p gate=%p wl=%p surface=%p temp=%p region=%p flag=%u dims=%ux%u mode=%08x/%u/%u sid=%u mem=%p desc=%p debugger=%u\n",
+        root,gate,workloop,surface,temp,region,(unsigned)flag,(unsigned)width,(unsigned)height,
+        (unsigned)format,(unsigned)planes,(unsigned)bpp,(unsigned)sid,tempRegion,tempDescriptor,
+        (unsigned)PE_i_can_has_debugger(NULL));
+    if(adopt && !surface && temp) {
+        ((OSObject *)temp)->retain();
+        memcpy(fb+0x1618,&temp,sizeof(temp));
+        IOLog("UKE: display surface adopted surface=%p sid=%u\n",temp,(unsigned)sid);
+    }
+}
 void native_legacy_display_late_probe(void);
 extern void native_hid_input_probe(void);
 extern void native_keystore_probe(void);
@@ -303,6 +340,9 @@ extern void native_touch_probe(void);
 extern void sheng_cpufreq_probe(void);
 extern void sheng_gpu_power_probe(void);
 void native_legacy_display_late_probe(void) {
+    unsigned defaultSurface=0,defaultProbe=0;
+    PE_parse_boot_argn("offline-legacy-default-surface",&defaultSurface,sizeof(defaultSurface));
+    PE_parse_boot_argn("offline-legacy-default-probe",&defaultProbe,sizeof(defaultProbe));
     native_keystore_probe();
     sheng_cpufreq_probe();
     sheng_gpu_power_probe();
@@ -354,7 +394,23 @@ void native_legacy_display_late_probe(void) {
                 } else {
                     SInt32 score=0;native_legacy_probe_match=(phase!=4 || dtAttached) && display->probe(nub,&score)==display;
                     if(native_legacy_probe_match)attached=display->attach(nub);
-                    if(attached){native_legacy_stage=5;started=display->start(nub);native_legacy_start_result=started;}
+                    if(attached){
+                        if(defaultSurface) {
+                            unsigned char *fb=reinterpret_cast<unsigned char *>(display);
+                            // Audit-qualified platform state: the original Legacy
+                            // start reads this enable byte and the mode block when
+                            // slot 299 creates the default surface.
+                            fb[0x1780]|=1;
+                            uint32_t format=0x42475241,planes=1,bpp=4;
+                            memset(fb+0x1700,0,0x70);
+                            memcpy(fb+0x1700,&format,sizeof(format));
+                            memcpy(fb+0x1704,&planes,sizeof(planes));
+                            memcpy(fb+0x1708,&bpp,sizeof(bpp));
+                            fb[0x1748]=0;
+                        }
+                        native_legacy_stage=5;started=display->start(nub);native_legacy_start_result=started;
+                    }
+                    if(started && (defaultSurface || defaultProbe))native_legacy_default_surface_state(display,defaultSurface==1);
                     if(started && phase==4) {
                         activeLegacyDisplay=display;activeGOPNub=nub;native_legacy_stage=10;
                         finishUnitScalePolicy(true);
