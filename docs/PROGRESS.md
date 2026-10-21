@@ -164,6 +164,8 @@
 
 - 2026-10-22（slot242 后备）：`NativeLegacyDisplay` 覆盖 slot242；原厂 slot242 返回 `kIOReturnNotPrivileged` 时直接调用原厂 `surface_copy_port_name`（`0xfffffff004baa90c`），复用 send-right/port 逻辑。`NativeMobileDisplay` fork 到 `Allenwdk/NativeMobileDisplay`（分支 `uke-display-slot242`，commit `b1c39b5`），core `.gitmodules` 指向 fork，core `uke` `e79c156`；builder 绑定两个 C 别名并把 242 加入 owned。CI run `39668984510` 成功；kernel `eae840e7…`、payload `6727e844…`、`vendor_boot_uke_slot242.img` `a31175fc…`，带 `wdt=-1`，已刷入两个槽位。预期日志：`UKE: default surface port fallback root=… surface=… status=…` 或 `UKE: default surface port status=…`。
 
+- 2026-10-22（Data 可写层）：`native_ufs_store_open()` 现在在 `sheng-data-persist=2` 下最多等 5 s，等 `gStoreGeometry.valid && gHost.ready` 再开窗口。之前 `NativeRamBlock` 在 Data 挂载前只调用一次，UFS root layout 未就绪就直接返回 `no root layout`，overlay 不激活，`/private/var` 只读，`vm_swap_create_file` 报 EROFS（30），随后 `shared_region` 失败。新增 `NativeUfs: store open blocks=… first=… waited=…ms why=… ok=…` 日志。commit `abd5614`，CI run `39672640527` 构建成功；kernel `f59342f3…`、payload `c2111b98…`、`vendor_boot_uke_datawrite.img` `361b68f0…` 已刷入两个槽位（带 `wdt=-1`）。成功后 Data APFS 应可读写，launchd 才能越过 shared region，之后才到 slot242/显示；现在等 `NativeUfs: store open … ok=1` 和后续日志。
+
 ---
 
 ## 4. 还没做 / 当前阻塞
