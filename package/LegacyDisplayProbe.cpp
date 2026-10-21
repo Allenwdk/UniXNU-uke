@@ -334,6 +334,28 @@ static void native_legacy_default_surface_state(IOService *display,bool adopt) {
         IOLog("UKE: display surface adopted surface=%p sid=%u\n",temp,(unsigned)sid);
     }
 }
+// Diagnostic parking point for the bring-up: print the original Legacy state
+// on the panic screen so it survives the boot without a serial console.
+static void native_legacy_default_surface_panic(IOService *display,bool started) {
+    unsigned char *fb=reinterpret_cast<unsigned char *>(display);
+    if(!fb)panic("UKE display: no object");
+    void *root=nullptr,*region=nullptr,*temp=nullptr,*surface=nullptr;
+    uint32_t flag=0,width=0,height=0,format=0,planes=0,bpp=0,sid=0;
+    memcpy(&root,fb+0x1600,sizeof(root));
+    memcpy(&region,fb+0x17c0,sizeof(region));
+    memcpy(&temp,fb+0x1620,sizeof(temp));
+    memcpy(&surface,fb+0x1618,sizeof(surface));
+    flag=fb[0x1780];
+    memcpy(&width,fb+0x16b0,sizeof(width));
+    memcpy(&height,fb+0x16b4,sizeof(height));
+    memcpy(&format,fb+0x1700,sizeof(format));
+    memcpy(&planes,fb+0x1704,sizeof(planes));
+    memcpy(&bpp,fb+0x1708,sizeof(bpp));
+    if(temp)memcpy(&sid,reinterpret_cast<unsigned char *>(temp)+0x10,sizeof(sid));
+    panic("UKE display: st=%u root=%p reg=%p temp=%p surf=%p sid=%u flag=%u dims=%ux%u fmt=%x/%u/%u",
+        (unsigned)started,root,region,temp,surface,(unsigned)sid,(unsigned)flag,
+        (unsigned)width,(unsigned)height,(unsigned)format,(unsigned)planes,(unsigned)bpp);
+}
 void native_legacy_display_late_probe(void);
 extern void native_hid_input_probe(void);
 extern void native_keystore_probe(void);
@@ -341,9 +363,10 @@ extern void native_touch_probe(void);
 extern void sheng_cpufreq_probe(void);
 extern void sheng_gpu_power_probe(void);
 void native_legacy_display_late_probe(void) {
-    unsigned defaultSurface=0,defaultProbe=0;
+    unsigned defaultSurface=0,defaultProbe=0,defaultPanic=0;
     PE_parse_boot_argn("offline-legacy-default-surface",&defaultSurface,sizeof(defaultSurface));
     PE_parse_boot_argn("offline-legacy-default-probe",&defaultProbe,sizeof(defaultProbe));
+    PE_parse_boot_argn("offline-legacy-default-panic",&defaultPanic,sizeof(defaultPanic));
     native_keystore_probe();
     sheng_cpufreq_probe();
     sheng_gpu_power_probe();
@@ -424,6 +447,7 @@ void native_legacy_display_late_probe(void) {
                         }
                         native_legacy_stage=5;started=display->start(nub);native_legacy_start_result=started;
                     }
+                    if(defaultPanic)native_legacy_default_surface_panic(display,started);
                     if(started && (defaultSurface || defaultProbe))native_legacy_default_surface_state(display,defaultSurface==1);
                     if(started && phase==4) {
                         activeLegacyDisplay=display;activeGOPNub=nub;native_legacy_stage=10;
