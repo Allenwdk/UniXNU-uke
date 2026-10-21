@@ -204,6 +204,8 @@ class NativeUsbSerial : public IOService {
 	bool fSerialStarted = false;
 	volatile bool fLogPrimed = false;
 	volatile bool fDump = false;
+	bool fEnablePhy = false;
+	uint32_t fProbeLevel = 0;
 
 	uint8_t *fTxMem = nullptr;
 	UkeUsbByteRing fTxRing;
@@ -375,33 +377,52 @@ NativeUsbSerial::dumpSmmu(void)
 void
 NativeUsbSerial::dumpProbe(void)
 {
-	IOLog("NativeUsbSerial: probing uke USB2 wrapper base=%08x\n",
-	    static_cast<unsigned>(UKE_USB_WRAPPER_BASE));
+	IOLog("NativeUsbSerial: probing uke USB2 wrapper base=%08x level=%u phy=%u\n",
+	    static_cast<unsigned>(UKE_USB_WRAPPER_BASE), fProbeLevel, fEnablePhy ? 1U : 0U);
 	IOLog("NativeUsbSerial: GCC gdscr=%08x cfg=%08x master=%08x sleep=%08x utmi=%08x cfg_noc=%08x aggre=%08x\n",
 	    rd32(fGcc, 0x004), rd32(fGcc, 0x008), rd32(fGcc, 0x018),
 	    rd32(fGcc, 0x024), rd32(fGcc, 0x028), rd32(fGcc, 0x088),
 	    rd32(fGcc, 0x08c));
-	IOLog("NativeUsbSerial: GCC usb30-bcr=%08x qusb2phy-bcr=%08x tcsr-usb2-clkref=%08x\n",
-	    rd32(fGcc, 0x000), rd32(fPhyBcr, 0x000), rd32(fTcsr, 0x118));
 
-	IOLog("NativeUsbSerial: DWC3 gsnpsid=%08x guid=%08x gctl=%08x gsts=%08x\n",
-	    rd32(fWrapper, UKE_USB_DWC3_GSNPSID), rd32(fWrapper, UKE_USB_DWC3_GUID),
-	    rd32(fWrapper, UKE_USB_DWC3_GCTL), rd32(fWrapper, UKE_USB_DWC3_GSTS));
-	IOLog("NativeUsbSerial: DWC3 hwparams=%08x %08x %08x %08x\n",
-	    rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS0), rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS1),
-	    rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS2), rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS3));
-	IOLog("NativeUsbSerial: DWC3 gusb2phycfg=%08x gusb3pipectl=%08x dcfg=%08x dctl=%08x devten=%08x dsts=%08x\n",
-	    rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0)),
-	    rd32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0)),
-	    rd32(fWrapper, UKE_USB_DWC3_DCFG), rd32(fWrapper, UKE_USB_DWC3_DCTL),
-	    rd32(fWrapper, UKE_USB_DWC3_DEVTEN), rd32(fWrapper, UKE_USB_DWC3_DSTS));
-	IOLog("NativeUsbSerial: DWC3 event addr=%08x:%08x size=%08x count=%08x\n",
-	    rd32(fWrapper, UKE_USB_DWC3_GEVNTADRHI), rd32(fWrapper, UKE_USB_DWC3_GEVNTADRLO),
-	    rd32(fWrapper, UKE_USB_DWC3_GEVNTSIZ), rd32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT));
-	IOLog("NativeUsbSerial: QSCRATCH general=%08x hsphy=%08x\n",
-	    rd32(fQscratch, 0x08), rd32(fQscratch, 0x10));
+	// GCC-only reads. The TCSR (0x1f4b118) is deliberately separate: on the
+	// observed uke it hangs unless its clock controller is already up.
+	const uint32_t usb30Bcr = rd32(fGcc, 0x000);
+	IOLog("NativeUsbSerial: GCC usb30-bcr=%08x\n", usb30Bcr);
+	const uint32_t phyBcr = rd32(fPhyBcr, 0x000);
+	IOLog("NativeUsbSerial: GCC qusb2phy-bcr=%08x\n", phyBcr);
 
-	dumpPhy();
+	if (fEnablePhy) {
+		IOLog("NativeUsbSerial: probe: reading TCSR\n");
+		IOLog("NativeUsbSerial: GCC tcsr-usb2-clkref=%08x\n", rd32(fTcsr, 0x118));
+	}
+
+	if (fProbeLevel >= 2) {
+		if ((usb30Bcr & UKE_USB_GCC_RESET_ASSERT) != 0) {
+			IOLog("NativeUsbSerial: DWC3 reset asserted; skipping DWC3/QSCRATCH reads\n");
+		} else {
+			IOLog("NativeUsbSerial: DWC3 gsnpsid=%08x guid=%08x gctl=%08x gsts=%08x\n",
+			    rd32(fWrapper, UKE_USB_DWC3_GSNPSID), rd32(fWrapper, UKE_USB_DWC3_GUID),
+			    rd32(fWrapper, UKE_USB_DWC3_GCTL), rd32(fWrapper, UKE_USB_DWC3_GSTS));
+			IOLog("NativeUsbSerial: DWC3 hwparams=%08x %08x %08x %08x\n",
+			    rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS0), rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS1),
+			    rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS2), rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS3));
+			IOLog("NativeUsbSerial: DWC3 gusb2phycfg=%08x gusb3pipectl=%08x dcfg=%08x dctl=%08x devten=%08x dsts=%08x\n",
+			    rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0)),
+			    rd32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0)),
+			    rd32(fWrapper, UKE_USB_DWC3_DCFG), rd32(fWrapper, UKE_USB_DWC3_DCTL),
+			    rd32(fWrapper, UKE_USB_DWC3_DEVTEN), rd32(fWrapper, UKE_USB_DWC3_DSTS));
+			IOLog("NativeUsbSerial: DWC3 event addr=%08x:%08x size=%08x count=%08x\n",
+			    rd32(fWrapper, UKE_USB_DWC3_GEVNTADRHI), rd32(fWrapper, UKE_USB_DWC3_GEVNTADRLO),
+			    rd32(fWrapper, UKE_USB_DWC3_GEVNTSIZ), rd32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT));
+			IOLog("NativeUsbSerial: QSCRATCH general=%08x hsphy=%08x\n",
+			    rd32(fQscratch, 0x08), rd32(fQscratch, 0x10));
+		}
+	}
+
+	if (fEnablePhy) {
+		IOLog("NativeUsbSerial: probe: reading PHY\n");
+		dumpPhy();
+	}
 	dumpSmmu();
 }
 
@@ -422,6 +443,7 @@ NativeUsbSerial::smmuWrite(void *context, unsigned offset, uint32_t value)
 bool
 NativeUsbSerial::warmInit(void)
 {
+	IOLog("NativeUsbSerial: warm: gdsc\n");
 	uint32_t gdscr = rd32(fGcc, 0x004);
 	if ((gdscr & UKE_USB_GDSCR_HW_CONTROL) != 0) {
 		IOLog("NativeUsbSerial: GDSC is hardware-controlled (gdscr=%08x)\n", gdscr);
@@ -442,33 +464,60 @@ NativeUsbSerial::warmInit(void)
 		return false;
 	}
 
-	// USB30 master/sleep/UTMI/cfg-noc/aggre branches, then deassert the
-	// USB30 block reset and pulse the eUSB2 PHY reset.
+	IOLog("NativeUsbSerial: warm: clocks\n");
 	static const uint32_t branches[] = { 0x018, 0x024, 0x028, 0x088, 0x08c };
 	for (uint32_t offset : branches) {
 		wr32(fGcc, offset, rd32(fGcc, offset) | UKE_USB_GCC_BRANCH_ENABLE);
 	}
+	IOLog("NativeUsbSerial: warm: bcr\n");
 	wr32(fGcc, 0x000, rd32(fGcc, 0x000) & ~UKE_USB_GCC_RESET_ASSERT);
 	wr32(fPhyBcr, 0x000, 1);
 	IODelay(100);
 	wr32(fPhyBcr, 0x000, 0);
 	IODelay(100);
-	wr32(fTcsr, 0x118, rd32(fTcsr, 0x118) | 1);
-	IODelay(100);
 
-	for (size_t i = 0; i < UKE_USB_PHY_INIT_COUNT; i++) {
-		const UkeUsbPhyWrite &write = kUkeUsbPhyInit19Mhz[i];
-		uint32_t before = rd32(fPhy, write.offset);
-		uint32_t value = (before & ~write.mask) | (write.value & write.mask);
-		wr32(fPhy, write.offset, value);
-		uint32_t after = rd32(fPhy, write.offset);
-		if ((after & write.mask) != (write.value & write.mask)) {
-			IOLog("NativeUsbSerial: PHY[%03x] expected %08x got %08x\n",
-			    write.offset, write.value & write.mask, after & write.mask);
-			return false;
+	// The TCSR clock-ref block and the PHY register file are opt-in: on the
+	// observed uke the TCSR read hangs unless its clock controller is up, and
+	// the PHY needs its own rails. The minimal path below only uses GCC and
+	// the DWC3 wrapper.
+	if (fEnablePhy) {
+		IOLog("NativeUsbSerial: warm: tcsr\n");
+		wr32(fTcsr, 0x118, rd32(fTcsr, 0x118) | 1);
+		IODelay(100);
+		IOLog("NativeUsbSerial: warm: phy\n");
+		for (size_t i = 0; i < UKE_USB_PHY_INIT_COUNT; i++) {
+			const UkeUsbPhyWrite &write = kUkeUsbPhyInit19Mhz[i];
+			uint32_t before = rd32(fPhy, write.offset);
+			uint32_t value = (before & ~write.mask) | (write.value & write.mask);
+			wr32(fPhy, write.offset, value);
+			uint32_t after = rd32(fPhy, write.offset);
+			if ((after & write.mask) != (write.value & write.mask)) {
+				IOLog("NativeUsbSerial: PHY[%03x] expected %08x got %08x\n",
+				    write.offset, write.value & write.mask, after & write.mask);
+				return false;
+			}
 		}
 	}
 
+	IOLog("NativeUsbSerial: warm: dwc3-reset\n");
+	uint32_t dctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
+	wr32(fWrapper, UKE_USB_DWC3_DCTL, dctl | UKE_USB_DWC3_DCTL_CSFTRST);
+	IODelay(10);
+	wr32(fWrapper, UKE_USB_DWC3_DCTL, rd32(fWrapper, UKE_USB_DWC3_DCTL) & ~UKE_USB_DWC3_DCTL_CSFTRST);
+	bool resetDone = false;
+	for (unsigned i = 0; i < 1000; i++) {
+		if ((rd32(fWrapper, UKE_USB_DWC3_DCTL) & UKE_USB_DWC3_DCTL_CSFTRST) == 0) {
+			resetDone = true;
+			break;
+		}
+		IOSleep(1);
+	}
+	if (!resetDone) {
+		IOLog("NativeUsbSerial: DWC3 soft reset did not complete\n");
+		return false;
+	}
+
+	IOLog("NativeUsbSerial: warm: qscratch\n");
 	uint32_t general = rd32(fQscratch, 0x08);
 	general |= 1U;
 	general &= ~(1U << 8);
@@ -477,18 +526,8 @@ NativeUsbSerial::warmInit(void)
 	hs |= (1U << 20) | (1U << 28);
 	wr32(fQscratch, 0x10, hs);
 
-	uint32_t dctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
-	wr32(fWrapper, UKE_USB_DWC3_DCTL, dctl | UKE_USB_DWC3_DCTL_CSFTRST);
-	IODelay(10);
-	wr32(fWrapper, UKE_USB_DWC3_DCTL, rd32(fWrapper, UKE_USB_DWC3_DCTL) & ~UKE_USB_DWC3_DCTL_CSFTRST);
-	for (unsigned i = 0; i < 1000; i++) {
-		if ((rd32(fWrapper, UKE_USB_DWC3_DCTL) & UKE_USB_DWC3_DCTL_CSFTRST) == 0) {
-			return true;
-		}
-		IOSleep(1);
-	}
-	IOLog("NativeUsbSerial: DWC3 soft reset did not complete\n");
-	return false;
+	IOLog("NativeUsbSerial: warm: done\n");
+	return true;
 }
 
 bool
@@ -1217,23 +1256,31 @@ NativeUsbSerial::serialStart(void)
 		IOLog("NativeUsbSerial: warm init failed\n");
 		return false;
 	}
+	IOLog("NativeUsbSerial: serial: dma\n");
 	if (!dmaAllocate()) {
 		return false;
 	}
+	IOLog("NativeUsbSerial: serial: smmu\n");
 	if (!smmuAttach()) {
 		return false;
 	}
+	IOLog("NativeUsbSerial: serial: event\n");
 	eventInit();
+	IOLog("NativeUsbSerial: serial: fifo\n");
 	fifoConfig();
+	IOLog("NativeUsbSerial: serial: device\n");
 	deviceInit();
 
+	IOLog("NativeUsbSerial: serial: ep0\n");
 	if (!configEp(fEp0Out, UKE_USB_DWC3_EP_TYPE_CONTROL, 64, 0, false, true) ||
 	    !configEp(fEp0In, UKE_USB_DWC3_EP_TYPE_CONTROL, 64, 0, true, true)) {
 		IOLog("NativeUsbSerial: EP0 configuration failed\n");
 		return false;
 	}
+	IOLog("NativeUsbSerial: serial: run\n");
 	wr32(fWrapper, UKE_USB_DWC3_DCTL,
 	    rd32(fWrapper, UKE_USB_DWC3_DCTL) | UKE_USB_DWC3_DCTL_RUN_STOP);
+	IOLog("NativeUsbSerial: serial: setup\n");
 	ep0Arm();
 
 	fTxMem = static_cast<uint8_t *>(IOMalloc(kTxBytes));
@@ -1248,6 +1295,7 @@ NativeUsbSerial::serialStart(void)
 		return false;
 	}
 
+	IOLog("NativeUsbSerial: serial: threads\n");
 	thread_t thread = nullptr;
 	if (kernel_thread_start(usbThreadEntry, this, &thread) != KERN_SUCCESS) {
 		IOLog("NativeUsbSerial: USB thread failed\n");
@@ -1262,6 +1310,7 @@ NativeUsbSerial::serialStart(void)
 		return false;
 	}
 	thread_deallocate(thread);
+	IOLog("NativeUsbSerial: serial: started\n");
 	IOLog("NativeUsbSerial: warm USB2 device started\n");
 	return true;
 }
@@ -1317,9 +1366,13 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t probeMode = 0;
 	uint32_t serialMode = 0;
 	uint32_t dumpMode = 0;
+	uint32_t phyMode = 0;
 	PE_parse_boot_argn("native-usb-probe", &probeMode, sizeof(probeMode));
 	PE_parse_boot_argn("native-usb-serial", &serialMode, sizeof(serialMode));
 	PE_parse_boot_argn("native-usb-serial-dump", &dumpMode, sizeof(dumpMode));
+	PE_parse_boot_argn("native-usb-phy", &phyMode, sizeof(phyMode));
+	fProbeLevel = probeMode;
+	fEnablePhy = phyMode != 0;
 	if (probeMode == 0 && serialMode == 0) {
 		IOService::stop(provider);
 		return false;
