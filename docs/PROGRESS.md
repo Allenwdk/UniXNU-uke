@@ -147,6 +147,8 @@
 
 - 2026-10-22：CI run `39649725296` 的 `full` job 成功（`uke-userland_defconfig`，含新审计、探针和 `NativeHidInput` touch sink）：kernel `dcf0b7d9…`，payload `baed2c67…`，vendor_boot `vendor_boot_uke_surface.img` `e3cca9fe…`（69,005,312 B，vendor ramdisk sha 与 payload 一致）。boot 仍用 `boot_uke_kpanicprint2.img`（`5be4b635…`）。下一步：设备进 fastboot 后刷两个槽位，读取 `UKE: display surface root=… temp=… flag=… dims=… mode=… sid=…`。
 
+- 2026-10-22：probe 内核实机启动后在 `layout_buffers`（`0xfffffff00578d110`）data abort：`surface+0x28` 的 memory region 为 0（没有 GPU 时原厂 lookup 找不到 `PurpleGfxMem`），`ldr x8,[x0]` 空指针。修复：`start()` 前把 `+0x17c0` 预置为 32 MiB `IOBufferMemoryDescriptor`；已确认其 vtable `+0xb0` 与 `IOMemoryDescriptor::getLength` 是同一槽位，`layout_buffers` 用它做分配大小检查。`layout_buffers` 把行宽对齐到 0x80，得到 12928×2136≈27.6 MB，所以 surface stride 不是 GOP 的 12800，默认 surface 不能直接别名 GOP。commit `32bd7fa`，CI run `39652515090` 构建中。
+
 ---
 
 ## 4. 还没做 / 当前阻塞
