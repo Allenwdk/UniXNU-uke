@@ -36,6 +36,14 @@ volatile int native_touch_last_x = -1, native_touch_last_y = -1;
 volatile uint32_t native_touch_seq;
 volatile uint32_t native_touch_count;
 volatile int native_touch_xs[NVT_SLOTS], native_touch_ys[NVT_SLOTS], native_touch_ids[NVT_SLOTS];
+// NativeHidInput 588c96f registers its work-loop notifier here; the touch
+// thread calls it after the finger set is published. start()/stop() set and
+// clear it, so there is always exactly one consumer.
+static void (*native_touch_sink)(void *);
+static void *native_touch_sink_context;
+void native_touch_set_sink(void (*sink)(void *),void *context) {
+    native_touch_sink=sink;native_touch_sink_context=context;
+}
 }
 
 namespace {
@@ -285,6 +293,7 @@ void publish(unsigned count, const nvt_contact *c) {
     }
     __asm__ volatile("dmb ish" ::: "memory");
     native_touch_seq = native_touch_seq + 1;
+    if (native_touch_sink) native_touch_sink(native_touch_sink_context);
 }
 
 bool snapshot(Session &s) {
