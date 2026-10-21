@@ -52,7 +52,7 @@ jobs:
       - name: Grow the Data seed to the userdata window
         working-directory: UniXNU
         run: |
-          python3 -c "import sys; sys.path.insert(0, 'drivers/DarwinBoot/Test'); import packed_ramdisk; packed_ramdisk.pack('build/owner-data-fixture/owner-data-32.cdr', 'build/owner-data-fixture/owner-data-32.dbr')"
+          python3 -c "from pathlib import Path; import sys; sys.path.insert(0, 'drivers/DarwinBoot/Test'); import packed_ramdisk; packed_ramdisk.pack(Path('build/owner-data-fixture/owner-data-32.cdr'), Path('build/owner-data-fixture/owner-data-32.dbr'))"
           # userdata is 241,617,055,744 B; the root image is 9,382,658,048 B.
           # --gib 214 leaves the root image, the 1 GiB log reserve, a 4 MiB
           # guard and one more GiB of margin inside the partition.

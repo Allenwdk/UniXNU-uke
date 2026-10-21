@@ -1,0 +1,70 @@
+name: grow-uke-data-seed
+
+# Grow an existing 32 MiB Data seed to the uke userdata window without
+# re-fetching the 5 GB OS dmg. The source artifact is the uke-data-seed from a
+# previous build-uke-data-seed run; the output is a packed DBRDISK1 with the
+# same APFS volume UUID and a 214 GiB container.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: 'run id that holds the uke-data-seed artifact'
+        required: true
+        default: '39556176977'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  grow:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+        with:
+          path: UniXNU-uke
+
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: Allenwdk/UniXNU
+          ref: uke
+          path: UniXNU
+          submodules: recursive
+
+      - name: Download the 32 MiB seed artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: uke-data-seed
+          run-id: ${{ github.event.inputs.source_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: UniXNU/build/owner-data-fixture
+
+      - name: Pack and grow the seed
+        working-directory: UniXNU
+        run: |
+          ls -l build/owner-data-fixture
+          python3 -c "from pathlib import Path; import sys; sys.path.insert(0, 'drivers/DarwinBoot/Test'); import packed_ramdisk; packed_ramdisk.pack(Path('build/owner-data-fixture/owner-data-32.cdr'), Path('build/owner-data-fixture/owner-data-32.dbr'))"
+          # userdata is 241,617,055,744 B; the root image is 9,382,658,048 B.
+          # --gib 214 leaves the root image, the 1 GiB log reserve, a 4 MiB
+          # guard and one more GiB of margin inside the partition.
+          python3 scripts/seed-data-grow.py --gib 214 \
+            build/owner-data-fixture/owner-data-32.dbr \
+            build/owner-data-fixture/owner-data-214.dbr \
+            | tee build/owner-data-fixture/grown.json
+          ls -l build/owner-data-fixture
+
+      - name: Upload the grown seed
+        uses: actions/upload-artifact@v4
+        with:
+          name: uke-data-seed-214
+          path: |
+            UniXNU/build/owner-data-fixture/owner-data-214.dbr
+            UniXNU/build/owner-data-fixture/grown.json
+            UniXNU/build/owner-data-fixture/seed.json
+          if-no-files-found: error
+          retention-days: 14
