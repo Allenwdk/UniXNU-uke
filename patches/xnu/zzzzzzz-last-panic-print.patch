@@ -1,0 +1,57 @@
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -91,6 +91,11 @@
+ /* Whether a console is standing by for panic logging */
+ static boolean_t panic_console_available = FALSE;
+ 
++/* Previous boot's embedded panic log, printed after the framebuffer console is up. */
++#define LAST_PANIC_TEXT_BYTES 2048
++static char last_panic_text[LAST_PANIC_TEXT_BYTES];
++static boolean_t last_panic_text_valid = FALSE;
++
+ /* socd trace ram attributes */
+ static SECURITY_READ_ONLY_LATE(vm_offset_t) socd_trace_ram_base = 0;
+ static SECURITY_READ_ONLY_LATE(vm_size_t) socd_trace_ram_size = 0;
+@@ -175,6 +180,18 @@
+ #endif
+ 	panic_info = (struct embedded_panic_header *)gPanicBase;
+ 
++	if (panic_info->eph_magic == EMBEDDED_PANIC_MAGIC) {
++		uint32_t offset = panic_info->eph_panic_log_offset;
++		uint32_t length = panic_info->eph_panic_log_len;
++		if ((offset >= sizeof(*panic_info)) && (offset < gPanicSize) && (length != 0) &&
++		    (length <= gPanicSize - offset)) {
++			size_t copy = length < (sizeof(last_panic_text) - 1) ? length : (sizeof(last_panic_text) - 1);
++			memcpy(last_panic_text, (const void *)(gPanicBase + offset), copy);
++			last_panic_text[copy] = '\0';
++			last_panic_text_valid = TRUE;
++		}
++	}
++
+ 	/* Check if a shared memory console is running in the panic buffer */
+ 	if (panic_info->eph_magic == 'SHMC') {
+ 		panic_console_available = TRUE;
+@@ -197,6 +214,15 @@
+ 	bzero((void *)gPanicBase, gPanicSize);
+ }
+ 
++void
++pe_print_last_panic(void)
++{
++	if (last_panic_text_valid) {
++		printf("PREVIOUS XNU LOG:\n%s\n", last_panic_text);
++		last_panic_text_valid = FALSE;
++	}
++}
++
+ int
+ PE_initialize_console(PE_Video * info, int op)
+ {
+@@ -265,6 +291,7 @@
+ 	uint32_t        populate_registry_time_value = 0;
+ 
+ 	PE_init_printf(TRUE);
++	pe_print_last_panic();
+ 
+ 	printf("iBoot version: %s\n", iBoot_version);
+ #if defined(TARGET_OS_OSX) && defined(__arm64__)

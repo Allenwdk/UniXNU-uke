@@ -30,20 +30,22 @@ if [ ! -x .cache/fakeroot/usr/local/libexec/availability.pl ]; then
     OBJROOT="$ROOT/build/availability" SYMROOT="$ROOT/build/availability" \
     DSTROOT="$ROOT/.cache/fakeroot" CMAKE="$(command -v cmake)" NINJA="$(command -v ninja)"
 fi
-# The optional observation hooks overlap existing root/exec patch context.
-# Remove them first so earlier independent patches retain their idempotent checks.
-# The same holds for the boot-time GPU addon mount (zzy), which edits the owner Data mount function inside the systemos patch.
-# Reverse newest first; the loop below re-applies them in name order.
-for LATE_PATCH in "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
-  if git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
+# The fork's XNU patches are in the UniXNU checkout that owns this tree; the
+# device repository only carries board-specific patches. Apply the fork set
+# first (sorted), then the device set (sorted), so a cold tree gets both.
+FORK_PATCHES=$ROOT/../../../patches/xnu
+for LATE_PATCH in "$FORK_PATCHES/zzz-boot-progress.patch" "$FORK_PATCHES/zzy-native-gpu-addon-mount.patch"; do
+  if [ -f "$LATE_PATCH" ] && git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
   fi
 done
-for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.patch; do
-  if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
-    git -C .cache/xnu-work apply --check "$PATCH"
-    git -C .cache/xnu-work apply "$PATCH"
-  fi
+for PATCH_DIR in "$FORK_PATCHES" "$ROOT/patches/xnu" "$ROOT/kits/NativePrelink/patches"; do
+  for PATCH in $(find "$PATCH_DIR" -maxdepth 1 -name '*.patch' -print 2>/dev/null | sort); do
+    if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
+      git -C .cache/xnu-work apply --check "$PATCH"
+      git -C .cache/xnu-work apply "$PATCH"
+    fi
+  done
 done
 # uke: the base patches reference native_legacy_display_probe() from
 # bsd_init.c even when NATIVE_LEGACY_DISPLAY is off. The other two probe
