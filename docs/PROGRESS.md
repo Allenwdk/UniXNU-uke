@@ -166,6 +166,8 @@
 
 - 2026-10-22（Data 可写层）：`native_ufs_store_open()` 现在在 `sheng-data-persist=2` 下最多等 5 s，等 `gStoreGeometry.valid && gHost.ready` 再开窗口。之前 `NativeRamBlock` 在 Data 挂载前只调用一次，UFS root layout 未就绪就直接返回 `no root layout`，overlay 不激活，`/private/var` 只读，`vm_swap_create_file` 报 EROFS（30），随后 `shared_region` 失败。新增 `NativeUfs: store open blocks=… first=… waited=…ms why=… ok=…` 日志。commit `abd5614`，CI run `39672640527` 构建成功；kernel `f59342f3…`、payload `c2111b98…`、`vendor_boot_uke_datawrite.img` `361b68f0…` 已刷入两个槽位（带 `wdt=-1`）。成功后 Data APFS 应可读写，launchd 才能越过 shared region，之后才到 slot242/显示；现在等 `NativeUfs: store open … ok=1` 和后续日志。
 
+- 2026-10-22（三次启动结果）：`NativeUfs: store open … waited=0x2e why= ok=1` → Data 可写窗口已打开（46 ms）。第一次启动仍在 Data 挂载前遇到 `vm_swap_create_file`/`shared_region`（冷启动时序）；第二次启动越过 `Early boot complete`、`driverkitd`、`FileSet KC(s)`，并出现 `IOMobileFramebufferUserClient::s_map_display_type`（显示客户端已打开）；第三次启动复位为 `watchdog[112] … namespace 2 subcode 0x5`（用户态 watchdog）。`sheng-disable-watchdogd=1` 返回 17（EEXIST），策略没有更新 `disabled.plist`；已改为 `O_TRUNC` 重写并同时禁用 `com.apple.watchdogd`/`com.apple.watchdog`（commit `3e7da15`，CI run `39676889315`）。下一步：确认第二次启动的 `UKE: default surface port … status=…`，并让 watchdog 不再复位。
+
 ---
 
 ## 4. 还没做 / 当前阻塞
