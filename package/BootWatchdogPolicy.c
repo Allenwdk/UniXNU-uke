@@ -13,7 +13,7 @@ static const char policy_head[] =
  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
  "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
  "<plist version=\"1.0\"><dict>";
-static const char policy_watchdogd[]="<key>com.apple.watchdogd</key><true/>";
+static const char policy_watchdogd[]="<key>com.apple.watchdogd</key><true/><key>com.apple.watchdog</key><true/>";
 // Bring-up isolation: hardware stacks show identityservicesd, contextstored and locationd in a
 // cycle of synchronous XPC waits. A disabled job makes its Mach service lookups fail instead of hang.
 // sheng-disable-jobs=<label>[,<label>...] (restricted label characters, bounded length).
@@ -49,8 +49,10 @@ int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  error=mkdir(p,&md,&result);
  if(error && error!=EEXIST)goto done;
  if((error=copyout(path,scratch,strlen(path)+1)))goto done;
- // Refuse existing settings and symlinks instead of replacing their contents.
- struct open_args op={.path=scratch,.flags=O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,.mode=0644};
+ // Replace the bring-up settings (O_TRUNC) but never follow a symlink. The
+ // earlier O_EXCL path returned EEXIST on every boot after the first and left
+ // a stale watchdog entry, so launchd kept starting the watchdog.
+ struct open_args op={.path=scratch,.flags=O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,.mode=0644};
  if((error=open(p,&op,&result)))goto done;
  fd=result;
  if((error=copyout(policy,scratch+0x200,strlen(policy))))goto done;
