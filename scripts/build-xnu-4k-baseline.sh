@@ -18,9 +18,6 @@ if [ "$(git -C refer/xnu rev-parse HEAD)" != "$XNU_COMMIT" ]; then
   echo 'error: unexpected XNU reference revision' >&2
   exit 1
 fi
-if [ ! -d .cache/xnu-work/.git ]; then
-  git clone --shared refer/xnu .cache/xnu-work
-fi
 if [ ! -x .cache/fakeroot/usr/local/libexec/availability.pl ]; then
   if [ ! -d refer/AvailabilityVersions/.git ]; then
     git clone --depth 1 --branch "$AVAILABILITY_TAG" https://github.com/apple-oss-distributions/AvailabilityVersions.git refer/AvailabilityVersions
@@ -33,7 +30,21 @@ fi
 # The fork's XNU patches are in the UniXNU checkout that owns this tree; the
 # device repository only carries board-specific patches. Apply the fork set
 # first (sorted), then the device set (sorted), so a cold tree gets both.
+# A cached source tree may already contain the set in a different order, where
+# reverse checks fail on patches that later patches edited again. Stamp the
+# exact set and start from a clean clone whenever it changes.
 FORK_PATCHES=$ROOT/../../../patches/xnu
+PATCH_SET_HASH=$(
+  {
+    find "$FORK_PATCHES/" -maxdepth 1 -name '*.patch' -print 2>/dev/null || true
+    find "$ROOT/patches/xnu/" -maxdepth 1 -name '*.patch' -print 2>/dev/null || true
+    find "$ROOT/kits/NativePrelink/patches/" -maxdepth 1 -name '*.patch' -print 2>/dev/null || true
+  } | sort | xargs sha256sum | sha256sum | cut -d' ' -f1
+)
+PATCH_STAMP=.cache/xnu-work/.unixnu-patch-set
+if [ ! -d .cache/xnu-work/.git ] || [ "$(cat "$PATCH_STAMP" 2>/dev/null)" != "$PATCH_SET_HASH" ]; then
+rm -rf .cache/xnu-work
+git clone --shared refer/xnu .cache/xnu-work
 for LATE_PATCH in "$FORK_PATCHES/zzz-boot-progress.patch" "$FORK_PATCHES/zzy-native-gpu-addon-mount.patch"; do
   if [ -f "$LATE_PATCH" ] && git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
@@ -47,9 +58,11 @@ apply_xnu_patch () {
   fi
 }
 # The owner root-binding audit is the base of the bsd_init owner block; the
-# other probes expect its result. Apply it before the sorted set.
+# other probes expect its result. Apply it before the sorted set. A tree that
+# already carries the audit plus a later root-auth bypass cannot reverse it
+# cleanly, so recognize the audit's own symbols instead.
 AUDIT_PATCH=$FORK_PATCHES/offline-owner-root-binding-audit.patch
-if [ -f "$AUDIT_PATCH" ]; then
+if [ -f "$AUDIT_PATCH" ] && ! grep -q 'native_owner_root_apple_autherr' "$ROOT/.cache/xnu-work/bsd/kern/bsd_init.c"; then
   apply_xnu_patch "$AUDIT_PATCH"
 fi
 for PATCH_DIR in "$FORK_PATCHES" "$ROOT/patches/xnu" "$ROOT/kits/NativePrelink/patches"; do
@@ -60,6 +73,8 @@ for PATCH_DIR in "$FORK_PATCHES" "$ROOT/patches/xnu" "$ROOT/kits/NativePrelink/p
     apply_xnu_patch "$PATCH"
   done
 done
+printf '%s\n' "$PATCH_SET_HASH" > "$PATCH_STAMP"
+fi
 # uke: the base patches reference native_legacy_display_probe() from
 # bsd_init.c even when NATIVE_LEGACY_DISPLAY is off. The other two probe
 # symbols are defined by patches/xnu/offline-component-load-probes.patch;
