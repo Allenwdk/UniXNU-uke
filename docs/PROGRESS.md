@@ -128,6 +128,12 @@
 - 修复：`grow-data-seed.yml` 复用已有 `uke-data-seed` 32 MiB 产物，用 macOS `diskutil apfs resizeContainer` 把 APFS 容器扩到 **214 GiB**（userdata 241,617,055,744 B − root 9,382,658,048 B − 1 GiB log reserve − 4 MiB guard − 1 GiB margin），再打包为 `DBRDISK1`。结果：逻辑 229,780,750,336 B，encoded 1,085,568 B，encoded sha `9f3ffc70…`，seed 身份 `29c86166…`，卷 UUID 仍是 `292E72B9-…`。新 payload sha `ff367383…`，`vendor_boot_uke_data7.img` sha `17cd5c69…`；等设备充电后刷入验证 ENOSPC 是否消失。
 - 2026-10-21：data7 首次启动在 UniXNU 菜单返回 `Bad Buffer Size`。根因不是 seed 格式，而是 **boot.img 里的 DarwinBoot 太旧**：UEFI FD 于 00:15 编译时 `PackedRamdisk.h` 只允许 `Logical <= SIZE_2GB`（2 GiB）；214 GiB 的 packed seed 被 `RamdiskLayout` 拒绝，DarwinBoot 返回 `EFI_BAD_BUFFER_SIZE`。当前 submodule 的 commit `85332b3` 已把上限改为 1 TiB；重新执行 `unixnu build firmware` 后 FD sha `7ba803a6…`，新 boot image `boot_uke_1tib.img` sha `522fe6d0…`（1,515,520 B，DTB 仍是 `57e52bb8…`）。下次刷 `boot_uke_1tib.img` + `vendor_boot_uke_data7.img`。
   - 固件 preflight 在本地 Linux 需要显式路径：`UNIXNU_UEFI=/home/allenwdk/uefi-uke UNIXNU_DTB=/home/allenwdk/UniXNU-uke/build/uke/uke.dtb`，并先 `mkdir -p out/uke/tree/build/uke`（check-uke.py 会写 `build/uke/check.json`）。
+- 2026-10-21：1 TiB boot 后 `Bad Buffer Size` 消失，Data 挂载成功，`Early boot complete`、`launchd_cache_loader`、`driverkitd active`、`cfprefsd`/`accountsd`/`MobileGestaltHelper` 等都已启动，ENOSPC 不再出现。新的失败在 userland 显示阶段：
+  - `shared_region: ... [[(launchd)]] check_np(...) vm_shared_region_start_address() failed`（两次）
+  - `vm_swap_create_file failed @ 16 secs` / `Failed to open swap file 30`
+  - `IOMobileFramebufferUserClient::s_map_display_type ... UserClient display type is 0`
+  - 之后屏幕黑掉并重启；有时在跑码阶段就重启，存在不稳定性。
+- 诊断：又做了一个关闭 `offline-legacy-gop`/`offline-mobile-graphics-client`/`offline-mobile-graphics-load` 的 payload（`vendor_boot_uke_diag.img`，sha `db047b2d…`），仍然黑屏重启，说明不是显示驱动单独把 console 弄黑，panic 文本没有被画出来/没来得及画。现在缺少可持久化的 panic 或串口输出；下一步要么实现 panic region/`sheng-log` 持久化，要么先补显示 default surface。
 
 ---
 
