@@ -1199,7 +1199,6 @@ NativeUsbSerial::serialStart(void)
 	fSetup = nullptr;
 	fStatus = nullptr;
 	fEp0Data = nullptr;
-	fEp1Data = nullptr;
 	fEp2Data = nullptr;
 	fEp3Data = nullptr;
 	fTxMem = nullptr;
