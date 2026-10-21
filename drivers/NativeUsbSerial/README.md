@@ -44,7 +44,9 @@ python3 scripts/build-arm-driver.py NativeUsbSerial
 
 The archive is `build/native-usb-serial/libNativeUsbSerial.a`. The kernel link
 uses `-Wl,-force_load` and the `KernelConfigTables.cpp` personality from
-`patches/xnu/zzzzzzzzz-native-usb-serial.patch`.
+`patches/xnu/zzzzzzzzz-native-usb-serial.patch`. CI run `39663424201` is
+green: `archive-10-build-arm-driver.log` reports the `-Werror` build and
+ARM64/iOS 17 object audit passed.
 
 Host-side pure logic (descriptors, TRB/byte rings, msgbuf cursor, PHY table):
 

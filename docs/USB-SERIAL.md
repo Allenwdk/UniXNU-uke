@@ -1,7 +1,8 @@
 # USB serial debug channel (uke)
 
-Status: **read-only probe plus the warm CDC-ACM/msgbuf implementation are on
-`uke-usbserial`; the serial path is opt-in and awaits hardware validation.**
+Status: **the read-only probe and the warm CDC-ACM/msgbuf path are built into
+the full kernel (CI run `39663424201`, 52,146,176 B, sha256 `2d31d5c0…`); the
+serial path is opt-in and awaits hardware validation.**
 
 ## Why
 
@@ -118,3 +119,12 @@ drivers/NativeUsbSerial/tests/run.sh
 The archive is linked with `-Wl,-force_load` and the personality from
 `patches/xnu/zzzzzzzzz-native-usb-serial.patch`. The kernel is built in GitHub
 Actions; the local Linux host only runs the pure C++ tests.
+
+CI run `39663424201` (`build-uke-kernel`, branch `uke-usbserial`) is green:
+`archive-10-build-arm-driver.log` reports
+`NativeUsbSerial: -Werror build and actual ARM64/iOS 17 object audit passed`,
+and the 52,146,176-byte kernel contains the `NativeUsbSerial` methods, the
+boot-arg strings and the `'IOClass' = NativeUsbSerial` personality. The
+downloaded artifact is at
+`/home/allenwdk/uke-port/ci/uke-kernel-full-usbserial/kernel.macho`
+(sha256 `2d31d5c03d22e76abc86d451a7f39f50e79a966b31091db26863744b0795c6f1`).

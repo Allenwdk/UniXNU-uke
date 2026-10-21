@@ -347,6 +347,7 @@ fastboot reboot
 | 2026-10-22 | watchdog 复现 | 后续日志再次出现 `pid 195 ... namespace 2 subcode 0x5`（SIGTRAP）与 `coredump (watchdogd, pid 105)`；策略未完全消除 watchdog，显示仍是主阻塞；`logd`/CommCenter watermark、`MobileGestalt` unnest 为非致命噪声 |
 | 2026-10-22 | 当前阻塞 | 系统 alive（`CommCenter`/`logd`/`coresymbolicationd`/APFS tx），但 `IOMFB: default_fb_surface: No Default FB Surface found` + `display type is 0`，屏幕停在 Apple logo；下一步 NativeMobileDisplay / Adreno 732（暂不启动） |
 | 2026-10-22 | USB serial | 独立 worktree `uke-usbserial` 新增 `NativeUsbSerial`：`native-usb-probe=1` 只读 dump DWC3/PHY/GCC/SMMU；`native-usb-serial=1` 实现热接管 CDC-ACM + msgbuf 日志流，待实机验证 |
+| 2026-10-22 | USB serial CI | run `39663424201` 两 job 绿；archive 10/16 `NativeUsbSerial` 通过 `-Werror` + ARM64/iOS 17 对象审计；full kernel 52,146,176 B，sha256 `2d31d5c0…`；kernel 符号含 `NativeUsbSerial` 与 personality；待 probe/CDC-ACM 实机 |
 
 ---
 
