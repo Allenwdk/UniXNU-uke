@@ -39,12 +39,25 @@ for LATE_PATCH in "$FORK_PATCHES/zzz-boot-progress.patch" "$FORK_PATCHES/zzy-nat
     git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
   fi
 done
+apply_xnu_patch () {
+  local PATCH=$1
+  if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
+    git -C .cache/xnu-work apply --check "$PATCH"
+    git -C .cache/xnu-work apply "$PATCH"
+  fi
+}
+# The owner root-binding audit is the base of the bsd_init owner block; the
+# other probes expect its result. Apply it before the sorted set.
+AUDIT_PATCH=$FORK_PATCHES/offline-owner-root-binding-audit.patch
+if [ -f "$AUDIT_PATCH" ]; then
+  apply_xnu_patch "$AUDIT_PATCH"
+fi
 for PATCH_DIR in "$FORK_PATCHES" "$ROOT/patches/xnu" "$ROOT/kits/NativePrelink/patches"; do
   for PATCH in $(find "$PATCH_DIR/" -maxdepth 1 -name '*.patch' -print 2>/dev/null | sort); do
-    if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
-      git -C .cache/xnu-work apply --check "$PATCH"
-      git -C .cache/xnu-work apply "$PATCH"
+    if [ "$PATCH" = "$AUDIT_PATCH" ]; then
+      continue
     fi
+    apply_xnu_patch "$PATCH"
   done
 done
 # uke: the base patches reference native_legacy_display_probe() from
