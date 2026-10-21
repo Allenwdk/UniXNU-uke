@@ -127,6 +127,11 @@ if [ "$BOOT_LOG" != 0 ] && [ "$BOOT_LOG" != 1 ]; then
   echo 'XNU_BOOT_LOG must be 0 or 1' >&2
   exit 1
 fi
+WATCHDOG_POLICY=${XNU_WATCHDOG_POLICY:-0}
+if [ "$WATCHDOG_POLICY" != 0 ] && [ "$WATCHDOG_POLICY" != 1 ]; then
+  echo 'XNU_WATCHDOG_POLICY must be 0 or 1' >&2
+  exit 1
+fi
 if [ ! -d refer/libplatform/.git ]; then
   git clone --depth 1 --branch "$LIBPLATFORM_TAG" https://github.com/apple-oss-distributions/libplatform.git refer/libplatform
 fi
@@ -771,8 +776,9 @@ PY_BINDINGS
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ROOT/build/boot-progress/libBootProgress.a"
   fi
   # The archive builders run after the bootstrap pass, so the writer archive is
-  # absent while the bootstrap links and present for the real kernel link.
-  if [ "$BOOT_LOG" = 1 ]; then
+  # absent while the bootstrap links and present for the real kernel link. The
+  # archive carries both the pram writer and the launchd watchdog policy.
+  if [ "$BOOT_LOG" = 1 ] || [ "$WATCHDOG_POLICY" = 1 ]; then
     LAST_LOG_ARCHIVE=$ROOT/build/uke-last-log/libUkeLastLog.a
     if [ -f "$LAST_LOG_ARCHIVE" ]; then
       KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$LAST_LOG_ARCHIVE"
@@ -812,6 +818,7 @@ if not stamp.exists() or stamp.read_text() != identity:
     stamp.write_text(identity)
 PY
 EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_BOOT_PROGRESS=$BOOT_PROGRESS"
+EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_WATCHDOG_POLICY=$WATCHDOG_POLICY"
 make -C .cache/xnu-work "${XNU_BUILD_TARGET:-build}" SDKROOT="${XNU_SDKROOT:-iphoneos}" ARCH_CONFIGS=ARM64 \
   MACHINE_CONFIGS=BCM2837 KERNEL_CONFIGS=DEVELOPMENT \
   ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY \
