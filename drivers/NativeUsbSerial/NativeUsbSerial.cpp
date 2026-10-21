@@ -1301,7 +1301,7 @@ NativeUsbSerial::probe(IOService *provider, SInt32 *score)
 	    !compatibleHas(compatible, "snps,dwc3")) {
 		return nullptr;
 	}
-	if (super::probe(provider, score) == nullptr) {
+	if (IOService::probe(provider, score) == nullptr) {
 		return nullptr;
 	}
 	*score = 1000;
@@ -1311,7 +1311,7 @@ NativeUsbSerial::probe(IOService *provider, SInt32 *score)
 bool
 NativeUsbSerial::start(IOService *provider)
 {
-	if (!super::start(provider)) {
+	if (!IOService::start(provider)) {
 		return false;
 	}
 
@@ -1322,13 +1322,13 @@ NativeUsbSerial::start(IOService *provider)
 	PE_parse_boot_argn("native-usb-serial", &serialMode, sizeof(serialMode));
 	PE_parse_boot_argn("native-usb-serial-dump", &dumpMode, sizeof(dumpMode));
 	if (probeMode == 0 && serialMode == 0) {
-		super::stop(provider);
+		IOService::stop(provider);
 		return false;
 	}
 
 	if (!mapWindows()) {
 		releaseMaps();
-		super::stop(provider);
+		IOService::stop(provider);
 		return false;
 	}
 
@@ -1344,7 +1344,7 @@ NativeUsbSerial::start(IOService *provider)
 			if (!fSerialStarted) {
 				releaseMaps();
 			}
-			super::stop(provider);
+			IOService::stop(provider);
 			return false;
 		}
 	}
@@ -1359,11 +1359,11 @@ NativeUsbSerial::stop(IOService *provider)
 	if (fSerialStarted) {
 		serialStop();
 		// Do not unmap MMIO while the polled threads may still resume.
-		super::stop(provider);
+		IOService::stop(provider);
 		return;
 	}
 	releaseMaps();
-	super::stop(provider);
+	IOService::stop(provider);
 }
 
 void
@@ -1372,5 +1372,5 @@ NativeUsbSerial::free(void)
 	if (!fSerialStarted) {
 		releaseMaps();
 	}
-	super::free();
+	IOService::free();
 }
