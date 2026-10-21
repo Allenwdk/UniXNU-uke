@@ -40,7 +40,7 @@ for LATE_PATCH in "$FORK_PATCHES/zzz-boot-progress.patch" "$FORK_PATCHES/zzy-nat
   fi
 done
 for PATCH_DIR in "$FORK_PATCHES" "$ROOT/patches/xnu" "$ROOT/kits/NativePrelink/patches"; do
-  for PATCH in $(find "$PATCH_DIR" -maxdepth 1 -name '*.patch' -print 2>/dev/null | sort); do
+  for PATCH in $(find "$PATCH_DIR/" -maxdepth 1 -name '*.patch' -print 2>/dev/null | sort); do
     if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
       git -C .cache/xnu-work apply --check "$PATCH"
       git -C .cache/xnu-work apply "$PATCH"
