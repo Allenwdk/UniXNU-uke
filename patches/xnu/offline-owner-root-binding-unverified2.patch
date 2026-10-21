@@ -1,8 +1,0 @@
---- a/bsd/kern/bsd_init.c
-+++ b/bsd/kern/bsd_init.c
-@@ -966,2 +966,4 @@
--			if (autherr && !owner_authorized) {
-+			int allow_unverified = 0;
-+			PE_parse_boot_argn("native-ufs-allow-unverified", &allow_unverified, sizeof(allow_unverified));
-+			if (autherr && !owner_authorized && !allow_unverified) {
- 				panic("rootvp not authenticated after mounting");

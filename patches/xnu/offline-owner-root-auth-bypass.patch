@@ -1,0 +1,13 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -937,6 +937,10 @@
+ #elif !XNU_TARGET_OS_OSX
+ 		/* Non MacOS */
+ 		require_rootauth = TRUE;
++		int allow_unverified = 0;
++		if (PE_parse_boot_argn("native-ufs-allow-unverified", &allow_unverified, sizeof(allow_unverified)) && allow_unverified) {
++			require_rootauth = FALSE;
++		}
+ #endif // XNU_TARGET_OS_OSX && defined(__arm64__)
+ 
+ 		if (require_rootauth) {
