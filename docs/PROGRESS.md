@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-10-21
 >
-> **当前一句话状态：** union mount 已生效：SystemOS 覆盖到 `/`，launchd 已经启动并加载 libSystem；当前阻塞是 Data 卷缺失，`mount[3]` 以 exit 66（`EX_NOINPUT`）退出后 panic。sheng 的最新 `sheng-data-persist=2`（userdata 末尾的持久 Data 窗口）是下一步；设备停在 panic 画面。
+> **当前一句话状态：** union mount 已生效，launchd 已启动；Data seed 已按 DarwinBoot 要求打包成 `DBRDISK1`（995 KB，逻辑 32 MiB），新的 userland Data 内核/payload/vendor_boot 已就绪，等待刷入。此前 raw APFS seed 触发的 `EFI_COMPROMISED_DATA` 已定位并修复。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -113,6 +113,8 @@
   - `mount[3] exited -- no exit reason available -- (signal 0, exit status 66 )`
   - exit 66 = `EX_NOINPUT`，即 Data 卷缺失。
 - sheng 最新 commit `7562a77` 加了 `sheng-data-persist=2`：Data 盘由 userdata 末尾的读写窗口提供，重启后保留；核心 `NativeUfs`（persistent store window）和 `NativeRamBlock`（overlay）已实现。sheng 还开 `OWNER_DATA_MOUNT`/`OWNER_BOOT_MANIFEST` 并用 `--data-ramdisk` 提供 32 MiB APFS Data seed（`prepare-owner-data-fixture.py`，需要 macOS hdiutil）。
+- 2026-10-21：首次带 Data seed 启动时 UniXNU 菜单返回 `Compromised Data`。原因：`[payload.adt] packed_data_ramdisk = true` 让 ADT 写 `PackedRAMDisk`，但 seed 是原始 APFS `.cdr`，DarwinBoot 的 `RamdiskPacked` 为 false，`DarwinBoot.c:536` 返回 `EFI_COMPROMISED_DATA`。
+- 修复：用 DarwinBoot 自带的 `drivers/DarwinBoot/Test/packed_ramdisk.py` 把 32 MiB seed 打包成 `DBRDISK1`（995,408 B，sha `058109c4…`，逻辑 32 MiB，seed 身份仍是 `d92b2443…`）；payload 重建为 64 MiB，vendor_boot 69,005,312 B。新的 userland Data 内核 sha `a7317807…`，带 `OWNER_DATA_MOUNT`/`NATIVE_RAM_BLOCK`/`OWNER_UNION_SYSTEMOS`。
 
 ---
 
@@ -237,6 +239,9 @@ fastboot reboot
 - **UFS 块类绑定**：`build-ufs-original-bindings.py` 从固定 prelink candidate 推导 190-slot vtable、metaclass、构造/析构，生成 `libNativeUfs.a` 的 `original-bindings.o`；这是 bring-up 绑定，不是 live-qualified audit。
 - **`native-ufs-allow-unverified=1`**：未认证构建里 `native-ufs-root=1` 默认拒绝发布；该参数是明确的 bring-up 开关，只发布 OS/SystemOS 窗口，读取仍不认证。发布线程在 unverified 模式下等待任意 media 后代，而不是签名 UUID。
 - **UFS 实机探针**：`native-ufs-probe=10` 只读，panic 输出 `userdata first/last`、block0 magic、ext4 magic、manifest status；`probe=11` 检查每个窗口的 GPT。panic 会停在屏上，长按电源重启。
+- **`packed_data_ramdisk=true` 要求 `DBRDISK1`**：ADT 写 `PackedRAMDisk` 时 DarwinBoot 要求 ramdisk 是打包格式；原始 APFS `.cdr` 会让 `RamdiskPacked=false`，在 `DarwinBoot.c:536` 返回 `EFI_COMPROMISED_DATA`。用 `drivers/DarwinBoot/Test/packed_ramdisk.py` 的 `pack()` 打包后再传给 `--data-ramdisk`。
+- **Data seed UUID**：`OWNER_DATA_VOLUME_UUID` 必须等于 seed 的 APFS 卷 UUID（本次 `292E72B9-7594-431D-ADBC-2D354CC918DD`）；seed 由 `build-data-seed.yml` 在 macOS 上用 `prepare-owner-data-fixture.py` 生成。
+- **vendor_boot 重排**：payload 尺寸变化时 DTB/table 偏移会移动；用 `scripts/patch-vendor-boot.py` 重排，并用 `unpack_bootimg` 核对 `vendor ramdisk total size`、`dtb size` 和 table entry。
 - **panic screen**：`scripts/Font.h` 是 Mu-Silicium 的 BSD 字体表；`patch-xnu-entry-probe.py` 在找不到 UEFI checkout 时回退到 `scripts/`。
 - **大文件解压要留足空间**：之前 8.2 GB DMG 在磁盘接近满时解压出内容错误（尺寸对、sha 不对）；清理后 `unzip` 解出的 sha 与 pin 完全一致。构建 userdata 前保持 >20 GB 空闲，并先校验 sha。
 - **Linux userdata 构建**：`build-userdata-root-image.py` 用 `7z x -tDmg -so` 解 OS 的 UDIF 整盘流，SystemOS 是裸 APFS 容器直接用；生成后核对 `SHNGROOT` 头、窗口 sha 和 GPT/APFS magic。
@@ -295,6 +300,8 @@ fastboot reboot
 | 2026-10-21 | root-auth 放行 patch | `native-ufs-allow-unverified=1` 跳过 `FSIOC_KERNEL_ROOTAUTH` panic；补丁本地验证；CI run `39549662508` |
 | 2026-10-21 | trust cache + launchd | 原始 `7416ca4f…` bundle 后 launchd exec；缺 libSystem（dyld cache 在 SystemOS） |
 | 2026-10-21 | union SystemOS | `OWNER_UNION_SYSTEMOS=y` + UFS unverified 授权函数；launchd 加载 libSystem，`mount[3]` exit 66（Data 缺失） |
+| 2026-10-21 | Data seed / RAM block | macOS CI 生成 32 MiB APFS seed；`OWNER_DATA_MOUNT`/`NATIVE_RAM_BLOCK` + RAM block binder；raw seed 触发 `EFI_COMPROMISED_DATA` |
+| 2026-10-21 | packed Data seed | `DBRDISK1` 995 KB；payload 64 MiB / vendor_boot 69,005,312 B；userland Data 内核 `a7317807…` |
 
 ---
 
