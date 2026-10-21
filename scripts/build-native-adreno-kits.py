@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Add the GMU kit and firmware planner objects to the NativeAdreno archive."""
-import hashlib, json, os, subprocess, sys, tomllib
+import hashlib, json, os, subprocess, sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if os.environ.get('XNU_NATIVE_ADRENO', '0') != '1' and '--force' not in sys.argv[1:]:
@@ -54,35 +54,27 @@ for source in sources:
         sys.exit(str(source) + ':\n' + result.stderr[-2500:])
     objects.append(obj)
 # GMU, SQE and ZAP firmware as strong definitions over NativeAdrenoFirmwareDefaults.cpp's weak empty
-# ones. The bytes come from the ignored local copies and must match the pins in board.toml; nothing
-# here enters Git. A missing file leaves the weak empty definition in place, so the GMU cold start
-# refuses at runtime instead of the whole kernel failing to link. That is the normal CI state: the
-# vendor firmware is private physical evidence.
-board = tomllib.loads((ROOT / 'board.toml').read_text())['gpu']
-pins = board['firmware_pins']
+# ones. The bytes come from the ignored local copies and must match the pins recorded in
+# scripts/data/uke-gpu-inputs.json; nothing here enters Git. A missing file leaves the weak empty
+# definition in place, so the GMU cold start refuses at runtime instead of the whole kernel failing
+# to link. That is the normal CI state: the vendor firmware is private physical evidence.
+inputs = json.loads((ROOT / 'scripts/data/uke-gpu-inputs.json').read_text())
+firmware = inputs['firmware']
 local = ROOT / '.cache/firmware/uke-gpu'
-
-
-def pinned_name(role):
-    for name in board['firmware_' + role]:
-        if name in pins:
-            return name
-    raise SystemExit('board.toml has no pinned firmware_%s name' % role)
-
-
-embedded = [('_native_adreno_firmware_image', pinned_name('gmu')),
-            ('_native_adreno_sqe_firmware_image', pinned_name('sqe')),
-            ('_native_adreno_zap_image', pinned_name('zap'))]
+embedded = [('_native_adreno_firmware_image', 'gmu'),
+            ('_native_adreno_sqe_firmware_image', 'sqe'),
+            ('_native_adreno_zap_image', 'zap')]
 assembly = ['.section __DATA_CONST,__const']
 present = 0
-for label, name in embedded:
-    path = local / name
+for label, role in embedded:
+    pin = firmware[role]
+    path = local / pin['name']
     if not path.is_file():
-        print('WARN: %s is absent; %s keeps its weak empty definition' % (name, label))
+        print('WARN: %s is absent; %s keeps its weak empty definition' % (pin['name'], label))
         continue
     blob = path.read_bytes()
-    if len(blob) != pins[name]['bytes'] or hashlib.sha256(blob).hexdigest() != pins[name]['sha256']:
-        sys.exit('firmware %s does not match its board.toml pin' % name)
+    if len(blob) != pin['bytes'] or hashlib.sha256(blob).hexdigest() != pin['sha256']:
+        sys.exit('firmware %s does not match its recorded pin' % pin['name'])
     assembly += ['.p2align 12', '.globl ' + label, label + ':', '.incbin ' + json.dumps(str(path)), label + '_end:',
                  '.p2align 3', '.globl ' + label + '_size', label + '_size:', '.quad ' + label + '_end-' + label]
     present += 1

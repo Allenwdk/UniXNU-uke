@@ -1,5 +1,27 @@
 {
   "format_version": 1,
+  "board": {
+    "chip_id": "0x43030b00",
+    "model": "Adreno732",
+    "gmem_bytes": "0x180000",
+    "gmu_chip_id": "0x70b0000",
+    "gmu_cgc_mode": "0x00020202",
+    "preempt_record_bytes": "0x225000",
+    "ubwc_version": 4,
+    "ubwc_swizzle": 3,
+    "highest_bank_bit": 16,
+    "gpu_base": "0x3d00000",
+    "gpu_size": "0x40000",
+    "gmu_base": "0x3d68000",
+    "gmu_size": "0x37000",
+    "gmu_pdc_base": "0xb280000",
+    "gmu_pdc_size": "0x10000",
+    "gpucc_base": "0x3d90000",
+    "gcc_base": "0x100000",
+    "sid_user": 0,
+    "sid_secure": 2,
+    "sid_gmu": 5
+  },
   "chip": {
     "chip_id": "0x43030b00",
     "model": "Adreno732",

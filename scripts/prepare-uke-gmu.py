@@ -351,11 +351,34 @@ def derive(args):
     gpucc = soc_node_with_compatible(dtb, 'qcom,cliffs-gpucc')
     gcc = soc_node_with_compatible(dtb, 'qcom,cliffs-gcc')
 
+    # The device repository's board.toml is the source of truth when the
+    # derive mode runs there; the recorded section makes the build tree
+    # self-contained (the tree has scripts/ but no board.toml).
+    gpu_board = device_gpu()
+    board = dict(
+        chip_id=gpu_board.get('chip_id', hex(chip_id)),
+        model=gpu_board.get('model', model),
+        gmem_bytes=gpu_board.get('gmem_bytes', '0x180000'),
+        gmu_chip_id=gpu_board.get('gmu_chip_id', '0x70b0000'),
+        gmu_cgc_mode=gpu_board.get('gmu_cgc_mode', '0x00020202'),
+        preempt_record_bytes=gpu_board.get('preempt_record_bytes', '0x225000'),
+        ubwc_version=gpu_board.get('ubwc_version', 4),
+        ubwc_swizzle=gpu_board.get('ubwc_swizzle', 3),
+        highest_bank_bit=gpu_board.get('highest_bank_bit', 16),
+        gpu_base=hex(windows[3]['base']), gpu_size=hex(windows[3]['bytes']),
+        gmu_base=hex(windows[0]['base']), gmu_size=hex(windows[0]['bytes']),
+        gmu_pdc_base=hex(windows[2]['base']), gmu_pdc_size=hex(windows[2]['bytes']),
+        gpucc_base=hex(ranges(dtb, gpucc)[0]['base']),
+        gcc_base=hex(ranges(dtb, gcc)[0]['base']),
+        sid_user=user_sid, sid_secure=secure_sid, sid_gmu=gmu_sid,
+    )
+
     # A732 catalog values: MCC45TR/senemos-uke-kernel-mainline patch
     # 0036-uke-adreno732-render.patch (public), which cites the inspected
     # LineageOS SM8635 modules. Preemption and IFPC stay unqualified.
     data = dict(
         format_version=1,
+        board=board,
         chip=dict(chip_id=hex(chip_id), model=model,
                   compatible=next((item for item in compatible
                                    if item.startswith('qcom,adreno')), compatible[0]),
@@ -380,18 +403,19 @@ def derive(args):
         ),
         catalog=dict(
             source='MCC45TR/senemos-uke-kernel-mainline 0036-uke-adreno732-render.patch',
-            gpu_chip_id=hex(chip_id),
-            gmu_chip_id='0x70b0000',
-            gmu_cgc_mode='0x00020202',
-            gmem_bytes='0x180000',
-            preempt_record_bytes='0x225000',
+            gpu_chip_id=board['chip_id'],
+            gmu_chip_id=board['gmu_chip_id'],
+            gmu_cgc_mode=board['gmu_cgc_mode'],
+            gmem_bytes=board['gmem_bytes'],
+            preempt_record_bytes=board['preempt_record_bytes'],
             quirks=dict(cached_coherent=True, hw_apriv=True,
                         preemption=False, ifpc=False),
             bcms=[dict(name='SH0', buswidth=16, fixed=0, perfmode=0, perfmode_kbps=0),
                   dict(name='MC0', buswidth=4, fixed=0, perfmode=0, perfmode_kbps=0),
                   dict(name='ACV', buswidth=0, fixed=1, perfmode=4, perfmode_kbps=0)],
-            ubwc=dict(enc_version=4, dec_version=4, swizzle=3, bank_spread=True,
-                      highest_bank_bit=16, macrotile=True),
+            ubwc=dict(enc_version=board['ubwc_version'], dec_version=board['ubwc_version'],
+                      swizzle=board['ubwc_swizzle'], bank_spread=True,
+                      highest_bank_bit=board['highest_bank_bit'], macrotile=True),
         ),
         registers=dict(
             source='pinned Linux 42f3b40c a6xx_gmu.c / a6xx.xml / a6xx_gmu.xml',
@@ -428,36 +452,40 @@ def load_inputs():
     return json.loads(DATA.read_text())
 
 
-def board_gpu():
+def device_gpu():
+    """The device repository's board.toml, when the derive mode runs there."""
+    path = ROOT / 'board.toml'
+    if not path.is_file():
+        return {}
     try:
         import tomllib
     except ModuleNotFoundError:
-        raise SystemExit('Python 3.11+ is required for board.toml')
-    return tomllib.loads((ROOT / 'board.toml').read_text())['gpu']
+        raise SystemExit('Python 3.11+ is required to read board.toml')
+    return tomllib.loads(path.read_text()).get('gpu', {})
 
 
-def verify_firmware(board):
+def recorded_board(data):
+    board = data.get('board')
+    if not board:
+        raise SystemExit('recorded inputs lack the board section; re-run --derive')
+    return board
+
+
+def verify_firmware(data):
     checked = {}
-    for role, key in (('sqe', 'firmware_sqe'), ('gmu', 'firmware_gmu'), ('zap', 'firmware_zap')):
-        # board.toml keys the pins by filename; the candidate list gives the
-        # first accepted name, whose pin must exist.
-        for name in board[key]:
-            entry = board['firmware_pins'].get(name) if 'firmware_pins' in board else None
-            if not entry:
-                continue
-            path = FIRMWARE / name
-            if path.is_file():
-                data = path.read_bytes()
-                if len(data) != entry['bytes'] or sha(path) != entry['sha256']:
-                    raise SystemExit('firmware %s does not match its pin' % name)
-                checked[role] = dict(name=name, bytes=len(data), sha256=entry['sha256'],
-                                     present=True)
-            else:
-                checked[role] = dict(name=name, bytes=entry['bytes'],
-                                     sha256=entry['sha256'], present=False)
-            break
+    for role in ('sqe', 'gmu', 'zap'):
+        pin = data['firmware'][role]
+        name = pin['name']
+        path = FIRMWARE / name
+        if path.is_file():
+            blob = path.read_bytes()
+            if len(blob) != pin['bytes'] or sha(path) != pin['sha256']:
+                raise SystemExit('firmware %s does not match its pin' % name)
+            checked[role] = dict(name=name, bytes=len(blob), sha256=pin['sha256'],
+                                 present=True)
         else:
-            raise SystemExit('board.toml has no pinned %s firmware name' % role)
+            checked[role] = dict(name=name, bytes=pin['bytes'], sha256=pin['sha256'],
+                                 present=False)
     return checked
 
 
@@ -466,7 +494,7 @@ def build(args):
         print('SKIP: NATIVE_ADRENO is off for this configuration')
         return
     data = load_inputs()
-    board = board_gpu()
+    board = recorded_board(data)
     checks = [
         ('chip_id', data['chip']['chip_id'], board['chip_id']),
         ('model', data['chip']['model'], board['model']),
@@ -479,11 +507,11 @@ def build(args):
     for what, recorded, target in checks:
         if what == 'model':
             if str(recorded) != str(target):
-                raise SystemExit('%s: recorded %s != board.toml %s' % (what, recorded, target))
+                raise SystemExit('%s: recorded %s != board %s' % (what, recorded, target))
             continue
         if int(str(recorded), 0) != int(str(target), 0):
-            raise SystemExit('%s: recorded %s != board.toml %s' % (what, recorded, target))
-    firmware = verify_firmware(board)
+            raise SystemExit('%s: recorded %s != board %s' % (what, recorded, target))
+    firmware = verify_firmware(data)
     gmu_pin = firmware['gmu']
     regs = data['registers']
     windows = data['dt']['windows']
