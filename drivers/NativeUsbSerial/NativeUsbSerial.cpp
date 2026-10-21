@@ -96,12 +96,12 @@ bool
 compatibleHas(const OSData *data, const char *wanted)
 {
 	const char *bytes = static_cast<const char *>(data->getBytesNoCopy());
-	const uint32_t length = data->getLength();
+	const size_t length = data->getLength();
 	const size_t wantedLength = strlen(wanted);
 	if (bytes == nullptr || wantedLength == 0 || length < wantedLength) {
 		return false;
 	}
-	for (uint32_t at = 0; at + wantedLength <= length; at++) {
+	for (size_t at = 0; at + wantedLength <= length; at++) {
 		if (memcmp(bytes + at, wanted, wantedLength) != 0) {
 			continue;
 		}
@@ -150,7 +150,6 @@ class NativeUsbSerial : public IOService {
 		kSetupOffset = 0x6000,
 		kStatusOffset = 0x7000,
 		kEp0DataOffset = 0x8000,
-		kEp1DataOffset = 0x9000,
 		kEp2DataOffset = 0xa000,
 		kEp3DataOffset = 0xb000,
 		kTrbEntries = 256,
@@ -800,7 +799,7 @@ NativeUsbSerial::handleSetup(const uint8_t *setup)
 	const uint16_t value = le16(setup + 2);
 	const uint16_t index = le16(setup + 4);
 	const uint16_t length = le16(setup + 6);
-	const uint8_t type = requestType & 0x60U;
+	const uint8_t type = static_cast<uint8_t>(requestType & 0x60U);
 	const bool directionIn = (requestType & 0x80U) != 0;
 
 	if (type == 0x00U) {
@@ -811,7 +810,7 @@ NativeUsbSerial::handleSetup(const uint8_t *setup)
 			switch (value >> 8) {
 			case 1:
 				data = fDescriptors.device;
-				dataLength = sizeof(fDescriptors.device);
+				dataLength = static_cast<uint32_t>(sizeof(fDescriptors.device));
 				break;
 			case 2:
 				data = fDescriptors.config;
@@ -873,7 +872,7 @@ NativeUsbSerial::handleSetup(const uint8_t *setup)
 			ep0Status(true);
 			return;
 		case 0x08: { // GET_CONFIGURATION
-			uint8_t configured = fConfigured ? 1 : 0;
+			uint8_t configured = static_cast<uint8_t>(fConfigured ? 1 : 0);
 			ep0DataIn(&configured, 1);
 			return;
 		}
@@ -1139,7 +1138,8 @@ NativeUsbSerial::pumpMsgbuf(void)
 	uint8_t buffer[kLogChunk];
 	bsd_log_lock_safe();
 	uint32_t length = fLogCursor.take(message->msg_bufc,
-	    static_cast<uint32_t>(message->msg_bufx), buffer, sizeof(buffer));
+	    static_cast<uint32_t>(message->msg_bufx), buffer,
+	    static_cast<uint32_t>(sizeof(buffer)));
 	bsd_log_unlock();
 	if (length == 0 || fLock == nullptr) {
 		return;
