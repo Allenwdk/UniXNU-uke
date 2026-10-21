@@ -2,10 +2,14 @@
 """Bind an owned concrete backend to the unchanged original Legacy lifecycle."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
 import sys
+if os.environ.get('XNU_NATIVE_LEGACY_DISPLAY', '0') != '1':
+    print('NativeLegacyDisplay: skipped (CONFIG_XNU_NATIVE_LEGACY_DISPLAY is not set)')
+    raise SystemExit(0)
 ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'build/native-legacy-display';OUT.mkdir(parents=True,exist_ok=True)
 sys.path.insert(0,str(ROOT/'kits/NativePrelink'))
 from native_prelink import macho,backed_offset,exports
