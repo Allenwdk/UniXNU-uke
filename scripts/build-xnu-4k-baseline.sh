@@ -107,6 +107,11 @@ if not stamp.exists() or stamp.read_text() != identity:
     out.mkdir(parents=True, exist_ok=True)
     stamp.write_text(identity)
 PY
+BOOT_LOG=${XNU_BOOT_LOG:-0}
+if [ "$BOOT_LOG" != 0 ] && [ "$BOOT_LOG" != 1 ]; then
+  echo 'XNU_BOOT_LOG must be 0 or 1' >&2
+  exit 1
+fi
 if [ ! -d refer/libplatform/.git ]; then
   git clone --depth 1 --branch "$LIBPLATFORM_TAG" https://github.com/apple-oss-distributions/libplatform.git refer/libplatform
 fi
@@ -749,6 +754,15 @@ PY_BINDINGS
   if [ "$BOOT_PROGRESS" = 1 ]; then
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ROOT/build/boot-progress/libBootProgress.a"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ROOT/build/boot-progress/libBootProgress.a"
+  fi
+  # The archive builders run after the bootstrap pass, so the writer archive is
+  # absent while the bootstrap links and present for the real kernel link.
+  if [ "$BOOT_LOG" = 1 ]; then
+    LAST_LOG_ARCHIVE=$ROOT/build/uke-last-log/libUkeLastLog.a
+    if [ -f "$LAST_LOG_ARCHIVE" ]; then
+      KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$LAST_LOG_ARCHIVE"
+      KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $LAST_LOG_ARCHIVE"
+    fi
   fi
   KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES ${XNU_EXTRA_LD_ARCHIVES:-}"
   EXTRA_MAKE_ARGS+=("LD_KERNEL_ARCHIVES=$KERNEL_EXTRA_ARCHIVES")

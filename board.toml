@@ -53,6 +53,7 @@ archives = [
   "build-sheng-platform-power.py",
   "build-libpthread-kernel.py",
   "build-native-legacy-display.py",
+  "build-boot-log.py",
 ]
 
 # Adreno 732 (uke) board values for the native GPU driver. The driver currently
