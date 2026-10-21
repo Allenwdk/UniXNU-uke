@@ -131,7 +131,7 @@ subprocess.run(['xcrun', 'clang++', '-std=c++23', *host_flags, '-I', includes,
                 kit / 'tests/test_timer.cpp', '-o', timer_test], check=True, timeout=60)
 timer_host = subprocess.run([timer_test], check=True, capture_output=True, text=True, timeout=60)
 print(timer_host.stdout, end='')
-if '1 derived-offset check, 2 stable reads, 1 rollover retry, 1 I/O failure and 1 bounded torn-loop timeout' not in timer_host.stdout:
+if '2 derived-offset checks, 2 stable reads, 1 rollover retry, 1 I/O failure and 1 bounded torn-loop timeout' not in timer_host.stdout:
     raise SystemExit('Actual native timestamp coverage absent')
 (out / 'timer-host.log').write_text(timer_host.stdout)
 
@@ -172,9 +172,20 @@ subprocess.run(['xcrun', 'clang++', '-std=c++23', *host_flags, '-I', includes,
                 kit / 'tests/test_board.cpp', '-o', board_test], check=True, timeout=60)
 board_host = subprocess.run([board_test], check=True, capture_output=True, text=True, timeout=60)
 print(board_host.stdout, end='')
-if '2 real SM8550 reg sets, 2 alternate cell formats, the real GPU iommu specifiers and 19 malformed/limit refusals' not in board_host.stdout:
+if '2 real SM8550 reg sets, 2 alternate cell formats, the real GPU iommu specifiers, 4 SM7675 reg-name lookups and 19 malformed/limit refusals' not in board_host.stdout:
     raise SystemExit('Actual device-tree parsing coverage absent')
 (out / 'board-host.log').write_text(board_host.stdout)
+
+# Per-chip immutable profile and both GMU counter offsets.
+profile_test = out / 'test-profile'
+subprocess.run(['xcrun', 'clang++', '-std=c++23', *host_flags, '-I', includes,
+                '-I', kit / 'tests', '-I', kit, kit / 'NativeAdrenoProfile.cpp',
+                kit / 'tests/test_profile.cpp', '-o', profile_test], check=True, timeout=60)
+profile_host = subprocess.run([profile_test], check=True, capture_output=True, text=True, timeout=60)
+print(profile_host.stdout, end='')
+if 'A740 and A732 exact profiles, both GMU counter offsets and 6 unknown/limit refusals' not in profile_host.stdout:
+    raise SystemExit('Actual chip-profile coverage absent')
+(out / 'profile-host.log').write_text(profile_host.stdout)
 
 # Kernel-grade SHA-256 and firmware validation against the pinned blob.
 firmware_path = ROOT / '.cache/firmware/sheng-gpu/qcom/gmu_gen70200.bin'
@@ -412,12 +423,19 @@ mmio_offset = int(gmu_base.group(1), 16) - int(gpu_base.group(1), 16)
 expected_low = (int(low.group(1), 16) << 2) - mmio_offset
 expected_high = (int(high.group(1), 16) << 2) - mmio_offset
 timer_source = (kit / 'NativeAdrenoTimer.cpp').read_text()
+profile_source = (kit / 'NativeAdrenoProfile.cpp').read_text()
 if expected_low != 0x14220 or expected_high != 0x14224:
     raise SystemExit('Pinned GMU counter derivation differs')
-if not re.search(r'TimerGmuLow = 0x%x' % expected_low, timer_source) or \
-    not re.search(r'TimerGmuHigh = 0x%x' % expected_high, timer_source) or \
+if not re.search(r'TimerGmuDefault = 0x%x' % expected_low, timer_source) or \
+    not re.search(r'timerGmuLowOffset', timer_source) or \
     int(cp_counter.group(1), 16) != 0x0980:
     raise SystemExit('Timestamp source constants differ from pinned inputs')
+# The uke profile must select SM7675's 0x68000 delta and 0x16220 counter.
+if not re.search(r'gmu_gpu_delta\*/0x68000u', profile_source) or \
+    not re.search(r'chip_id\*/0x43030b00u', profile_source):
+    raise SystemExit('A732 timer/window delta absent from the profile')
+if (0x1f888 << 2) - 0x68000 != 0x16220:
+    raise SystemExit('A732 GMU counter derivation differs')
 
 # Real interrupt decode over the same software register peer.
 irq_test = out / 'test-irq'
@@ -671,6 +689,8 @@ report = dict(
               kit / 'NativeAdrenoStatus.h', kit / 'NativeAdrenoGpu.h',
               kit / 'NativeAdrenoClient.h', kit / 'tests/test_client.cpp',
               kit / 'NativeAdrenoBoard.h', kit / 'tests/test_board.cpp',
+              kit / 'NativeAdrenoProfile.h', kit / 'NativeAdrenoProfile.cpp',
+              kit / 'tests/test_profile.cpp',
               kit / 'NativeAdrenoService.cpp', kit / 'NativeAdrenoGmuService.cpp',
               kit / 'NativeAdrenoSmmuService.cpp',
               kit / 'NativeAdrenoSha256.h', kit / 'NativeAdrenoFirmware.h',

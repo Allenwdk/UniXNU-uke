@@ -22,11 +22,16 @@ static int rd(void *c, unsigned w, uint32_t o, uint32_t *out) {
     m->reads[w]++;
     uint32_t v = 0;
     switch (w) {
-    case GPB_WIN_GCC_GPU: v = o == 0x004 ? m->ahb : o == 0x010 ? m->memnoc : o == 0x018 ? m->dvm : 0xdead0001; break;
+    case GPB_WIN_GCC_GPU:
+        v = o == GPB_GCC_GPU_CFG_AHB ? m->ahb : o == GPB_GCC_GPU_SNOC_DVM_GFX ? m->dvm : 0xdead0001;
+        break;
     case GPB_WIN_GCC_VOTE: v = m->vote; break;
     case GPB_WIN_GPUCC:
         if (!(m->ahb & GPB_CBCR_ENABLE)) m->violations++;       // GPUCC read with the AHB branch not enabled
-        v = o == 0x953c ? m->hwctrl : o == 0x9108 ? m->cx : o == 0x905c ? m->gx : o == 0x911c ? m->ccahb : o == 0x7000 ? m->ccsmmu : o == 0x913c ? m->ccgmu : 0xdead0002; break;
+        v = o == GPB_CC_CX_GDS_HW_CTRL ? m->hwctrl : o == GPB_CC_CX_GDSCR ? m->cx :
+            o == GPB_CC_GX_GDSCR ? m->gx : o == GPB_CC_AHB_CLK ? m->ccahb :
+            o == GPB_CC_SMMU_VOTE_CLK ? m->ccsmmu : o == GPB_CC_CX_GMU_CLK ? m->ccgmu : 0xdead0002;
+        break;
     case GPB_WIN_SMMU:
         if (m->deny_smmu) m->violations++;
         v = o == 0 ? m->scr0 : o == 0x20 ? m->id0 : o == 0x24 ? m->id1 : o == 0x28 ? m->id2 : o == 0x48 ? m->gfsr :
@@ -43,17 +48,18 @@ static int wr(void *c, unsigned w, uint32_t o, uint32_t v) {
     if (m->fail_write) return -1;
     if (w == GPB_WIN_GPUCC) {
         m->cc_writes++;
-        if (o == 0x9108) {
+        if (o == GPB_CC_CX_GDSCR) {
             m->cx = v;
             if (!(v & 1) && !m->stuck_cx) {m->hwctrl = 0x80000000u; m->cx |= 0x80000000u;}
-        } else if (o == 0x911c) m->ccahb = v;
-        else if (o == 0x7000) m->ccsmmu = v & ~GPB_CBCR_CLK_OFF;
+        } else if (o == GPB_CC_AHB_CLK) m->ccahb = v;
+        else if (o == GPB_CC_SMMU_VOTE_CLK) m->ccsmmu = v & ~GPB_CBCR_CLK_OFF;
         else {m->violations++; return -1;}
         return 0;
     }
     if (w != GPB_WIN_GCC_GPU || o != GPB_GCC_GPU_CFG_AHB) {m->violations++; return -1;}
     m->writes++;
     m->ahb = v & ~GPB_CBCR_CLK_OFF;                  // the branch starts once enabled
+    m->memnoc = m->ahb;
     return 0;
 }
 #define CHECK(c) do { if (!(c)) {fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); exit(1);} } while (0)
@@ -100,7 +106,7 @@ static void clk_base(struct clk_model *m) {
     m->cc[GPB_CC_PLL1 / 4] = 0x100;                 // int-011: MODE 0x100, OPMODE 0, L 0
     m->cc[GPB_CC_GMU_RCGR / 4] = 0; m->cc[GPB_CC_HUB_RCGR / 4] = 0;   // root on, XO
     m->cc[GPB_CC_CX_GMU_CLK / 4] = 1; m->cc[GPB_CC_CXO_CLK / 4] = 1; m->cc[GPB_CC_HUB_CX_INT_CLK / 4] = 1;
-    m->cc[GPB_CC_DEMET_CLK / 4] = 1; m->cc[GPB_CC_AHB_CLK / 4] = 1; m->gcc[GPB_GCC_DDRSS_GPU_AXI / 4] = 1;
+    m->cc[GPB_CC_AHB_CLK / 4] = 1; m->gcc[GPB_GCC_DDRSS_GPU_AXI / 4] = 1;
     m->gcc[GPB_GCC_GPU_MEMNOC_GFX / 4] = 0x80000001u;
 }
 static void clk_tests(void) {
@@ -118,7 +124,7 @@ static void clk_tests(void) {
     CHECK((m.cc[GPB_CC_PLL1 / 4] & (GPB_PLL_OUTCTRL | GPB_PLL_RESET_N)) == (GPB_PLL_OUTCTRL | GPB_PLL_RESET_N));
     CHECK((m.cc[(GPB_CC_PLL1 + GPB_PLL_USER_CTL) / 4] & 7) == 7 && m.cc[(GPB_CC_PLL1 + GPB_PLL_OPMODE) / 4] == 1);
     CHECK((o.hub_cfg & 0x7ff) == 0x505 && (o.gmu_cfg & 0x7ff) == 0x303);
-    CHECK(!(m.cc[GPB_CC_GMU_RCGR / 4] & (GPB_RCG_ROOT_EN | GPB_RCG_UPDATE)) && (m.cc[GPB_CC_CXO_AON_CLK / 4] & 1));
+    CHECK(!(m.cc[GPB_CC_GMU_RCGR / 4] & (GPB_RCG_ROOT_EN | GPB_RCG_UPDATE)) && (m.cc[GPB_CC_CXO_CLK / 4] & 1));
     // no lock: stops at step 3, no RCG touched, GMU RCG still on XO
     clk_base(&m); m.no_lock = 1;
     gpb_read_gmu_clocks(&io, &r, &k); gpb_gmu_clocks_on(&io, &r, &k, &o);
@@ -221,7 +227,7 @@ int main(void) {
       gpb_run(&io, 3, ALL, &r);
       unsigned writes = m.cc_writes + m.writes, before = m.reads[GPB_WIN_GPUCC];
       gpb_read_gmu_clocks(&io, &r, &k);
-      CHECK(k.done && m.cc_writes + m.writes == writes && m.reads[GPB_WIN_GPUCC] == before + 12 && !m.violations);
+      CHECK(k.done && m.cc_writes + m.writes == writes && m.reads[GPB_WIN_GPUCC] == before + 11 && !m.violations);
       CHECK(k.cx_gmu == GPB_CBCR_CLK_OFF && gpb_branch_digit(k.cx_gmu) == 2 && k.axi == 0xdead0001u && k.gpll0_vote == 1u << 15);
       CHECK(!gpb_gmu_regs_readable(&r, &k));
       k.cx_gmu = 1; r.cc_ahb = 1;

@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Allenwdk/UniXNU
-          ref: uke
+          ref: uke-gpu
           path: UniXNU
           submodules: recursive
 
@@ -64,6 +64,16 @@ jobs:
           for script in scripts/*.sh; do bash -n "$script"; done
           find scripts -name '*.py' -print0 | xargs -0 python3 -m py_compile
           echo 'ok shell and python syntax'
+
+      - name: Check the Adreno 732 profile and generated headers
+        working-directory: UniXNU-uke
+        # Host-only: the profile test compiles against the checked-out
+        # NativeAdreno sources, and prepare-uke-gmu.py assembles the headers
+        # from the recorded live-DT facts. No firmware or device is needed.
+        run: |
+          python3 scripts/check-uke-gpu.py
+          python3 scripts/check-uke-gpu-host.py --kit ../UniXNU/drivers/NativeAdreno
+          python3 scripts/check-gpu-power-host.py
 
       - name: Apply the XNU patch set to a clean tree
         working-directory: UniXNU-uke

@@ -52,14 +52,19 @@ archives = [
   "build-mockfs-fixture.py",
   "build-sheng-platform-power.py",
   "build-libpthread-kernel.py",
+  "prepare-uke-gmu.py",
+  "build-arm-driver.py NativeAdreno",
+  "build-native-adreno-kits.py",
   "build-native-legacy-display.py",
   "build-boot-log.py",
 ]
 
-# Adreno 732 (uke) board values for the native GPU driver. The driver currently
-# knows the Adreno 740; these are the values a port needs, taken from the live
-# uke DT. scripts/check-uke-gpu.py compares them with a device DT dump and
-# reports the firmware files the vendor partition must supply.
+# Adreno 732 (uke) board values for the native GPU driver. The driver carries
+# an A740 and an A732 profile; scripts/check-uke-gpu.py compares these values
+# with a device DT dump, and scripts/prepare-uke-gmu.py turns the recorded DT
+# facts into the headers NativeAdreno consumes. The catalog values are from
+# MCC45TR/senemos-uke-kernel-mainline patch 0036 (public A732 entry), not a
+# device run.
 [gpu]
 model = "Adreno732"
 chip_id = "0x43030b00"
@@ -71,15 +76,23 @@ gmu_base = "0x3d68000"
 gmu_size = "0x37000"
 gmu_pdc_base = "0xb280000"
 gmu_pdc_size = "0x10000"
+gpucc_base = "0x3d90000"          # qcom,cliffs-gpucc
+gpucc_size = "0xa000"
+gcc_base = "0x100000"             # qcom,cliffs-gcc
 smmu_base = "0x3da0000"
 smmu_size = "0x40000"
 sid_user = 0x00
 sid_secure = 0x02
 sid_gmu = 0x05
-gmem_bytes = "0x180000"          # 1.5 MiB, the 0x43030c00 sibling's catalog entry
-gmu_chip_id = "0x70f0000"
-gmu_cgc_mode = "0x00020222"
-preempt_record_bytes = "0x418000"  # 4192 KiB
+gmem_bytes = "0x180000"           # 1.5 MiB
+gmu_chip_id = "0x70b0000"         # a6xx_info.gmu_chipid for 0x43030b00
+gmu_cgc_mode = "0x00020202"
+preempt_record_bytes = "0x225000"  # 2196 KiB
+ubwc_version = 4
+ubwc_swizzle = 3                  # levels 2 and 3
+highest_bank_bit = 16
+gmu_core_clock_hz = 220000000     # GMU core clock target for the A732
+gmu_hub_clock_hz = 200000000
 # Collected from the rooted device on 2026-10-21. The firmware is gen71100
 # (matching compatible qcom,adreno-gpu-gen7-11-0), not the gen71500 sibling.
 frequencies_mhz = [950, 900, 835, 736, 684, 633, 500, 353, 255]

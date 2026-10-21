@@ -43,7 +43,8 @@ args = parser.parse_args()
 board = tomllib.loads((ROOT / 'board.toml').read_text())['gpu']
 report = dict(model=board['model'], chip_id=board['chip_id'], compatible=board['compatible'],
               family=board['family'], dt_checked=False, firmware_checked=False,
-              firmware=dict(sqe=None, gmu=None, zap=None), missing=[], nativeno=False)
+              inputs_checked=False, firmware=dict(sqe=None, gmu=None, zap=None),
+              missing=[], errors=[], nativeno=False)
 errors = []
 
 
@@ -95,11 +96,61 @@ if args.firmware_dir:
                              sha256=hashlib.sha256(path.read_bytes()).hexdigest())
                 break
         report['firmware'][role] = found
+        if found:
+            pin = board['firmware_pins'].get(found['name'])
+            if not pin:
+                errors.append(f'{role} firmware {found["name"]} has no pin')
+            elif pin['bytes'] != found['bytes'] or pin['sha256'] != found['sha256']:
+                errors.append(f'{role} firmware {found["name"]} does not match its pin')
         if not found:
             report['missing'].append(role)
     report['firmware_checked'] = not report['missing']
 
-report['driver_state'] = 'Adreno 740 constants; A732 port pending firmware and power values'
+# The recorded live-DT facts and the A732 catalog are the inputs the build
+# turns into headers. Keep board.toml and that record from drifting apart.
+inputs_path = ROOT / 'scripts/data/uke-gpu-inputs.json'
+if inputs_path.is_file():
+    inputs = json.loads(inputs_path.read_text())
+    expect(int(inputs['chip']['chip_id'], 0), int(board['chip_id'], 0), 'recorded chip_id')
+    expect(inputs['chip']['model'], board['model'], 'recorded model')
+    expect(inputs['catalog']['gmem_bytes'], board['gmem_bytes'], 'recorded GMEM')
+    expect(inputs['catalog']['gmu_chip_id'], board['gmu_chip_id'], 'recorded GMU chip id')
+    expect(inputs['catalog']['gmu_cgc_mode'], board['gmu_cgc_mode'], 'recorded GMU CGC mode')
+    expect(inputs['catalog']['preempt_record_bytes'], board['preempt_record_bytes'],
+           'recorded preemption record')
+    windows = {entry['name']: entry for entry in inputs['dt']['windows']}
+    for name, base_key, size_key in (
+            ('kgsl_3d0_reg_memory', 'gpu_base', 'gpu_size'),
+            ('gmu', 'gmu_base', 'gmu_size'),
+            ('gmu_pdc', 'gmu_pdc_base', 'gmu_pdc_size'),
+            ('rscc', None, None), ('cx_misc', None, None)):
+        if name not in windows:
+            errors.append(f'recorded windows lack {name}')
+            continue
+        if base_key:
+            expect(windows[name]['base'], int(board[base_key], 0), f'recorded {name} base')
+            expect(windows[name]['bytes'], int(board[size_key], 0), f'recorded {name} size')
+    streams = inputs['dt']['streams']
+    expect(streams['user'], board['sid_user'], 'recorded user SID')
+    expect(streams['secure'], board['sid_secure'], 'recorded secure SID')
+    expect(streams['gmu'], board['sid_gmu'], 'recorded GMU SID')
+    if len(inputs['registers']['rsc_setup']) != 19:
+        errors.append('recorded RSC/PDC sequence is not 19 writes')
+    if int(inputs['registers']['core_gpu_delta']) != int(board['gmu_base'], 0) - int(board['gpu_base'], 0):
+        errors.append('recorded GMU/GPU delta differs from board.toml')
+    for role in ('sqe', 'gmu', 'zap'):
+        pin = inputs['firmware'][role]
+        names = board[f'firmware_{role}']
+        if pin['name'] not in names:
+            errors.append(f'{role} firmware name is not a board.toml candidate')
+        elif board['firmware_pins'].get(pin['name'], {}).get('sha256') != pin['sha256']:
+            errors.append(f'{role} firmware pin differs from board.toml')
+    report['inputs_checked'] = not any(error.startswith('recorded') or
+                                       error.endswith('sequence is not 19 writes') or
+                                       'pin differs' in error for error in errors)
+
+report['driver_state'] = ('NativeAdreno A732 profile, reg-name window selection and generated '
+                          'GMU/vote headers; on-device GMU/CP/SMMU bring-up pending')
 report['errors'] = errors
 if args.json:
     args.json.parent.mkdir(parents=True, exist_ok=True)
@@ -112,8 +163,9 @@ if args.firmware_dir:
     for role in ('sqe', 'gmu', 'zap'):
         item = report['firmware'][role]
         print(f'firmware {role}: ' + ('missing' if not item else f'{item["name"]} {item["bytes"]} B {item["sha256"]}'))
+print('recorded inputs: ' + ('match board.toml' if report['inputs_checked'] else 'absent'))
 if errors:
     for error in errors:
         print('ERROR ' + error)
     raise SystemExit(1)
-print('Board values OK; NATIVE_ADRENO stays off until the firmware and power path is qualified')
+print('Board values and recorded A732 inputs OK; the GPU bring-up is still device-unqualified')

@@ -9,8 +9,8 @@
 #define SHENG_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-// sm8550.dtsi (pinned ianchb/sm8550-mainline 42f3b40c): clock-controller@100000 (GCC), gpucc: clock-controller@3d90000 size 0xa000,
-// adreno_smmu: iommu@3da0000 size 0x40000, gpu: gpu@3d00000 size 0x40000.
+// uke (SM7675, Cliffs): gcc@100000, gpucc@3d90000 size 0xa000, adreno SMMU@3da0000 size 0x40000,
+// gpu@3d00000 size 0x40000. The addresses match SM8550; the register layout does not.
 #define GPB_GCC_BASE 0x00100000ULL
 #define GPB_GCC_SIZE 0x1000ULL            // only the 0x71000 page and 0x52000 vote page are read, mapped separately
 #define GPB_GCC_GPU_PAGE 0x00171000ULL    // GCC_BASE + 0x71000
@@ -22,25 +22,27 @@
 #define GPB_GPU_BASE 0x03d00000ULL
 #define GPB_GPU_WINDOW 0x1000ULL          // one page is enough for RBBM_STATUS
 
-// gcc-sm8550.c: gcc_gpu_cfg_ahb_clk 0x71004 is enabled by the driver probe (qcom_branch_set_clk_en(regmap, 0x71004));
-// gcc_gpu_memnoc_gfx_clk halt/enable 0x71010 (voted); gcc_gpu_snoc_dvm_gfx_clk 0x71018; gcc_gpu_gpll0_clk_src enable 0x52000 bit 15,
-// gcc_gpu_gpll0_div_clk_src bit 16.
-// Offsets below are relative to the mapped page (0x71000 for the GPU branches, 0x52000 for the PLL vote register).
-#define GPB_GCC_GPU_CFG_AHB 0x004
+// gcc-cliffs.c: gcc_gpu_memnoc_gfx_clk 0x71010 (voted), gcc_gpu_snoc_dvm_gfx_clk 0x71018,
+// gcc_ddrss_gpu_axi_clk 0x7115c, gcc_gpu_gpll0_clk_src 0x52000 bit 15, gcc_gpu_gpll0_div_clk_src bit 16.
+// Cliffs has no gcc_gpu_cfg_ahb_clk; gpu_cc_ahb_clk (below) is the AHB branch.
+#define GPB_GCC_GPU_CFG_AHB 0x010
 #define GPB_GCC_GPU_MEMNOC_GFX 0x010
 #define GPB_GCC_GPU_SNOC_DVM_GFX 0x018
+#define GPB_GCC_DDRSS_GPU_AXI 0x15c
 #define GPB_GCC_PLL_VOTE 0x000
 #define GPB_CBCR_CLK_OFF (1u << 31)       // clk-branch.c: BRANCH_CLK_OFF; a running branch reads 0
 #define GPB_CBCR_ENABLE (1u << 0)
 
-// gpucc-sm8550.c: gpu_cc_cx_gdsc gdscr 0x9108, gpu_cc_gx_gdsc gdscr 0x905c; gpu_cc_ahb_clk 0x911c; gpu_cc_cx_gmu_clk 0x913c;
-// gpu_cc_hlos1_vote_gpu_smmu_clk 0x7000. gdsc.c: PWR_ON_MASK BIT(31), SW_COLLAPSE_MASK BIT(0).
-#define GPB_CC_CX_GDSCR 0x9108
-#define GPB_CC_GX_GDSCR 0x905c
-#define GPB_CC_AHB_CLK 0x911c
-#define GPB_CC_CX_GMU_CLK 0x913c
+// gpucc-cliffs.c plus the A732 gdsc patch: gpu_cc_cx_gdsc 0x908c / gds_hw_ctrl 0x90a0,
+// gpu_cc_gx_gdsc 0x9034 / clamp_io 0x9504; gpu_cc_ahb_clk 0x90c8, gpu_cc_cx_gmu_clk 0x90e4,
+// gpu_cc_cxo_clk 0x90f0, gpu_cc_hub_cx_int_clk 0x90f4, gpu_cc_hlos1_vote_gpu_smmu_clk 0x7000.
+// gdsc.c: PWR_ON_MASK BIT(31), SW_COLLAPSE_MASK BIT(0).
+#define GPB_CC_CX_GDSCR 0x908c
+#define GPB_CC_GX_GDSCR 0x9034
+#define GPB_CC_AHB_CLK 0x90c8
+#define GPB_CC_CX_GMU_CLK 0x90e4
 #define GPB_CC_SMMU_VOTE_CLK 0x7000
-#define GPB_CC_CX_GDS_HW_CTRL 0x953c      // gpu_cc_cx_gdsc.gds_hw_ctrl: with it set, gdsc.c polls PWR_ON here (VOTABLE)
+#define GPB_CC_CX_GDS_HW_CTRL 0x90a0      // gpu_cc_cx_gdsc.gds_hw_ctrl: with it set, gdsc.c polls PWR_ON here (VOTABLE)
 #define GPB_GDSC_RETAIN_MEM (1u << 14)    // gdsc.c RETAIN_MEM / RETAIN_PERIPH, set by gdsc_force_mem_on; RETAIN_FF_ENABLE bit 11
 #define GPB_GDSC_RETAIN_PERIPH (1u << 13)
 #define GPB_GDSC_RETAIN_FF (1u << 11)
@@ -160,7 +162,7 @@ static inline void gpb_run(const struct gpb_io *io, unsigned mode, unsigned have
         }
         if (bad) r->io_error = 1;
         if (r->powered_cx) {
-            // gpu_cc_ahb_clk (enable 0x911c bit 0, halt-delay) and gpu_cc_hlos1_vote_gpu_smmu_clk (0x7000 bit 0, voted), as the
+            // gpu_cc_ahb_clk (enable 0x90c8 bit 0, halt-delay) and gpu_cc_hlos1_vote_gpu_smmu_clk (0x7000 bit 0, voted), as the
             // adreno_smmu DT node lists them; then wait for the voted branch's CLK_OFF to clear.
             uint32_t a = 0, c = 0;
             gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_AHB_CLK, &a);
@@ -216,22 +218,20 @@ static inline void gpb_run(const struct gpb_io *io, unsigned mode, unsigned have
 }
 
 // Mode 5: read-only snapshot of the clocks a6xx_gmu_resume needs before a GMU cold start (DT gmu clocks ahb, gmu, cxo, axi,
-// memnoc, hub, demet) and of their sources. Linux sets gmu_clk_src to 200 MHz (the table rounds to 220 MHz = GPU_CC_PLL1 / 2,
-// parent_map_1 sel 3) and hub_clk_src to 200 MHz (GPLL0 / 3, sel 5); gpucc probe configures PLL1 (L 0x16, alpha 0xeaaa) and
-// enables CXO_AON 0x9004 / DEMET 0x900c. Offsets: gpucc-sm8550.c and clk-alpha-pll.c (LUCID_OLE) at the pinned 42f3b40c.
+// memnoc, hub) and of their sources. Cliffs sets gmu_clk_src to 220 MHz (GPU_CC_PLL1 / 2, parent_map_1 sel 3) and hub_clk_src
+// to 200 MHz (GPLL0 / 3, sel 5); the gpucc probe configures PLL1 (L 0x16, alpha 0xeaaa). Offsets: gpucc-cliffs.c and
+// clk-alpha-pll.c (LUCID_OLE).
 #define GPB_CC_PLL1 0x1000                // gpu_cc_pll1.offset; MODE +0, OPMODE +4, L_VAL +0x10, USER_CTL +0x18
 #define GPB_PLL_MODE 0x0
 #define GPB_PLL_OPMODE 0x4
 #define GPB_PLL_L_VAL 0x10
 #define GPB_PLL_USER_CTL 0x18
 #define GPB_PLL_LOCK_DET (1u << 31)       // clk-alpha-pll.c PLL_LOCK_DET
-#define GPB_CC_GMU_RCGR 0x9318            // gpu_cc_gmu_clk_src cmd_rcgr; CFG at +4 (clk-rcg2.c: SRC_DIV 4:0, SRC_SEL 10:8)
-#define GPB_CC_HUB_RCGR 0x93ec            // gpu_cc_hub_clk_src
+#define GPB_CC_GMU_RCGR 0x9168            // gpu_cc_gmu_clk_src cmd_rcgr; CFG at +4 (clk-rcg2.c: SRC_DIV 4:0, SRC_SEL 10:8)
+#define GPB_CC_HUB_RCGR 0x919c            // gpu_cc_hub_clk_src
 #define GPB_RCG_ROOT_OFF (1u << 31)       // clk-rcg2.c CMD_ROOT_OFF
-#define GPB_CC_CXO_CLK 0x9144
-#define GPB_CC_HUB_CX_INT_CLK 0x9148
-#define GPB_CC_DEMET_CLK 0x900c
-#define GPB_GCC_DDRSS_GPU_AXI 0x154       // gcc-sm8550.c gcc_ddrss_gpu_axi_clk 0x71154, in the 0x71000 page
+#define GPB_CC_CXO_CLK 0x90f0
+#define GPB_CC_HUB_CX_INT_CLK 0x90f4
 
 struct gpb_gmu_clocks {
     uint32_t pll1_mode, pll1_opmode, pll1_l, pll1_user;
@@ -260,7 +260,6 @@ static inline void gpb_read_gmu_clocks(const struct gpb_io *io, struct gpb_resul
     gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_CX_GMU_CLK, &k->cx_gmu);
     gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_CXO_CLK, &k->cxo);
     gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_HUB_CX_INT_CLK, &k->hub_cx_int);
-    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_DEMET_CLK, &k->demet);
     gpb_rd(io, r, GPB_WIN_GCC_GPU, GPB_GCC_DDRSS_GPU_AXI, &k->axi);
     k->memnoc = r->memnoc;
     // Read again (int-012 showed the stale stage-1 word after the bring-up had set the votes).
@@ -275,10 +274,9 @@ static inline void gpb_read_gmu_clocks(const struct gpb_io *io, struct gpb_resul
 //   3 alpha_pll_lucid_evo_enable for PLL1 (RESET_N, OPMODE RUN, LOCK_DET within 1500 us, USER_CTL outputs, OUTCTRL)
 //   4 gpu_cc_hub_clk_src 200 MHz (GPLL0 sel 5, div 3 -> 5) and 5 gpu_cc_gmu_clk_src 220 MHz (PLL1 sel 3, div 2 -> 3), each by
 //     clk_rcg2_shared_force_enable_clear: ROOT_EN, wait ROOT_OFF clear, CFG, CMD_UPDATE until it clears (500 us), ROOT_EN off
-//   6 qcom_branch_set_clk_en for CXO_AON 0x9004 / DEMET 0x900c, then the seven DT GMU branches, waiting for cx_gmu CLK_OFF
+//   6 qcom_branch_set_clk_en for the six DT GMU branches, waiting for cx_gmu CLK_OFF
 // A PLL that already runs is not reconfigured; any timeout stops the sequence at its step.
 #define GPB_CC_PLL0 0x0000
-#define GPB_CC_CXO_AON_CLK 0x9004
 #define GPB_PLL_OUTCTRL (1u << 0)
 #define GPB_PLL_RESET_N (1u << 2)
 #define GPB_PLL_OUT_MASK 0x7u
@@ -382,8 +380,7 @@ static inline void gpb_gmu_clocks_on(const struct gpb_io *io, struct gpb_result 
     e = gpb_rcg_set(io, r, GPB_CC_GMU_RCGR, 3, 3, &o->gmu_cfg, &o->gmu_polls);
     if (e) {o->failed = e < 0 ? 2 : 1; goto out;}
     o->step = 6;
-    if (gpb_set_bit0(io, r, GPB_WIN_GPUCC, GPB_CC_CXO_AON_CLK) || gpb_set_bit0(io, r, GPB_WIN_GPUCC, GPB_CC_DEMET_CLK) ||
-        gpb_set_bit0(io, r, GPB_WIN_GPUCC, GPB_CC_AHB_CLK) || gpb_set_bit0(io, r, GPB_WIN_GPUCC, GPB_CC_CX_GMU_CLK) ||
+    if (gpb_set_bit0(io, r, GPB_WIN_GPUCC, GPB_CC_AHB_CLK) || gpb_set_bit0(io, r, GPB_WIN_GPUCC, GPB_CC_CX_GMU_CLK) ||
         gpb_set_bit0(io, r, GPB_WIN_GPUCC, GPB_CC_CXO_CLK) || gpb_set_bit0(io, r, GPB_WIN_GCC_GPU, GPB_GCC_DDRSS_GPU_AXI) ||
         gpb_set_bit0(io, r, GPB_WIN_GCC_GPU, GPB_GCC_GPU_MEMNOC_GFX) || gpb_set_bit0(io, r, GPB_WIN_GPUCC, GPB_CC_HUB_CX_INT_CLK)) goto io;
     e = 1;

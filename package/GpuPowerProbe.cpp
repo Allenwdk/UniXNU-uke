@@ -32,7 +32,7 @@
 //      (set bit 30, ack bit 31) that makes the GMU power GX. Row 5 shows the GX state before/after, and RBBM_STATUS /
 //      GBIF_HALT only when GX reports on. Nothing in the GPU register space is written.
 //   9  as 8, then, only when GX reports on, the rest of a6xx hw_init up to a7xx_cp_init, in Linux order: the GPU's own
-//      native-4K SMMU context (bank 0, SIDs 0/1 on SMR 0/1, as arm-smmu-qcom gives the GPU bank 0) with the SQE, ring,
+//      native-4K SMMU context (bank 0, SIDs 0/2 on SMR 0/1, the GPU and secure streams of the uke DT) with the SQE, ring,
 //      memptrs, power-up list and scratch buffers; the SQE copy (a740_sqe.fw minus its first dword); GBIF halt release,
 //      SECVID TSB, hwcg (a740_hwcg), QoS, UCHE, AHB, hang detect, CP protect (a730_protect), APRIV, interrupt mask; SQE
 //      base, ring, rptr shadows, SQE start; the power-up list; CP_THREAD_CONTROL + CP_ME_INIT with a timestamp fence;
@@ -41,7 +41,7 @@
 //      context, row 7 the CP result. From mode 8 on, row 4 becomes a heartbeat every two seconds once the run ends.
 //      hw_init also programs UBWC (a6xx_set_ubwc_config with the sm8550 qcom_ubwc_cfg_data). After the scratch write:
 //      the zap shader (zap_shader_load_mdt / qcom_mdt_load: PAS 13 init_image with the ELF header + hash segment,
-//      mem_setup over gpu_micro_code_mem 0x9b09a000, segment copy, auth_and_reset, all as SIP SMC calls) and, only if TZ
+//      mem_setup over gpu_microcode_region 0x9899a000, segment copy, auth_and_reset, all as SIP SMC calls) and, only if TZ
 //      accepted it, CP_SET_SECURE_MODE 0 with a fence (row 2); then the GPU interrupt line SPI 300 in the GIC
 //      distributor before and after RBBM_INT_CLEAR_CMD, and the CP always-on counter rate (row 3).
 // The result is drawn in diagnostic extension rows 4-7 (the GPU slots) so one photo carries the whole chain. It runs in a thread
@@ -98,7 +98,11 @@ extern "C" IOService *native_adreno_accelerator_allocate(void) __attribute__((we
 extern "C" unsigned native_adreno_accelerator_instance_size(void) __attribute__((weak));
 extern "C" kern_return_t OSKextLoadKextWithIdentifier(const char *);
 extern "C" kmod_info_t g_kernel_kmod_info;
-extern "C" volatile int native_gpu_addon_stage, native_gpu_addon_status, native_gpu_addon2_stage, native_gpu_addon2_status;
+/* The Metal addon reports its staging through these words. No other object in
+ * the uke kernel defines them; the GPU-only configuration keeps them at zero
+ * and the Metal rows stay quiet. */
+extern "C" volatile int native_gpu_addon_stage=0, native_gpu_addon_status=0,
+    native_gpu_addon2_stage=0, native_gpu_addon2_status=0;
 struct NativeAdrenoMetalDiagView {
     uint32_t opens, busy, bad, closes, reports, property_reads, foreign_opens, foreign_type, name_reads, calls, last_selector, last_status, ext_entries, ext_selector, ext_status, ext_in, ext_out, tunnel_calls, probes, sel_bits[8], mb_maps, mb_calls, marks_total, marks[16], chk_macf, chk_res, chk_type, type_pass_lo, type_pass_hi, attach_status, inflight, inflight_since_calls, forced_unmaps;
     char opener[3][17];
@@ -164,7 +168,7 @@ bool clockWrite(unsigned w, uint32_t off) {
     if (w == GPB_WIN_GCC_GPU) return off == GPB_GCC_DDRSS_GPU_AXI || off == GPB_GCC_GPU_MEMNOC_GFX;
     if (w != GPB_WIN_GPUCC) return false;
     return off < GPB_CC_PLL1 + 0x40 || off == GPB_CC_GMU_RCGR || off == GPB_CC_GMU_RCGR + 4 || off == GPB_CC_HUB_RCGR ||
-           off == GPB_CC_HUB_RCGR + 4 || off == GPB_CC_CXO_AON_CLK || off == GPB_CC_DEMET_CLK || off == GPB_CC_CX_GMU_CLK ||
+           off == GPB_CC_HUB_RCGR + 4 || off == GPB_CC_CX_GMU_CLK ||
            off == GPB_CC_CXO_CLK || off == GPB_CC_HUB_CX_INT_CLK;
 }
 int wr(void *, unsigned w, uint32_t off, uint32_t value) {
@@ -245,13 +249,14 @@ void gmuContext(const gpb_result &r) {
     native_gpu_power_stage = status ? 0x4f : 0x47;
 }
 
-// Mode 5 (read-only). Physical blocks from the pinned DT: gmu reg 0x3d6a000 size 0x35000, rscc 0x3d50000, cx_misc
-// 0x3d9e000 (gpu reg-names "cx_mem"); register dword offsets from a6xx_gmu.xml / a6xx.xml. The gmu block starts at dword
-// 0x1a800 of the GPU register space (SHENG_GMU_CORE_GPU_DELTA 0x6a000 bytes), so CM3_SYSRESET 0x1f800 is byte 0x14000.
+// Mode 5 (read-only). Physical blocks from the live uke DT: gmu reg 0x3d68000 size 0x37000, GPU-node rscc
+// 0x3d50000, cx_misc 0x3d9e000 (GPU reg-names "rscc"/"cx_misc"); register dword offsets from a6xx_gmu.xml /
+// a6xx.xml. The gmu block starts 0x68000 bytes after the GPU register space (SHENG_GMU_CORE_GPU_DELTA), so
+// CM3_SYSRESET 0x1f800 is byte 0x16200.
 constexpr uint64_t kCmdDbBase = 0x81c60000, kCmdDbBytes = 0x20000;
-constexpr uint64_t kGmuPhys[3] = {0x03d6a000, 0x03d50000, 0x03d9e000};
-constexpr uint64_t kGmuLen[3] = {0x35000, 0x10000, 0x1000};
-constexpr uint32_t kGmuSysReset = 0x1f800 * 4 - 0x6a000, kGmuHfiStatus = 0x1f980 * 4 - 0x6a000;
+constexpr uint64_t kGmuPhys[3] = {0x03d68000, 0x03d50000, 0x03d9e000};
+constexpr uint64_t kGmuLen[3] = {0x37000, 0x10000, 0x1000};
+constexpr uint32_t kGmuSysReset = 0x1f800 * 4 - 0x68000, kGmuHfiStatus = 0x1f980 * 4 - 0x68000;
 constexpr uint32_t kRsccSeqBusy = 0x101 * 4, kCxMiscTcmRet = 0x39 * 4;
 alignas(8) uint8_t gCmdDb[kCmdDbBytes];
 ShengGmuVoteInputs gVoteInputs;
@@ -271,11 +276,11 @@ volatile uint32_t *mapWords(uint64_t phys, uint64_t len, OSSharedPtr<IOMemoryMap
     memory->release();
     return keep ? reinterpret_cast<volatile uint32_t *>(keep->getVirtualAddress()) : nullptr;
 }
-// Mode 7. Windows in ShengGmu order (core, rscc, pdc, gpu, cx_misc): the pinned DT gmu reg-names gmu/rscc/gmu_pdc, gpu
-// reg 0x3d00000 size 0x40000 and its cx_mem 0x3d9e000; ShengGmuBindMmio refuses any other address or size.
-constexpr uint64_t kColdPhys[5] = {0x03d6a000, 0x03d50000, 0x0b280000, 0x03d00000, 0x03d9e000};
-constexpr uint64_t kColdLen[5] = {0x35000, 0x10000, 0x10000, 0x40000, 0x1000};
-constexpr uint32_t kAoIrqClr = 0x23b04 * 4 - 0x6a000, kAoIrqMask = 0x23b06 * 4 - 0x6a000;   // a6xx_gmu.xml
+// Mode 7. Windows in ShengGmu order (core, rscc, pdc, gpu, cx_misc): live uke DT gmu/gmu_pdc plus the GPU-node
+// rscc, gpu reg 0x3d00000 size 0x40000 and cx_misc 0x3d9e000; ShengGmuBindMmio refuses any other address or size.
+constexpr uint64_t kColdPhys[5] = {0x03d68000, 0x03d50000, 0x0b280000, 0x03d00000, 0x03d9e000};
+constexpr uint64_t kColdLen[5] = {0x37000, 0x10000, 0x10000, 0x40000, 0x1000};
+constexpr uint32_t kAoIrqClr = 0x23b04 * 4 - 0x68000, kAoIrqMask = 0x23b06 * 4 - 0x68000;   // a6xx_gmu.xml
 constexpr uint32_t kAoFatal = (1u << 0) | (1u << 3) | (1u << 5);   // A6XX_GMU_IRQ_MASK: WDOG_BITE, FENCE_ERR, AHB_BUS_ERROR
 OSSharedPtr<IOMemoryMap> gColdMaps[5], gPayloadMaps[5];
 ShengGmuMmio gColdMmio;
@@ -309,7 +314,7 @@ void readGmuState(uint32_t out[4]) {
     out[3] = *reinterpret_cast<volatile uint32_t *>(core + kGmuHfiStatus);
 }
 // Mode 8. GMU dword offsets from a6xx_gmu.xml; GPU dword offsets from a6xx.xml (A6XX-A7XX variants).
-constexpr uint32_t kGmuReg(uint32_t dword) {return dword * 4 - 0x6a000;}
+constexpr uint32_t kGmuReg(uint32_t dword) {return dword * 4 - 0x68000;}
 constexpr uint32_t kG2hClr = kGmuReg(0x1f991), kG2hInfo = kGmuReg(0x1f992), kG2hMask = kGmuReg(0x1f993);
 constexpr uint32_t kH2gSet = kGmuReg(0x1f994), kGxStatus = kGmuReg(0x1f8d0);   // GMU_SPTPRAC_PWR_CLK_STATUS (A7XX)
 constexpr uint32_t kRbbmStatus = 0x0210 * 4, kGbifHalt = 0x3c45 * 4;
@@ -364,9 +369,9 @@ void gpuCtxProgress(uint32_t step) {
 }
 // Context bank 0 ACTLR (MMU-500: bit 0 CMTLB, bit 1 CPRE, bits 9:8 prefetch depth) and sACR. The bootloader leaves ACTLR 0x3 (CPRE on,
 // depth 0). Linux clears CPRE in every bank (arm_mmu500_reset, MMU-500 errata 841119/826419: the next-page prefetcher can keep stale
-// translations after a TLB invalidation), and the Linux reference session on this tablet read the Adreno bank as 0x301 (CMTLB |
-// PREFETCH_DEEP, CPRE off) with Linux's own driver running. The GPU bank is set to that value before any GPU buffer is mapped, then
-// its TLB is invalidated (TLBIALL +0x618, TLBSYNC +0x7f0, TLBSTATUS +0x7f4). gActlr keeps the value found, gActlrSet the readback.
+// translations after a TLB invalidation). The A732 SMMU graph in the public 0036 patch uses 0x32b (CMTLB | CPRE | PRR | CMTLB/prefetch
+// bits) for the GPU and GMU streams; keep that value before any GPU buffer is mapped, then invalidate its TLB (TLBIALL +0x618, TLBSYNC
+// +0x7f0, TLBSTATUS +0x7f4). gActlr keeps the value found, gActlrSet the readback.
 uint32_t gActlr = 0xdead, gActlrSet = 0xdead, gSacr = 0xdead;
 void gpuSetActlr() {
     const uint32_t id1 = native_gpu_context.id1;
@@ -376,7 +381,7 @@ void gpuSetActlr() {
     volatile uint32_t *base = reinterpret_cast<volatile uint32_t *>(gSmmuMap->getVirtualAddress());
     gActlr = base[(bank0 + 0x4) / 4];
     gSacr = base[0x10 / 4];
-    base[(bank0 + 0x4) / 4] = 0x301;
+    base[(bank0 + 0x4) / 4] = 0x32b;
     __asm__ volatile("dsb sy" ::: "memory");
     base[(bank0 + 0x618) / 4] = 0;
     base[(bank0 + 0x7f0) / 4] = 0;
@@ -464,7 +469,7 @@ ScmRes scmCall(uint64_t fn, uint64_t arginfo, uint64_t p0, uint64_t p1, uint64_t
 // ARM_SMCCC_CALL_VAL(STD, SMC_64, OWNER_SIP, svc << 8 | cmd).
 constexpr uint64_t kScmPil(uint32_t cmd) {return 0x42000000u | (0x02u << 8) | cmd;}
 constexpr uint32_t kGpuPasId = 13;                                     // a6xx_gpu.h GPU_PAS_ID
-constexpr uint64_t kZapPhys = 0x9b09a000, kZapBytes = 0x2000;          // sm8550.dtsi gpu_micro_code_mem
+constexpr uint64_t kZapPhys = 0x9899a000, kZapBytes = 0x2000;          // uke gpu_microcode_region@9899a000
 NativeAdrenoMemory gZapMetadata;
 extern "C" {
 // stage, init a0/result, mem_setup a0/result, auth a0/result, secure-mode fence result
@@ -890,11 +895,11 @@ void userClientTest() {
     setRow(6, row);
 }
 NativeAdrenoTimer gTimer;
-// Constant facts for the Vulkan driver, each from a pinned source: chip id and gmem from a6xx_catalog.c (a740, "C510v2"),
-// UBWC 4.0 / swizzle levels 2+3 / bank bit 16 / macrotile from ubwc_config.c sm8550_data, the GMEM window and trap base from the
-// values hw_init programs above. The VA window keeps clear of the kernel buffers (below 0x302000+) and the GMEM window
-// (0x1000000..0x12fffff) and ends at the 2 GiB aperture.
-const NativeAdrenoAbiDeviceInfo gDeviceInfo = {0x43050a01u, 3u << 20, 0x1000000ull, 0x1fffffffff000ull, 0x20000000ull,
+// Constant facts for the Vulkan driver, each from a pinned source: chip id and gmem from the A732 catalog entry
+// (0x43030b00, 1.5 MiB), UBWC 4.0 / swizzle levels 2+3 / bank bit 16 / macrotile from the sm7675 UBWC data, the
+// GMEM window and trap base from the values hw_init programs above. The VA window keeps clear of the kernel buffers
+// (below 0x302000+) and the GMEM window (0x1000000..0x117ffff) and ends at the 2 GiB aperture.
+const NativeAdrenoAbiDeviceInfo gDeviceInfo = {0x43030b00u, 0x180000u, 0x1000000ull, 0x1fffffffff000ull, 0x20000000ull,
                                                0x60000000ull, 16, 6, 1, 4, NativeAdrenoDeviceClientIova, 0};
 int timerRead(void *, uint32_t reg, uint32_t *value) {*value = gpuRd(reg); return 0;}
 const NativeAdrenoTimeIo gTimerIo{nullptr, timerRead};
@@ -933,7 +938,7 @@ int wrapperRound(IOService *svc, int &ok, int &n, IOReturn &err, int &errAt, uin
     step(wcall(uc, NativeAdrenoMethodQuery, nullptr, &params));
     NativeAdrenoAbiDeviceInfo info{};
     step(wcall(uc, NativeAdrenoMethodGetDeviceInfo, nullptr, &info));
-    step(info.chip_id == 0x43050a01u && info.gmem_bytes == (3u << 20) ? 0 : kIOReturnError);
+    step(info.chip_id == 0x43030b00u && info.gmem_bytes == 0x180000u ? 0 : kIOReturnError);
     NativeAdrenoAbiBoAlloc alloc{4096, 12, 0};
     NativeAdrenoAbiBoAllocReply ib{}, tgt{};
     int matched = -1;
@@ -1246,7 +1251,7 @@ void gpuStart() {
     // 1. The GPU's own context bank and buffers (arm-smmu-qcom: the GPU always gets bank 0; DT iommus SIDs 0 and 1).
     NativeAdrenoGmuContextReport &q = native_gpu_context;
     const IOReturn ctx = NativeAdrenoGpuContextBringup(reinterpret_cast<volatile uint8_t *>(gSmmuMap->getVirtualAddress()),
-        kSmmuWindow, 0, 2, 0, 0, 1, 1, gpuCtxProgress, &q);
+        kSmmuWindow, 0, 2, 0, 0, 1, 2, gpuCtxProgress, &q);
     // Q s<step> st<IOReturn> k<program>/<attach kit status> p<phase>e<enabled> r<route phase>v<verified> n<spans>
     snprintf(row, sizeof row, "Q s%u st%x k%u/%u p%ue%u r%uv%u n%u", q.step, unsigned(ctx), q.program_status, q.route_status,
              q.program_phase, q.program_enabled, q.route_phase, q.routes_verified, q.spans);
@@ -1546,7 +1551,7 @@ void gmuColdStart(const gpb_result &r) {
     d = {};
     if (ShengGmuBindMmio(&gColdMmio, &d.io)) {setRow(7, "S bind refused"); return;}
     d.services = {nullptr, coldSha256, coldNow, coldWait};
-    gColdConfig.chip_id = 0x43050a01;
+    gColdConfig.chip_id = 0x43030b00;
     gColdConfig.firmware = native_adreno_firmware_image;
     gColdConfig.firmware_bytes = static_cast<size_t>(native_adreno_firmware_image_size);
     gColdConfig.poll_budget = 200;   // ShengGmu also stops each poll at 10 ms, as gmu_poll_timeout(.., 100, 10000)
@@ -1632,7 +1637,7 @@ void gmuPrerequisites(const gpb_result &r) {
         memcpy(&magic, gCmdDb + 4, 4);
         if (ShengGmuCommandDbInputs && ShengGmuBuildStartup) {
             gVoteInputs = {};
-            gVoteInputs.chip_id = 0x43050a01;   // a6xx_catalog.c A740 chip_ids, the ID ShengGmuVotes is pinned to
+            gVoteInputs.chip_id = 0x43030b00;   // A732 catalog chip_ids, the ID ShengGmuVotes is pinned to
             parse = ShengGmuCommandDbInputs(gCmdDb, kCmdDbBytes, version, &gVoteInputs);
             if (parse == ShengGmuDbSuccess) build = ShengGmuBuildStartup(&gVoteInputs, &gStartup);
         } else parse = 8;

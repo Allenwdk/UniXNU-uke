@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-10-22
 >
-> **当前一句话状态：** AMFI launch-constraint 已解决；watchdog policy 只部分生效，后续日志仍出现 watchdogd SIGTRAP（`namespace 2 subcode 0x5`）。系统可进入 userland 并运行 `CommCenter`/`logd`/`coresymbolicationd`，但屏幕停在 Apple logo；主阻塞仍是显示/GPU 的 default FB surface（`IOMFB: default_fb_surface: No Default FB Surface found`，`display type is 0`）。下一步是 NativeMobileDisplay / Adreno 732（按用户要求暂不启动）。
+> **当前一句话状态：** AMFI launch-constraint 已解决；watchdog policy 只部分生效，后续日志仍出现 watchdogd SIGTRAP（`namespace 2 subcode 0x5`）。系统可进入 userland 并运行 `CommCenter`/`logd`/`coresymbolicationd`，但屏幕停在 Apple logo；主阻塞仍是显示/GPU 的 default FB surface（`IOMFB: default_fb_surface: No Default FB Surface found`，`display type is 0`）。Adreno 732 的**无需真机部分**已在 `uke-gpu` 分支完成：A740/A732 profile、uke 的 reg-name 窗口选择、gen71100 GMU/vote 头文件生成、`uke-gpu_defconfig` 和 Linux host 校验；实机 GMU/CP/SMMU/scanout 仍未验证。下一步是 NativeMobileDisplay / Adreno 732 实机 bring-up。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -39,6 +39,7 @@
 ### 3.1 仓库与板级配置
 
 - 设备仓库：`Allenwdk/UniXNU-uke`；UEFI：`uefi-uke`；核心：`Allenwdk/UniXNU` 的 `uke` 分支（已同步 upstream `main`）。
+- GPU 适配分支：设备仓库 `uke-gpu`、核心 `Allenwdk/UniXNU` 的 `uke-gpu`、`Allenwdk/NativeAdreno` 的 `uke-a732`（core `.gitmodules` 指向 fork）。CI 的 `ci.yml`/`build-kernel.yml` 在这条分支上 checkout 核心 `uke-gpu`。
 - `board.toml`：
   - IPSW：iPad7,1 iPadOS 17.7.11 (21H461)，kernelcache pin `f18b4df...`。
   - `[userdata]`：`first_lba = 0x2d3000`、`last_lba = 0x3b147fa`、`lba_bytes = 4096`。
@@ -46,14 +47,31 @@
   - `[payload.adt]`：`owned_memory_size = 0x10000000`（256 MiB）、`chip_id = 207`、`root_match_volume_uuid = 04769D26-2CA0-4825-B443-E2E5F88300F2`。
   - `[[bootimg.dtb_node]]`：splash `0xe3940000 + 0x2b00000`；`/chosen` initrd `0x1000000..0x6000000`（ABL 运行时会用实际地址覆盖）。
   - `[kernel] archives`：full 构建的 13 个 archive builder；只有 `CONFIG_XNU_BUILD_ARCHIVES=y` 的配置会执行。
-  - `[gpu]`：Adreno 732 的 chip id、寄存器窗口、SID、GMEM/GMU 参数和固件候选名（来自实机 DT 和 mainline catalog）。
+  - `[gpu]`：Adreno 732 的 chip id、寄存器窗口、SID、GMEM/GMU 参数、A732 catalog 值（`gmu_chip_id=0x70b0000`、CGC `0x00020202`、preemption record `0x225000`）和固件 pins。
 - `configs/`：
   - `uke_defconfig`：首控制台（corecrypto、ArmDTPlatform、ArmCpu、timer、PAN、panic region、legacy display）。
   - `uke-full_defconfig`：**可复现的 stage-6 full 配置**（corecrypto、pthread、UFS bring-up、AES recorded bindings、storage headers、mockfs、PMGR、legacy display）。
   - `uke-full-plus_defconfig`：sheng parity；保留 VirtIO/RamBlock、verified root、owner-root、BOOT_PROGRESS，等待 live audit/策略包。
   - `uke-full-minus-pmgr_defconfig`：只启用 PMGR + legacy display，用于验证 PMGR 不是 SEP 阻塞点。
+  - `uke-gpu_defconfig`：stage-6 full + `CONFIG_XNU_NATIVE_ADRENO=y`，是 A732 的可构建配置；full/userland 仍默认关闭 GPU。
   - `bootstrap_defconfig`：bootstrap/compile records + prelink candidate；不执行 board archive list。
 - 设备数据：UFS `0x1d84000`、compatible `qcom,ufshc`、stream ID `0x60`；触摸 NT36532；面板 O82 3200×2136；splash `0xe3940000`；GPU `0x43030b00` / `Adreno732`。
+
+### 3.1.1 GPU 阶段 4：Adreno 732（无需真机部分）
+
+- 分支：设备 `uke-gpu`、核心 `uke-gpu`、`NativeAdreno` fork `uke-a732`（commit `57ae482`）。
+- 驱动：`NativeAdrenoProfile` 按 `qcom,chipid` 选择 A740/A732；A732 记录 1.5 MiB GMEM、GMU chip id `0x70b0000`、CGC `0x00020202`、2196 KiB preemption record、UBWC 4.x/16/3、`gen71100` 固件名和 `0x68000` GMU/GPU delta。未知 chip id 直接拒绝。
+- 窗口：GPU 服务按 `reg-names` 选窗。uke 用 `kgsl_3d0_reg_memory`/`rscc`/`cx_misc`；sheng 用 `gpu`/`cx_mem` 和 GMU 节点的 `rscc`。GMU 五窗口按 `ShengGmu*` 顺序组装。
+- 兼容串：GMU 接受 `qcom,gen7-gmu`，SMMU 接受 `qcom,kgsl-smmu-v2`。
+- 计数器：GMU always-on counter 由实际映射基址推导；SM8550 `0x14220`，SM7675 `0x16220`。
+- 头文件：`scripts/prepare-uke-gmu.py --derive` 从 live DTB + pinned mainline 生成 `scripts/data/uke-gpu-inputs.json`（DT 窗口/OPP/带宽/stream/command DB/ZAP + A732 catalog + 19 条 RSC/PDC 写入），build 模式生成 `ShengGmuSource.h`、`ShengGmuVotesSource.h`、`ShengGmuCommandDbSource.h`。固件字节不入 Git。
+- 构建：`board.toml` archive list 增加 `prepare-uke-gmu.py`、`build-arm-driver.py NativeAdreno`、`build-native-adreno-kits.py`；后两者在 `NATIVE_ADRENO=0` 时跳过。`build-native-adreno-kits.py` 只从 `.cache/firmware/uke-gpu` 嵌入 gen71100 并核对 pins，缺文件时保留 weak 空定义，GMU 在运行时拒绝而不是链接失败。
+- 探针：`GpuPowerProbe.cpp`/`GpuPowerBoard.h` 已换成 Cliffs 偏移（CX/GX GDSCR `0x908c`/`0x9034`、AHB `0x90c8`、CX_GMU `0x90e4`、RCGR `0x9168`/`0x919c`、DDRSS AXI `0x7115c`）、A732 ACTLR `0x32b`、secure SID `2`、ZAP `0x9899a000` 和 A732 device info；在 `CONFIG_XNU_NATIVE_ADRENO=y` 时编入 legacy display archive。
+- 配置：`uke-gpu_defconfig` 可构建；full/userland 保持 GPU off。
+- host 校验（Linux）：`check-uke-gpu.py`、`check-uke-gpu-host.py`、`check-gpu-power-host.py`，已接入 `ci.yml`。
+- 仍需真机：SMMU bank/ASID/slot、GPU CX/GX rail/clock votes、AOP command DB 版本、GMU cold start、CP ring/SQE、ZAP 认证、scanout、NativeMetal/Turnip。详见 `docs/GPU-PORT.md`。
+
+
 
 ### 3.2 UEFI 固件（uefi-uke）
 
@@ -185,6 +203,12 @@
 - UFS GCC 窗口已按 uke/SM7675 改为 `0x177000`/`0x19e000`，实机读取通过。
 - payload 已带 `native-ufs-root=1` + `native-ufs-allow-unverified=1` 的 root-mode 版本（`vendor_boot_uke_root_nodata.img`）；未刷 userdata 时会停在 manifest 检查。
 - VerifiedRoot/owner-root、VirtIO/RamBlock、BOOT_PROGRESS 仍被 live audit/策略包门控，见 `uke-full-plus_defconfig`。
+
+### 4.1a 阶段 4：Adreno 732 GPU
+
+- **已完成（无需真机）**：A740/A732 profile、uke `reg-names` 窗口选择、`qcom,gen7-gmu`/`qcom,kgsl-smmu-v2` 匹配、SM7675 GMU 计数器偏移、`gen71100` 固件/OPP/BCM/command DB/RSC 头文件生成、`uke-gpu_defconfig`、Cliffs 电源探针偏移、Linux host 校验。分支见 3.1。
+- **仍缺（必须真机）**：SMMU bank/ASID/slot 的实机分配、GPU CX/GX rail/clock votes、AOP command DB 版本字、GMU cold start（RSC/PDC、firmware load/readback、HFI）、CP ring/SQE、ZAP auth/secure mode、GPU scanout、NativeMetal/Turnip。
+- 固件 `gen71100_*` 不在 Git；CI 无固件时链接 weak 空定义，GMU 在运行时拒绝。首次实机启动按 `sheng-gpu-power=1..9` 分级观察，不要直接开最高级。
 
 ### 4.2 参考实现
 
@@ -364,7 +388,13 @@ fastboot reboot
 | 2026-10-22 | watchdog policy | 新 patch `zzzzzzzz-uke-watchdog-policy.patch` + `CONFIG_XNU_WATCHDOG_POLICY=y`；`BootWatchdogPolicy.c` 编入 `libUkeLastLog.a`；内核 `7ec6670e…` / payload `b503aef5…` / vendor_boot `c55c6eb5…` |
 | 2026-10-22 | watchdog 首次生效 | 一次启动里 `watchdog` 变为 launchd SIGKILL；越过 `amfi: Exiting Early Boot`、launchd tasks、IOACPIFamily、IOHIDSystem；系统进入 userland |
 | 2026-10-22 | watchdog 复现 | 后续日志再次出现 `pid 195 ... namespace 2 subcode 0x5`（SIGTRAP）与 `coredump (watchdogd, pid 105)`；策略未完全消除 watchdog，显示仍是主阻塞；`logd`/CommCenter watermark、`MobileGestalt` unnest 为非致命噪声 |
-| 2026-10-22 | 当前阻塞 | 系统 alive（`CommCenter`/`logd`/`coresymbolicationd`/APFS tx），但 `IOMFB: default_fb_surface: No Default FB Surface found` + `display type is 0`，屏幕停在 Apple logo；下一步 NativeMobileDisplay / Adreno 732（暂不启动） |
+| 2026-10-22 | 当前阻塞 | 系统 alive（`CommCenter`/`logd`/`coresymbolicationd`/APFS tx），但 `IOMFB: default_fb_surface: No Default FB Surface found` + `display type is 0`，屏幕停在 Apple logo；下一步 NativeMobileDisplay / Adreno 732 |
+| 2026-10-22 | GPU 分支 | 新建设备 `uke-gpu`、核心 `uke-gpu`、`NativeAdreno` fork `uke-a732`（`57ae482`）；core `.gitmodules` 指向 fork |
+| 2026-10-22 | A732 profile | `NativeAdrenoProfile` 记录 A732 0x43030b00 / 1.5 MiB / gmu_chipid 0x70b0000 / CGC 0x00020202 / preempt 0x225000 / delta 0x68000；未知 chip id 拒绝 |
+| 2026-10-22 | uke 窗口 | GPU 服务按 `reg-names` 选 `kgsl_3d0_reg_memory`/`rscc`/`cx_misc`，GMU 五窗口按 ShengGmu 顺序；GMU/SMMU 兼容串接受 `qcom,gen7-gmu`/`qcom,kgsl-smmu-v2` |
+| 2026-10-22 | GMU 输入 | `prepare-uke-gmu.py --derive` 从 live DTB + pinned mainline 生成 `uke-gpu-inputs.json`（10 GPU OPPs、6 带宽、19 RSC writes、command DB/ZAP）和三个头文件 |
+| 2026-10-22 | GPU 构建 | `uke-gpu_defconfig`、archive list、固件 pin 嵌入/weak 回退、`GpuPowerProbe` 编入 legacy display（仅 NATIVE_ADRENO=1） |
+| 2026-10-22 | host 校验 | `check-uke-gpu.py`、`check-uke-gpu-host.py`、`check-gpu-power-host.py` 通过；`ci.yml` 已接入；实机未启动 |
 
 ---
 

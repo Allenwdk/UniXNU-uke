@@ -48,8 +48,9 @@ CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
 #       the base build refuses it without the audited UFS/owner-root, VirtIO
 #       and source-crypto set.
 #   NATIVE_ADRENO
-#       the driver currently knows the Adreno 740; the uke GPU is an
-#       Adreno 732 and its firmware/power values are not collected yet.
+#       configs/uke-gpu_defconfig builds the A732 driver and generated GMU
+#       headers. This userland config keeps it off until the GPU path is
+#       device-qualified.
 #
 # CONFIG_XNU_NATIVE_VIRTIO_BLOCK is not set
 CONFIG_XNU_NATIVE_RAM_BLOCK=y

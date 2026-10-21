@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Add the GMU kit and firmware planner objects to the NativeAdreno archive."""
-import json, subprocess, sys
+import hashlib, json, os, subprocess, sys, tomllib
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
+if os.environ.get('XNU_NATIVE_ADRENO', '0') != '1' and '--force' not in sys.argv[1:]:
+    print('SKIP: NATIVE_ADRENO is off for this configuration')
+    raise SystemExit(0)
+for header in ('ShengGmuSource.h', 'ShengGmuVotesSource.h', 'ShengGmuCommandDbSource.h'):
+    if not (ROOT / 'build/sheng-gmu' / header).is_file():
+        sys.exit('build/sheng-gmu/%s is missing; run prepare-uke-gmu.py first' % header)
 c_recipe = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o.json').read_text().strip().rstrip(','))
 cxx_recipe = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json').read_text().strip().rstrip(','))
 out = ROOT / 'build/native-adreno'
@@ -47,26 +53,44 @@ for source in sources:
     if result.returncode:
         sys.exit(str(source) + ':\n' + result.stderr[-2500:])
     objects.append(obj)
-# GMU and SQE firmware as strong definitions over NativeAdrenoFirmwareDefaults.cpp's weak empty ones. The bytes come
-# from the ignored local copies and must match the pins in scripts/data/adreno-inputs.json; nothing here enters Git.
-import hashlib
-pins = json.loads((ROOT / 'scripts/data/adreno-inputs.json').read_text())['firmware']['files']
-local = ROOT / '.cache/firmware/sheng-gpu'
-embedded = [('_native_adreno_firmware_image', 'qcom/gmu_gen70200.bin'),
-            ('_native_adreno_sqe_firmware_image', 'qcom/a740_sqe.fw'),
-            ('_native_adreno_zap_image', 'qcom/sm8550/sheng/a740_zap.mbn')]
+# GMU, SQE and ZAP firmware as strong definitions over NativeAdrenoFirmwareDefaults.cpp's weak empty
+# ones. The bytes come from the ignored local copies and must match the pins in board.toml; nothing
+# here enters Git. A missing file leaves the weak empty definition in place, so the GMU cold start
+# refuses at runtime instead of the whole kernel failing to link. That is the normal CI state: the
+# vendor firmware is private physical evidence.
+board = tomllib.loads((ROOT / 'board.toml').read_text())['gpu']
+pins = board['firmware_pins']
+local = ROOT / '.cache/firmware/uke-gpu'
+
+
+def pinned_name(role):
+    for name in board['firmware_' + role]:
+        if name in pins:
+            return name
+    raise SystemExit('board.toml has no pinned firmware_%s name' % role)
+
+
+embedded = [('_native_adreno_firmware_image', pinned_name('gmu')),
+            ('_native_adreno_sqe_firmware_image', pinned_name('sqe')),
+            ('_native_adreno_zap_image', pinned_name('zap'))]
 assembly = ['.section __DATA_CONST,__const']
-for label, key in embedded:
-    path = local / key
-    blob = path.read_bytes() if path.is_file() else b''
-    if len(blob) != pins[key]['bytes'] or hashlib.sha256(blob).hexdigest() != pins[key]['sha256']:
-        sys.exit('firmware %s is missing or does not match its pin' % key)
+present = 0
+for label, name in embedded:
+    path = local / name
+    if not path.is_file():
+        print('WARN: %s is absent; %s keeps its weak empty definition' % (name, label))
+        continue
+    blob = path.read_bytes()
+    if len(blob) != pins[name]['bytes'] or hashlib.sha256(blob).hexdigest() != pins[name]['sha256']:
+        sys.exit('firmware %s does not match its board.toml pin' % name)
     assembly += ['.p2align 12', '.globl ' + label, label + ':', '.incbin ' + json.dumps(str(path)), label + '_end:',
                  '.p2align 3', '.globl ' + label + '_size', label + '_size:', '.quad ' + label + '_end-' + label]
-(out / 'firmware.S').write_text('\n'.join(assembly) + '\n')
-subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Wno-incompatible-sysroot', '-c', out / 'firmware.S',
-                '-o', out / 'firmware.o'], check=True)
-objects.append(out / 'firmware.o')
+    present += 1
+if present:
+    (out / 'firmware.S').write_text('\n'.join(assembly) + '\n')
+    subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Wno-incompatible-sysroot',
+                    '-c', out / 'firmware.S', '-o', out / 'firmware.o'], check=True)
+    objects.append(out / 'firmware.o')
 archive = out / 'libNativeAdreno.a'
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *objects], check=True)
 defined = subprocess.run(['xcrun', 'nm', '-g', archive], capture_output=True, text=True).stdout

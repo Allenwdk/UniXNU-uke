@@ -7,8 +7,8 @@
 #     and the native-apfs-load-positive candidate for the storage ABI audit;
 #   - the verified OS/SystemOS policy bundles built from the iPad7,1 target
 #     volume DMGs, or the bundles built on a host that already has them;
-#   - the Adreno 732 firmware and power values before NATIVE_ADRENO can stay
-#     on for uke.
+#   - the Adreno 732 on-device GMU/CP/SMMU qualification before NATIVE_ADRENO
+#     can stay on for uke; configs/uke-gpu_defconfig is the buildable port.
 # Keep it as the checklist for the remaining stage-6/7 work.
 
 CONFIG_XNU_BUILD_ARCHIVES=y
