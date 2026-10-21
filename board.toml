@@ -49,7 +49,6 @@ archives = [
   "build-arm-driver.py NativeUfs --unverified",
   "build-ufs-original-bindings.py",
   "build-arm-driver.py NativeRamBlock",
-  "build-ufs-original-bindings.py --component NativeRamBlock",
   "build-mockfs-fixture.py",
   "build-sheng-platform-power.py",
   "build-libpthread-kernel.py",
