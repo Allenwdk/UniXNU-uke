@@ -43,8 +43,10 @@ public:
  }
  // The real normal scanout backend removes its pending head before calling
  // slot 295. Slot 312 is a discard path (terminal state 8), not presentation.
- // Limit this offline adapter to the observed single-entry queue and retain
- // exactly the original queue's reference for the original completion body.
+ // The queue is a tail queue (head at +5480, tail pointer at +5488, each request's next at +2960 and previous-link at +2968): taking the head
+ // moves the next request, if a client already queued one behind it (int-132: swap 3 arrived during swap 2's GPU copy and the old
+ // single-entry form refused to retire swap 2, so every wait on it stayed busy), up to the head. The original queue's reference
+ // moves to the current-swap slot for the original completion body.
  bool activateOnlyPendingSwap(const OriginalLegacySwapRequest *request) {
   auto self=reinterpret_cast<unsigned char *>(this);
   auto bytes=reinterpret_cast<const unsigned char *>(request);
@@ -52,10 +54,15 @@ public:
   memcpy(&current,self+5472,8);memcpy(&head,self+5480,8);memcpy(&tail,self+5488,8);
   if(!request || current || head!=request)return false;
   memcpy(&next,bytes+2960,8);memcpy(&previous,bytes+2968,8);
-  if(next || previous!=self+5480 || tail!=bytes+2960)return false;
+  if(previous!=self+5480)return false;
+  if(next) {
+   const void *link=self+5480;
+   memcpy(const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(next))+2968,&link,8);
+  } else if(tail!=bytes+2960)return false;
   memcpy(self+5472,&request,8);
-  const void *empty=nullptr,*emptyTail=self+5480;
-  memcpy(self+5480,&empty,8);memcpy(self+5488,&emptyTail,8);return true;
+  if(next) {memcpy(self+5480,&next,8);}
+  else {const void *empty=nullptr,*emptyTail=self+5480;memcpy(self+5480,&empty,8);memcpy(self+5488,&emptyTail,8);}
+  return true;
  }
  void free() override;
  bool init(OSDictionary *properties=nullptr) override;
