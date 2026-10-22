@@ -1,0 +1,63 @@
+diff --git a/pexpert/arm/pe_init.c b/pexpert/arm/pe_init.c
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -92,7 +92,16 @@ static boolean_t panic_console_available = FALSE;
+ /* Previous boot's embedded panic log, printed after the framebuffer console is up. */
+ #define LAST_PANIC_TEXT_BYTES 2048
+ static char last_panic_text[LAST_PANIC_TEXT_BYTES];
+ static boolean_t last_panic_text_valid = FALSE;
++
++/* Previous boot's ramoops console ring tail (UkeLastLog writes the ring
++ * incrementally from msgbuf, so a hard reset with no panic still leaves the
++ * last messages on the medium). Captured before the pram clear below. */
++#define LAST_RAMOOPS_OFFSET 0x200000u
++#define LAST_RAMOOPS_BYTES  0x200000u
++#define LAST_RAMOOPS_MAGIC  0x43474244u
++static char last_ramoops_text[LAST_PANIC_TEXT_BYTES];
++static boolean_t last_ramoops_valid = FALSE;
+ 
+ /* socd trace ram attributes */
+ static SECURITY_READ_ONLY_LATE(vm_offset_t) socd_trace_ram_base = 0;
+@@ -210,6 +219,32 @@ check_for_panic_log(void)
+ 		printf("iBoot didn't extract panic log from previous session crash, this is bad\n");
+ 	}
+ 
++	/* Capture the ramoops console ring tail before the clear below: a reset
++	 * that never called panic() leaves no FUNK record, but the ring still
++	 * holds the messages UkeLastLog flushed before the reset. */
++	if (gPanicSize >= LAST_RAMOOPS_OFFSET + LAST_RAMOOPS_BYTES) {
++		const uint8_t *ring = (const uint8_t *)(gPanicBase + LAST_RAMOOPS_OFFSET);
++		uint32_t sig, start, size, capacity, take, from;
++		uint32_t i;
++		memcpy(&sig, ring, 4);
++		memcpy(&start, ring + 4, 4);
++		memcpy(&size, ring + 8, 4);
++		capacity = LAST_RAMOOPS_BYTES - 12;
++		if (sig == LAST_RAMOOPS_MAGIC && start < capacity && size != 0) {
++			if (size > capacity) {
++				size = capacity;
++			}
++			take = size < (LAST_PANIC_TEXT_BYTES - 1) ? size : (LAST_PANIC_TEXT_BYTES - 1);
++			from = (start + capacity - take) % capacity;
++			for (i = 0; i < take; i++) {
++				uint8_t c = ring[12 + ((from + i) % capacity)];
++				last_ramoops_text[i] = (char)(((c >= 0x20 && c < 0x7f) || c == '\n') ? c : '.');
++			}
++			last_ramoops_text[take] = '\0';
++			last_ramoops_valid = TRUE;
++		}
++	}
++
+ 	/* Clear panic region */
+ 	bzero((void *)gPanicBase, gPanicSize);
+ }
+@@ -220,5 +255,9 @@ pe_print_last_panic(void)
+ 	printf("PREVIOUS XNU LOG (pram=%p size=%u valid=%d):\n%s\n",
+ 	    (void *)gPanicBase, gPanicSize, last_panic_text_valid ? 1 : 0,
+ 	    last_panic_text_valid ? last_panic_text : "(no previous log captured)");
+ 	last_panic_text_valid = FALSE;
++	if (last_ramoops_valid) {
++		printf("PREVIOUS RAMOOPS TAIL:\n%s\n", last_ramoops_text);
++		last_ramoops_valid = FALSE;
++	}
+ }
