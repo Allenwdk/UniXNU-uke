@@ -941,9 +941,23 @@ static void touch_monitor(void *arg, wait_result_t result) {
     if(over_us>50000)__atomic_fetch_add(&sleep_late50,1,__ATOMIC_RELAXED);
   }
 }
+// The Gunyah hypervisor keeps a virtual watchdog for this VM and allows the
+// guest to pet it but not to disable it.  Android's gh_virt_wdt driver pets it
+// from a timer; XNU has no such driver, so this monitor pets it every 5 s.
+static void gunyah_wdt_pet(void) {
+  register uint64_t x0 __asm("x0") = 0x86000007; // GH vWDOG reset/pet
+  register uint64_t x1 __asm("x1") = 0;
+  register uint64_t x2 __asm("x2") = 0;
+  register uint64_t x3 __asm("x3") = 0;
+  register uint64_t x4 __asm("x4") = 0;
+  register uint64_t x5 __asm("x5") = 0;
+  register uint64_t x6 __asm("x6") = 0;
+  register uint64_t x7 __asm("x7") = 0;
+  __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x6), "r"(x7) : "memory");
+}
 static void monitor(void *arg, wait_result_t result) {
   (void)arg;(void)result;
-  unsigned capture_at=0,capture_attempt=~0U,named=0;
+  unsigned capture_at=0,capture_attempt=~0U,named=0,last_pet=0;
   for (;;) {
     __atomic_fetch_add(&thread_count,1,__ATOMIC_RELAXED);
     boot_progress_poll();
@@ -957,6 +971,7 @@ static void monitor(void *arg, wait_result_t result) {
       if(attempt!=capture_attempt || !capturing)capture_at=now;
       capture_attempt=attempt;process_capture_age=capturing?now-capture_at:0;
     }
+    if(now-last_pet>=5){last_pet=now;gunyah_wdt_pet();}
     refresh(seconds());
     assert_wait_timeout((event_t)&thread_count,THREAD_UNINT,1000,NSEC_PER_MSEC);
     thread_block(THREAD_CONTINUE_NULL);
