@@ -13,6 +13,11 @@ The work lives on three branches:
 | `Allenwdk/UniXNU` | `uke-gpu` | pins the NativeAdreno fork and points CI at this branch |
 | `Allenwdk/NativeAdreno` | `uke-a732` | A740/A732 profiles, reg-name window selection, uke compatible strings, SM7675 counter offset |
 
+The device `uke-gpu` workflows check out core `uke-gpu`. Before merging this
+track into `main`/`uke`, merge core `uke-gpu` into `uke` (or restore the
+workflow `ref`) and keep the NativeAdreno fork pin, because the A732 profile is
+not in `UniXNU/NativeAdreno`.
+
 ## Known values
 
 From `/soc/qcom,kgsl-3d0@3d00000`, `/soc/qcom,gmu@3d69000` and
