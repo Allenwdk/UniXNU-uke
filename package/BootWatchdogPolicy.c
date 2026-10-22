@@ -65,6 +65,13 @@ static int append_job(const char **cursor) {
  *cursor=*e?e+1:e;return 0;
 }
 
+// The boot-log archive compiles against the exported headers only; the
+// scheduler entry point and priority below are private osfmk declarations.
+extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation,
+                                                  void *parameter, int priority,
+                                                  thread_t *new_thread);
+#define BASEPRI_PREEMPT 92
+
 // The device runs under Gunyah and the hypervisor keeps a virtual watchdog for
 // this VM. Android's gh_virt_wdt pets it from a timer; the UEFI pet only covers
 // the firmware handoff, and the CPU display renderer can take minutes, so keep
