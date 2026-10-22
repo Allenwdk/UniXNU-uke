@@ -329,8 +329,17 @@ static ClientStat *statFor(IOUserClient *client) {
 }
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
     ClientStat *stat=statFor(client);
-    // Identify the user-client selector that enters the original power transition
-    // before the original call resets the tablet (the display is GOP-powered).
+    // Selector 12 enters the original request_power_change transition and
+    // selector 6 is the wait that follows.  The panel is already powered by
+    // the firmware GOP frame buffer, so acknowledge both without the original
+    // implementation, which asks for the display rail and resets the tablet.
+    if(stat && (selector==6 || selector==12)) {
+        if(!stat->selector_calls[selector])printf("UKEMEM: client selector %u (suppressed)\n",(unsigned)selector);
+        if(selector<kSelectors){++stat->selector_calls[selector];stat->selector_status[selector]=(uint32_t)kIOReturnSuccess;}
+        ++stat->calls;
+        return kIOReturnSuccess;
+    }
+    // First call of every other selector, before the original can reset.
     if(stat && selector<16 && !stat->selector_calls[selector])printf("UKEMEM: client selector %u\n",(unsigned)selector);
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
     if(stat) {
