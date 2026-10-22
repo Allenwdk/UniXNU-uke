@@ -81,6 +81,9 @@ def main():
                         default=ROOT / 'build/uke/boot/kernel.macho.adt')
     parser.add_argument('--dram-size', type=lambda value: int(value, 0), required=True,
                         help='Actual observed DRAM size, e.g. 0x230000000')
+    parser.add_argument('--dram-base', type=lambda value: int(value, 0),
+                        default=int(os.environ.get('UKE_DRAM_BASE', '0x80000000'), 0),
+                        help='DRAM base for /chosen/dram-base; UKE_DRAM_BASE overrides the default 0x80000000')
     parser.add_argument('--owned-memory-size', type=lambda value: int(value, 0), default=None,
                         help='Explicit DarwinBoot contiguous window request, 256 MiB..8 GiB in 2 MiB steps')
     parser.add_argument('--root-match-volume-uuid', default=None,
@@ -172,7 +175,7 @@ def main():
                         *([('text-fixups', b''.join(f.encode() + b'\0' for f in args.text_fixup))] if args.text_fixup else []),
                         *( [('darwinboot-memory-size', struct.pack('<Q', args.owned_memory_size))]
                            if args.owned_memory_size else [] ),
-                        ('dram-base', struct.pack('<Q', DRAM_BASE)),
+                        ('dram-base', struct.pack('<Q', args.dram_base)),
                         ('dram-size', struct.pack('<Q', args.dram_size)),
                         ('embedded-panic-log-size', struct.pack('<I', PANIC_LOG_SIZE)),
                         # Image4 hash algorithm. The target iPad's DT specifies sha2-384 in /chosen; this
