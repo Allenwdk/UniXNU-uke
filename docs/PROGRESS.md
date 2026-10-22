@@ -419,6 +419,7 @@ fastboot reboot
 | 2026-10-23 | 高内存 | DT 10 个 memory range：低 2 GB 实际只有 ~682 MB 可用；高区 `0x980000000-0xB00000000` 6 GiB 等合计 ~9.9 GiB 未使用。ADT 改为 `dram-base=0x980000000`、`dram-size=4 GiB`（`make-uke-adt.py --dram-base` + board `[payload] dram_base/dram_size` + core `payload.py` 透传）；XNU 接受非连续高 DRAM，`memorystatus_jetsam_thread: no victim!` OOM 消失 |
 | 2026-10-23 | mobile graphics 隔离 | 关闭 `offline-mobile-graphics-client/load`：不复位，但 SpringBoard/liveactivitiesd 反复 `Too many corpses being created`；打开：走到 `s_map_display_type` → `request_power_change second_external 0 powerstate1 fcdisplaytype 0` 后无 panic 硬复位。下一阻塞是 A732 GPU 电源/GMU（mode 4），不是内存 |
 | 2026-10-23 | 当前镜像/内核 | gunyah-pet 内核 `430e4d83…`（run `39829956845`，`uke-gpu-userland_defconfig`）；高内存 payload `vendor_boot_uke_himem4g.img` `21dbecaf…`（GPU pool 1024 MiB）；nomg `5d277d09…`；UEFI `e09219ff…`（Gunyah + DT memory range 打印） |
+| 2026-10-23 | CPU 基线 | `main` 切到 upstream `NativeMobileDisplay` `c031d88` + QEMU 的 `LegacyDisplayProbe`/`ShengPlatformPower`/display ABI；`uke-cpu_defconfig` 关闭 `NATIVE_ADRENO`、`offline-mobile-graphics-client=0`；`BootWatchdogPolicy` 增加不依赖 boot-progress 的 Gunyah pet 线程；待 CI/实机 |
 
 ---
 

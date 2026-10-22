@@ -8,6 +8,10 @@
 #include <sys/fcntl.h>
 #include <sys/stat.h>
 #include <pexpert/pexpert.h>
+#include <kern/thread.h>
+#include <kern/clock.h>
+#include <kern/sched_prim.h>
+#include <kern/sched.h>
 
 static const char policy_head[] =
  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -62,9 +66,39 @@ static int append_job(const char **cursor) {
  *cursor=*e?e+1:e;return 0;
 }
 
+// The device runs under Gunyah and the hypervisor keeps a virtual watchdog for
+// this VM. Android's gh_virt_wdt pets it from a timer; the UEFI pet only covers
+// the firmware handoff, and the CPU display renderer can take minutes, so keep
+// petting it from a kernel thread even when boot-progress is compiled out.
+static void uke_gunyah_wdt_pet_thread(void *arg, wait_result_t result) {
+ (void)arg;(void)result;
+ for (;;) {
+  register uint64_t x0 __asm("x0")=0x86000007;
+  register uint64_t x1 __asm("x1")=0;
+  register uint64_t x2 __asm("x2")=0;
+  register uint64_t x3 __asm("x3")=0;
+  register uint64_t x4 __asm("x4")=0;
+  register uint64_t x5 __asm("x5")=0;
+  register uint64_t x6 __asm("x6")=0;
+  register uint64_t x7 __asm("x7")=0;
+  __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1),"r"(x2),"r"(x3),"r"(x4),"r"(x5),"r"(x6),"r"(x7) : "memory");
+  assert_wait_timeout((event_t)&uke_gunyah_wdt_pet_thread,THREAD_UNINT,5000,NSEC_PER_MSEC);
+  thread_block(THREAD_CONTINUE_NULL);
+ }
+}
+static int uke_gunyah_wdt_started;
+static void uke_gunyah_wdt_start(void) {
+ thread_t thread;
+ if(uke_gunyah_wdt_started)return;
+ uke_gunyah_wdt_started=1;
+ if(kernel_thread_start_priority(uke_gunyah_wdt_pet_thread,0,BASEPRI_PREEMPT,&thread)==KERN_SUCCESS)thread_deallocate(thread);
+ else printf("sheng bring-up Gunyah watchdog pet thread failed\n");
+}
+
 int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  proc_t p=process;
  int enabled=0,error=0,fd=-1;int32_t result=0;
+ uke_gunyah_wdt_start();
  PE_parse_boot_argn("sheng-disable-watchdogd",&enabled,sizeof(enabled));
  if(!PE_parse_boot_argn("sheng-disable-jobs",jobs,sizeof(jobs)))jobs[0]=0;jobs[sizeof(jobs)-1]=0;
  int lite=0;PE_parse_boot_argn("sheng-lite",&lite,sizeof(lite));if(lite!=1)lite=0;
