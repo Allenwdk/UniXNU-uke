@@ -100,6 +100,10 @@ def main():
     parser.add_argument('--data-ramdisk', action='store_true',
                         help='/chosen/memory-map RAMDisk placeholder; the loader fills in the real range for a scratch Data seed')
     parser.add_argument('--trust-cache', action='store_true', help='Zeroed TrustCache sidecar handoff placeholder')
+    parser.add_argument('--persistent-data', action='store_true',
+                        help='The Data disk keeps its writes across boots (sheng-data-persist): no ephemeral-storage, so first-boot data migration runs')
+    parser.add_argument('--text-fixup', action='append', default=[],
+                        help='/chosen/text-fixups entry <file name>,<file offset>,<original>,<replacement> for the kernel\'s signed-text fixups')
     parser.add_argument('--boot-manifest-hash',
                         help='96 hex characters for /chosen/boot-manifest-hash; mount(8) names /private/preboot/<hash> from it')
     args = parser.parse_args()
@@ -156,8 +160,16 @@ def main():
                         *([('certificate-production-status', struct.pack('<I', 0)), ('effective-production-status-ap', struct.pack('<I', 0)),
                            ('certificate-security-mode', struct.pack('<I', 1)), ('effective-security-mode-sep', struct.pack('<I', 1))]
                           if args.ipad_identity else []),
-                        # This property describes the actual volatile Data RAM disk.
-                        *([('ephemeral-storage', struct.pack('<I', 1))] if (args.data_ramdisk or args.packed_data_ramdisk) else []),
+                        # This property describes the actual volatile Data RAM
+                        # disk. A persistent one is not ephemeral: with the
+                        # property datamigrator skips every migration
+                        # (os_variant_uses_ephemeral_storage), so the staged
+                        # system apps never install.
+                        *([('ephemeral-storage', struct.pack('<I', 1))]
+                          if (args.data_ramdisk or args.packed_data_ramdisk) and not args.persistent_data else []),
+                        # Fixups of signed text (patches/xnu/native-text-fixup.patch) travel here,
+                        # outside the 1000-byte command line.
+                        *([('text-fixups', b''.join(f.encode() + b'\0' for f in args.text_fixup))] if args.text_fixup else []),
                         *( [('darwinboot-memory-size', struct.pack('<Q', args.owned_memory_size))]
                            if args.owned_memory_size else [] ),
                         ('dram-base', struct.pack('<Q', DRAM_BASE)),
