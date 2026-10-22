@@ -414,6 +414,11 @@ fastboot reboot
 | 2026-10-22 | 实机轮 1 | panic `offline scratch Data mount failed: 2 @kern_exec.c:7488`（ENOENT）：打 payload 漏传 `--data-ramdisk`，payload 无 `scratch-data.img` —— 构建疏漏，非代码问题 |
 | 2026-10-22 | 实机轮 2/3 | 带 214 GiB 种子重建后：`sheng bring-up watchdogd launch policy: 0`（watchdog policy 真机验证 ✓）、OwnerData 挂载成功（vol-uuid 匹配 ✓）、`UKE: display surface adopted … sid=1`（default-surface 收养 ✓）、`ext-fixup: BTAudioHALPlugin+0x38bec applied`（text_fixups 真机生效 ✓）、SystemOS/OS 卷 ready、`Early boot complete`、`driverkitd is active`、`s_map_display_type` display client 打开、**Apple logo 显示**、`apfs_trim_to_prev_fsize`（Data 可写）；shared_region 首启抖动后自愈 |
 | 2026-10-22 | 当前卡点 | Apple logo 后无预警重启（尾部：`s_map_display_type` → `apfs_trim` ×3 → `ext-fixup BTAudioHALPlugin` → logo → 清屏 → 重启，无 panic 文本）；待读 pram（菜单 `last panic:` 或 ramoops 高半区 0xC4200000）定位是 display panic 还是 watchdog 复位 |
+| 2026-10-23 | Gunyah vWDOG 定位 | stock vendor ramdisk 的 `gh_virt_wdt.ko` 用 `smc #0`：`x0=0x86000005,x1=2` 关闭返回 1（被拒），`x0=0x86000007,x1=0` pet 返回 0（成功）；EL3 的 `qcom_scm_sec_wdog_deactivate`（SVC1/CMD7）从 UEFI 走 SMC32/64 均返回 -2/-4，确认 secure watchdog 不是本机复位源 |
+| 2026-10-23 | watchdog 复位解决 | UEFI `UkeBootMemoryDxe` 入口调用 Gunyah disable/pet，并把 bite time 设到 30000；XNU `BootProgress` 监视线程每 5 s pet `0x86000007`；实机不再出现 watchdog 复位，启动能停在 panic screen 而不是硬重启 |
+| 2026-10-23 | 高内存 | DT 10 个 memory range：低 2 GB 实际只有 ~682 MB 可用；高区 `0x980000000-0xB00000000` 6 GiB 等合计 ~9.9 GiB 未使用。ADT 改为 `dram-base=0x980000000`、`dram-size=4 GiB`（`make-uke-adt.py --dram-base` + board `[payload] dram_base/dram_size` + core `payload.py` 透传）；XNU 接受非连续高 DRAM，`memorystatus_jetsam_thread: no victim!` OOM 消失 |
+| 2026-10-23 | mobile graphics 隔离 | 关闭 `offline-mobile-graphics-client/load`：不复位，但 SpringBoard/liveactivitiesd 反复 `Too many corpses being created`；打开：走到 `s_map_display_type` → `request_power_change second_external 0 powerstate1 fcdisplaytype 0` 后无 panic 硬复位。下一阻塞是 A732 GPU 电源/GMU（mode 4），不是内存 |
+| 2026-10-23 | 当前镜像/内核 | gunyah-pet 内核 `430e4d83…`（run `39829956845`，`uke-gpu-userland_defconfig`）；高内存 payload `vendor_boot_uke_himem4g.img` `21dbecaf…`（GPU pool 1024 MiB）；nomg `5d277d09…`；UEFI `e09219ff…`（Gunyah + DT memory range 打印） |
 
 ---
 
