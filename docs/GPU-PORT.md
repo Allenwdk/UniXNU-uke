@@ -98,6 +98,12 @@ Firmware pins (collected from the rooted device on 2026-10-21):
   sha256 `6883deac638d8e20479fc7559c692bd8e22720441d9e24f8d0582a8eadc43b67`.
   That run had no vendor firmware, so the weak empty images were linked, as
   intended.
+- CI run `39718041346` built `uke-gpu-userland_defconfig` green as well. Its
+  `kernel.macho` is 52,465,664 bytes, sha256
+  `db984d4e4c22e3b2e14a4841f22d2b705b58145f8b3d05ce22d3eb3f8f221b6d`; the
+  probe's four rows are mirrored to the kernel log (`UKE GPU1..4:`). Mode 1,
+  3, 5 and 6 payloads were built against that kernel; mode 7/9 need the firmware
+  cache seeded first.
 
 Host checks (Linux, no Apple SDK):
 

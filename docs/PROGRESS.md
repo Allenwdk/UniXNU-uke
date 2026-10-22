@@ -396,6 +396,7 @@ fastboot reboot
 | 2026-10-22 | GPU 构建 | `uke-gpu_defconfig`、archive list、固件 pin 嵌入/weak 回退、`GpuPowerProbe` 编入 legacy display（仅 NATIVE_ADRENO=1） |
 | 2026-10-22 | host 校验 | `check-uke-gpu.py`、`check-uke-gpu-host.py`、`check-gpu-power-host.py` 通过；`ci.yml` 已接入；实机未启动 |
 | 2026-10-22 | GPU 构建绿 | run `39685196474` 的 `kernel` + `full` 两 job 成功；A732 头文件、NativeAdreno（-Werror）、43 kit objects、staged AGXAccelerator、legacy display + `GpuPowerProbe.o` 全部生成；`kernel.macho` 52,416,512 B，sha256 `6883deac…`；CI 无固件，链接 weak 空镜像（预期） |
+| 2026-10-22 | GPU userland 构建绿 | run `39718041346` 两 job 成功；`uke-gpu-userland_defconfig` 内核 52,465,664 B，sha256 `db984d4e…`；修复 owner-cache 补丁与探针的 `native_gpu_addon_*` 重复定义（探针改为 weak），探针行同步到 `UKE GPU1..4:` 内核日志；本地准备 m1/m3/m5/m6 vendor_boot 测试镜像 |
 
 ---
 
