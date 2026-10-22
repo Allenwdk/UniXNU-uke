@@ -237,6 +237,14 @@ jobs:
             UniXNU-uke/.cache
           key: unixnu-full-${{ env.CACHE_SCHEMA }}-${{ steps.base.outputs.sha }}-${{ inputs.defconfig || 'uke-full_defconfig' }}-${{ hashFiles('UniXNU-uke/board.toml', 'UniXNU-uke/feeds.toml', 'UniXNU-uke/unixnu.lock', 'UniXNU-uke/configs/**', 'UniXNU-uke/scripts/**', 'UniXNU-uke/patches/**', 'UniXNU-uke/package/**', 'UniXNU-uke/drivers/**', 'UniXNU-uke/kits/**', 'UniXNU/patches/**', 'UniXNU-uke/.github/workflows/build-kernel.yml') }}
 
+      - name: Restore the GPU firmware
+        if: inputs.defconfig == 'uke-gpu_defconfig' || inputs.defconfig == 'uke-gpu-userland_defconfig'
+        uses: actions/cache/restore@v4
+        with:
+          path: UniXNU-uke/.cache/firmware/uke-gpu
+          key: uke-gpu-firmware-v1
+          restore-keys: uke-gpu-firmware-
+
       - name: Report the runner toolchain
         run: |
           sw_vers

@@ -87,8 +87,10 @@ Firmware pins (collected from the rooted device on 2026-10-21):
   device info (0x43030b00, 1.5 MiB GMEM). The probe is compiled only when
   `CONFIG_XNU_NATIVE_ADRENO=y`.
 - `configs/uke-gpu_defconfig` is the buildable A732 configuration: the stage-6
-  set plus `CONFIG_XNU_NATIVE_ADRENO=y`. The shipping full/userland configs stay
-  off until a device boot qualifies the path.
+  set plus `CONFIG_XNU_NATIVE_ADRENO=y`. `configs/uke-gpu-userland_defconfig`
+  adds the owner/Data/union userland path for the actual device probe. The
+  shipping full/userland configs stay off until a device boot qualifies the
+  path.
 - CI run `39685196474` (2026-10-22) built `uke-gpu_defconfig` green. The
   archive chain produced the A732 headers, the NativeAdreno service, 43 kit
   objects, the staged AGXAccelerator and the legacy display with
@@ -109,6 +111,132 @@ The first validates `board.toml` against the recorded DT facts and firmware
 pins; the second compiles and runs `NativeAdrenoProfile`'s A740/A732 test and
 checks the generated headers; the third runs the gated GPU power sequence over
 a software register peer.
+
+## Device test procedure
+
+The GPU probe is compiled into the kernel; the payload only carries it and the
+boot arguments. The first device session should be staged: read-only first, then
+the power/clock steps, and only then the firmware/GMU/CP path.
+
+### 0. What to keep
+
+- Do not flash `userdata`: it holds the Unix root image. The GPU test only
+  replaces `boot` (UEFI) and `vendor_boot` (payload).
+- Keep the known-good `boot_uke_kpanicprint2.img` (`5be4b635…`) and the current
+  userland vendor_boot as fallbacks. The uke ABL has no successful-boot marker,
+  so `fastboot set_active a` before each test and check
+  `fastboot getvar slot-unbootable:a`.
+- The unique chip id and the trust cache are build inputs, not repository data.
+
+### 1. Seed the private firmware (needed for modes 7 and above)
+
+The three `gen71100_*` files are not in Git. Either:
+
+- put them in `.cache/firmware/uke-gpu/` and build on a Mac locally, or
+- copy them into the repository Actions cache once:
+
+```sh
+# in the device repository; .cache/firmware/uke-gpu holds the three files
+tar -czf /tmp/uke-gpu-firmware.tar.gz -C .cache/firmware/uke-gpu \
+    gen71100_sqe.fw gen71100_gmu.bin gen71100_zap.mbn
+base64 -w0 /tmp/uke-gpu-firmware.tar.gz > /tmp/uke-gpu-firmware.b64
+gh secret set UKE_GPU_FIRMWARE_B64 < /tmp/uke-gpu-firmware.b64
+gh workflow run seed-gpu-firmware.yml -f key=v1
+```
+
+`build-kernel.yml` restores `uke-gpu-firmware-*` for the two GPU defconfigs and
+the kit builder verifies every pin before embedding. Without the cache the
+kernel still builds, but the GMU cold start refuses.
+
+### 2. Build the test kernel
+
+```sh
+gh workflow run build-kernel.yml -f defconfig=uke-gpu-userland_defconfig
+gh run list --workflow build-kernel.yml --limit 1
+gh run download <run-id> -n uke-kernel-full -D ~/uke-port/ci/uke-kernel-gpu
+```
+
+`uke-gpu-userland_defconfig` is the userland/Data/union configuration plus
+NativeAdreno; it reaches the display/GPU probe in the normal boot path. The
+build also produces the A732 headers and the accelerator. `uke-gpu_defconfig`
+is the smaller stage-6 build used for compile/link validation.
+
+### 3. Build the payload and vendor_boot (Linux)
+
+Use the same payload parameters as the current working userland image, with the
+GPU mode appended. Keep the unique chip id in an environment variable or a
+local file, never in the repository.
+
+```sh
+cd /home/allenwdk/UniXNU
+./unixnu build payload -D ../UniXNU-uke --uefi /home/allenwdk/uefi-uke \
+    --kernel ~/uke-port/ci/uke-kernel-gpu/kernel.macho \
+    --unique-chip-id "$UKE_UNIQUE_CHIP_ID" \
+    --trust-cache out/uke/tree/build/original-static-system-trust/original-static-system.bundle \
+    --data-ramdisk /home/allenwdk/uke-port/data/data-seed-214/owner-data-214.dbr \
+    --kernel-arg sheng-gpu-power=1
+```
+
+Then repack against the current working vendor_boot (a payload size change
+moves the DTB and the boot-image table):
+
+```sh
+python3 /home/allenwdk/UniXNU-uke/scripts/patch-vendor-boot.py \
+    --base /home/allenwdk/uke-port/data/vendor_boot_uke_data7.img \
+    --payload /home/allenwdk/UniXNU/out/uke/payload/payload.img \
+    --output /home/allenwdk/uke-port/data/vendor_boot_uke_gpu_m1.img
+unpack_bootimg --boot_img /home/allenwdk/uke-port/data/vendor_boot_uke_gpu_m1.img
+```
+
+For each later mode, rebuild only the payload/vendor_boot with
+`--kernel-arg sheng-gpu-power=<n>`; the kernel is unchanged.
+
+### 4. Flash and observe
+
+```sh
+fastboot set_active a
+fastboot flash boot /home/allenwdk/uke-port/data/boot_uke_kpanicprint2.img
+fastboot flash vendor_boot /home/allenwdk/uke-port/data/vendor_boot_uke_gpu_m1.img
+fastboot flash boot_b /home/allenwdk/uke-port/data/boot_uke_kpanicprint2.img
+fastboot flash vendor_boot_b /home/allenwdk/uke-port/data/vendor_boot_uke_gpu_m1.img
+fastboot reboot
+```
+
+The probe mirrors its four GPU rows into the kernel log, so the text console
+(and the pram dump) shows lines such as:
+
+```
+UKE GPU1: GPU m1 gcc=ok cc=skip sm=skip gp=skip io=0 pw00
+UKE GPU2: ...
+```
+
+The screen photo and those lines are the primary evidence. Run the modes in
+this order, one boot each:
+
+| `sheng-gpu-power` | What it does | Expected on success |
+| --- | --- | --- |
+| 1 | read GCC/GPUCC/SMMU/GPU; no writes | `gcc=ok`, GPUCC/SMMU/GPU `skip` or `ok` |
+| 2 | plus the GCC GPU branch enable | `gcc=ok` and no reset |
+| 3 | plus CX GDSC and SMMU vote clocks | `cc=ok`; SMMU IDs readable |
+| 4 | builds the GMU SMMU context (bank 1/ASID 1/SMR slot 2, SID 5) | context step 6 `Ready` |
+| 5 | reads GMU clocks and the AOP command DB | clock rows and command-DB status |
+| 6 | GMU clock bring-up (PLL/RCG/branches) | step 7, `cx_gmu` running |
+| 7 | GMU cold start (needs firmware) | firmware loaded/HFI ready |
+| 8 | GX power and the HFI performance vote | GX on |
+| 9 | GPU SMMU context + CP ring/init + scratch | CP fence completes |
+
+Start at 1. Move to 3 only if the CX/GX state shows the domains off; if a mode
+resets, stop and report the last `UKE GPU` line and the mode number. Do not jump
+to 7/9 before 6 has shown the clocks and the command DB.
+
+### 5. What to send back
+
+- The four `UKE GPU1..4` lines (photo or console text) for each mode.
+- The mode number, whether the device reset/hung, and the last line before it.
+- Kernel, payload and vendor_boot sha256, plus `fastboot getvar
+  slot-unbootable:a`.
+- If the pram dump is readable, the same region from `0xC4200000`; it carries
+  the `UKE GPU` lines even if the screen is lost.
 
 ## Still needs a device
 

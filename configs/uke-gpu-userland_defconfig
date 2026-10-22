@@ -1,0 +1,55 @@
+# uke userland + Adreno 732 configuration.
+#
+# This is configs/uke-userland_defconfig plus NativeAdreno: the owner
+# cache/Data mount, union SystemOS, trust-cache runtime, UFS bring-up and the
+# A732 GPU driver. It is the configuration for a first GPU bring-up on the
+# device because the display/GPU probe runs in the userland boot path.
+#
+# The vendor firmware is not in Git. Seed .cache/firmware/uke-gpu (or the
+# uke-gpu-firmware CI cache) with gen71100_sqe.fw, gen71100_gmu.bin and
+# gen71100_zap.mbn before building if the GMU cold start is to run. Without
+# them the kernel links weak empty images and the GMU refuses at runtime.
+#
+# CONFIG_XNU_<NAME> becomes XNU_<NAME> for the kernel build.
+
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_BRINGUP_OWNER_CACHE=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_UFS=y
+CONFIG_XNU_NATIVE_AES=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_SOURCE_MOCKFS=y
+CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+CONFIG_XNU_SHENG_PMGR=y
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_ZONE_PGZ_ALIGNMENT_PROBE=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
+CONFIG_XNU_NATIVE_ADRENO=y
+
+#
+# Hardware-qualification gates, kept for configs/uke-full-plus_defconfig.
+#
+# CONFIG_XNU_NATIVE_VIRTIO_BLOCK is not set
+CONFIG_XNU_NATIVE_RAM_BLOCK=y
+# CONFIG_XNU_VERIFIED_ROOT_PROBE is not set
+# CONFIG_XNU_OWNER_ROOT_AUDIT is not set
+# CONFIG_XNU_OWNER_ROOT_TRUST is not set
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+# CONFIG_XNU_OWNER_BOOT_MANIFEST is not set
+CONFIG_XNU_OWNER_DATA_MOUNT=y
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
+# CONFIG_XNU_BOOT_PROGRESS is not set
+CONFIG_XNU_BOOT_LOG=y
+CONFIG_XNU_WATCHDOG_POLICY=y
+
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_OWNER_DATA_VOLUME_UUID="292E72B9-7594-431D-ADBC-2D354CC918DD"
+CONFIG_XNU_EXTRA_LD_ARCHIVES=""
+CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
+CONFIG_XNU_ARMVIRT_PLATFORM=n

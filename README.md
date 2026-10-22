@@ -42,6 +42,10 @@ still untested. Details are in **[docs/GPU-PORT.md](docs/GPU-PORT.md)**.
   profile, GMU/vote headers and the GPU power probe. It builds without vendor
   firmware (weak empty images; the GMU refuses at runtime) and is the
   configuration for a first GPU bring-up.
+- `configs/uke-gpu-userland_defconfig` — the userland/Data/union configuration
+  plus NativeAdreno, used for the actual device GPU probe (the probe runs in the
+  display/userland path). The private gen71100 firmware is restored from the
+  `uke-gpu-firmware-*` Actions cache; see `docs/GPU-PORT.md`.
 - `configs/bootstrap_defconfig` — no-device-archive bootstrap pass: compile
   records plus the prelinked candidate the legacy display ABI builder and the
   UFS binder need.

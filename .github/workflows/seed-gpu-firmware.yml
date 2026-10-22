@@ -1,0 +1,60 @@
+name: seed-uke-gpu-firmware
+
+# Copies the private gen71100 GPU firmware into a dedicated Actions cache so
+# build-kernel.yml can embed it without redistributing it in Git. Set the
+# repository secret UKE_GPU_FIRMWARE_B64 to the base64 of a tar.gz holding:
+#
+#   gen71100_sqe.fw  gen71100_gmu.bin  gen71100_zap.mbn
+#
+# Example (run in the device repository, where .cache/firmware/uke-gpu has the
+# three files):
+#
+#   tar -czf /tmp/uke-gpu-firmware.tar.gz -C .cache/firmware/uke-gpu \
+#       gen71100_sqe.fw gen71100_gmu.bin gen71100_zap.mbn
+#   base64 -w0 /tmp/uke-gpu-firmware.tar.gz > /tmp/uke-gpu-firmware.b64
+#   gh secret set UKE_GPU_FIRMWARE_B64 < /tmp/uke-gpu-firmware.b64
+#
+# Bump the `key` input when the firmware changes; cache entries are immutable.
+# The build job restores uke-gpu-firmware-* for the GPU defconfigs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      key:
+        description: 'Cache key suffix (bump when the firmware changes)'
+        required: false
+        default: 'v1'
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+
+      - name: Decode the firmware secret
+        env:
+          UKE_GPU_FIRMWARE_B64: ${{ secrets.UKE_GPU_FIRMWARE_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "$UKE_GPU_FIRMWARE_B64" || {
+            echo 'UKE_GPU_FIRMWARE_B64 is not set'; exit 1; }
+          mkdir -p .cache/firmware/uke-gpu
+          printf '%s' "$UKE_GPU_FIRMWARE_B64" | base64 -d > "$RUNNER_TEMP/uke-gpu-firmware.tar.gz"
+          tar -xzf "$RUNNER_TEMP/uke-gpu-firmware.tar.gz" -C .cache/firmware/uke-gpu
+          rm -f "$RUNNER_TEMP/uke-gpu-firmware.tar.gz"
+          ls -l .cache/firmware/uke-gpu
+
+      - name: Verify the recorded pins
+        run: python3 scripts/check-uke-gpu.py --firmware-dir .cache/firmware/uke-gpu
+
+      - name: Save the firmware cache
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/firmware/uke-gpu
+          key: uke-gpu-firmware-${{ inputs.key }}

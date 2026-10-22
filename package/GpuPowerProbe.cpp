@@ -186,11 +186,19 @@ int wr(void *, unsigned w, uint32_t off, uint32_t value) {
     __asm__ volatile("dsb sy" ::: "memory");
     return 0;
 }
+static char loggedRows[8][48];
 void setRow(unsigned slot, const char *text) {
     unsigned i = 0;
     for (; i < 47 && text[i]; ++i) boot_progress_ext[slot][i] = text[i];
     for (; i < 47; ++i) boot_progress_ext[slot][i] = ' ';
     boot_progress_ext[slot][47] = 0;
+    // The diagnostic page is optional; mirror the GPU rows into the kernel log
+    // (text console and the pram dump) so a device boot leaves evidence even
+    // when CONFIG_XNU_BOOT_PROGRESS is off.
+    if (slot >= 4 && slot < 8 && __builtin_memcmp(loggedRows[slot], boot_progress_ext[slot], 47)) {
+        __builtin_memcpy(loggedRows[slot], boot_progress_ext[slot], 48);
+        IOLog("UKE GPU%u: %.47s\n", slot - 3, boot_progress_ext[slot]);
+    }
 }
 void publish(const gpb_result &r) {
     char row[64];
