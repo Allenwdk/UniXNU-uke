@@ -11,7 +11,6 @@
 #include <kern/thread.h>
 #include <kern/clock.h>
 #include <kern/sched_prim.h>
-#include <kern/sched.h>
 
 static const char policy_head[] =
  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
