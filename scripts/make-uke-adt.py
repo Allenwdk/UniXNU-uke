@@ -42,6 +42,14 @@ UFS_PHY_SIZE = 0x2000
 # llcc_lpi_region@ff800000 reservation.
 PANIC_LOG_BASE = 0xFF800000
 PANIC_LOG_SIZE = 0x00380000
+# GMU payload pool (the A732's icache/dummy/debug/log/HFI and its SMMU table pool): a reserved
+# physical range the NativeAdreno driver adopts over IODeviceMemory::withRange instead of asking
+# the kernel VM for contiguous pages after userland has wired them. Must match the "GMU Pool"
+# entry of the uke UEFI memory map (Platforms/Xiaomi/ukePkg/Library/MemoryMapLib/MemoryMapLib.c);
+# the address sits in the otherwise unlisted 2-4 GiB hole, where the panic-pram experiment
+# (0xC4000000) already proved writable DRAM. Sized for the payloads' 0x1412000 bytes with slack.
+GMU_POOL_BASE = 0xC8000000
+GMU_POOL_BYTES = 0x02000000
 
 
 def node(name, properties=(), children=()):
@@ -100,6 +108,10 @@ def main():
     parser.add_argument('--data-ramdisk', action='store_true',
                         help='/chosen/memory-map RAMDisk placeholder; the loader fills in the real range for a scratch Data seed')
     parser.add_argument('--trust-cache', action='store_true', help='Zeroed TrustCache sidecar handoff placeholder')
+    parser.add_argument('--persistent-data', action='store_true',
+                        help='The Data disk keeps its writes across boots (sheng-data-persist): no ephemeral-storage, so first-boot data migration runs')
+    parser.add_argument('--text-fixup', action='append', default=[],
+                        help='/chosen/text-fixups entry <file name>,<file offset>,<original>,<replacement> for the kernel\'s signed-text fixups')
     parser.add_argument('--boot-manifest-hash',
                         help='96 hex characters for /chosen/boot-manifest-hash; mount(8) names /private/preboot/<hash> from it')
     args = parser.parse_args()
@@ -156,8 +168,16 @@ def main():
                         *([('certificate-production-status', struct.pack('<I', 0)), ('effective-production-status-ap', struct.pack('<I', 0)),
                            ('certificate-security-mode', struct.pack('<I', 1)), ('effective-security-mode-sep', struct.pack('<I', 1))]
                           if args.ipad_identity else []),
-                        # This property describes the actual volatile Data RAM disk.
-                        *([('ephemeral-storage', struct.pack('<I', 1))] if (args.data_ramdisk or args.packed_data_ramdisk) else []),
+                        # This property describes the actual volatile Data RAM
+                        # disk. A persistent one is not ephemeral: with the
+                        # property datamigrator skips every migration
+                        # (os_variant_uses_ephemeral_storage), so the staged
+                        # system apps never install.
+                        *([('ephemeral-storage', struct.pack('<I', 1))]
+                          if (args.data_ramdisk or args.packed_data_ramdisk) and not args.persistent_data else []),
+                        # Fixups of signed text (patches/xnu/native-text-fixup.patch) travel here,
+                        # outside the 1000-byte command line.
+                        *([('text-fixups', b''.join(f.encode() + b'\0' for f in args.text_fixup))] if args.text_fixup else []),
                         *( [('darwinboot-memory-size', struct.pack('<Q', args.owned_memory_size))]
                            if args.owned_memory_size else [] ),
                         ('dram-base', struct.pack('<Q', DRAM_BASE)),
@@ -192,6 +212,9 @@ def main():
         # panic header/text there. The memory map keeps it out of DarwinBoot's
         # owned window and the menu reads it before XNU clears it.
         node('pram', [('reg', struct.pack('<QQ', PANIC_LOG_BASE, PANIC_LOG_SIZE))]),
+        # The GMU payload pool, reserved in the UEFI memory map ("GMU Pool") and adopted by the
+        # NativeAdreno driver over IODeviceMemory::withRange instead of allocated from the VM.
+        node('gmu-memory', [('reg', struct.pack('<QQ', GMU_POOL_BASE, GMU_POOL_BYTES))]),
         # The original AppleImage4 panics without a product node. Name and model are the
         # board DT's own strings.
         *( [node('buttons', [('compatible', b'buttons\0'), ('device_type', b'buttons\0'),

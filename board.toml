@@ -89,6 +89,11 @@ gmem_bytes = "0x180000"           # 1.5 MiB
 gmu_chip_id = "0x70b0000"         # a6xx_info.gmu_chipid for 0x43030b00
 gmu_cgc_mode = "0x00020202"
 preempt_record_bytes = "0x225000"  # 2196 KiB
+# Reserved GMU payload pool: physical pages the driver adopts over IODeviceMemory::withRange
+# instead of allocating from the kernel VM after userland has wired it. Must match the ADT's
+# gmu-memory node (scripts/make-uke-adt.py) and the "GMU Pool" entry of the uke UEFI memory map.
+gmu_pool_base = "0xc8000000"
+gmu_pool_bytes = "0x2000000"
 ubwc_version = 4
 ubwc_swizzle = 3                  # levels 2 and 3
 highest_bank_bit = 16
@@ -197,6 +202,9 @@ title = "uke first boot: source 4K XNU to console"
 dram_size = "0x80000000"             # SMEM RAM table observed on the device
 skip_setup_tool = "scripts/seed-data-skip-setup.py"   # used by --skip-setup
 panic_screen = true                  # native XNU panic output; Font.h is vendored in scripts/
+trust_cache_sha256 = [
+  "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
+]
 kernel_args = [
   "-v",
   "serial=3",
@@ -224,14 +232,32 @@ kernel_args = [
   "boot-progress=2",
   "-apfs_shared_datavolume",
   "offline-key-events=1",
+  "native-ufs-root=1",
+  "native-ufs-allow-unverified=1",
+  "sheng-data-persist=2",
   "sheng-log=1",
   "sheng-pmgr=2",
+  "sheng-lite=1",
+  "sheng-aks=1",
   "armcpu-diagnostics=1",
   "sheng-disable-watchdogd=1",
   "sheng-smp=1",
   "armcpu-spi-ipi=1",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
+]
+# Fixups of signed text, applied by the kernel after signature validation (patches/xnu/native-text-fixup.patch); they reach it as
+# /chosen/text-fixups, not on the command line. Each is <file name>,<file offset>,<original>,<replacement>, in hex. uke runs the
+# same 21H461 iPadOS build as sheng, so sheng's fixup list applies verbatim.
+text_fixups = [
+  # +[AWAttentionAwarenessConfiguration initialize] (21H461) only forces +[AWClientPreferences initialize] and deadlocks
+  # SpringBoard startup against it (ABBA between the main thread and Siri's SASMyriadController); it returns at once instead.
+  "dyld_shared_cache_arm64.15,421e8bc,28ad1bb0008544f9,c0035fd6008544f9",
+  "dyld_shared_cache_arm64.13,1b05bec,44008052,24008052",
+  "dyld_shared_cache_arm64.13,1b05b08,44008052,24008052",
+  # BTAudioHALPlugin's factory returns NULL, so audiomxd skips it: with bluetoothd disabled (sheng-lite) the plugin reconnects to the
+  # audio device and hangs audiomxd's startup (int-141), which keeps the speaker from ever being ready.
+  "BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6",
 ]
 
 [payload.adt]
@@ -245,6 +271,7 @@ root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 boot_manifest_hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5139ec7b580d63ca9319e218962a2236f23faca"
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
 packed_data_ramdisk = true
+persistent_data = true               # sheng-data-persist keeps Data writes, so Data is not ephemeral storage
 ipad_identity = true
 unique_chip_id = "required"          # the platform seed is not stored in any repository
 
