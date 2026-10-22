@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-10-22
 >
-> **当前一句话状态：** AMFI launch-constraint 已解决；watchdog policy 只部分生效，后续日志仍出现 watchdogd SIGTRAP（`namespace 2 subcode 0x5`）。系统可进入 userland 并运行 `CommCenter`/`logd`/`coresymbolicationd`，但屏幕停在 Apple logo；主阻塞仍是显示/GPU 的 default FB surface（`IOMFB: default_fb_surface: No Default FB Surface found`，`display type is 0`）。Adreno 732 的**无需真机部分**已在 `uke-gpu` 分支完成并通过 CI：A740/A732 profile、uke 的 reg-name 窗口选择、gen71100 GMU/vote 头文件生成、`uke-gpu_defconfig` 和 Linux host 校验（run `39685196474` 两个 job 绿，`kernel.macho` sha256 `6883deac…`）；实机 GMU/CP/SMMU/scanout 仍未验证。下一步是 NativeMobileDisplay / Adreno 732 实机 bring-up。
+> **当前一句话状态：** 2026-10-22 晚三大件落机验证通过：watchdog policy 写入成功（`sheng bring-up watchdogd launch policy: 0`）、default-surface 收养成功（`UKE: display surface adopted … sid=1`）、text_fixups 真机生效（`ext-fixup: BTAudioHALPlugin+0x38bec applied`）；**Apple logo 已能显示**（图形栈接管 scanout），系统活到 `Early boot complete`/`driverkitd is active`/display client 打开。当前卡点：Apple logo 后无预警重启（无 panic 文本），待读 pram 定位。GMU 内存已回到上游形状（`withRange` 接管预留区 `GMU Pool` 0xC8000000，mode 4 待下轮实机验证）。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -30,7 +30,7 @@
 | 4. DarwinBoot | ✅ 完成 | `Exiting boot services`、entry pa、window 0x10000000、video base 0xE3940000、CurrentEL 1、SCTLR/ID_AA64 打印；绿条出现。 |
 | 5. 内核入口 | ✅ 到达 | 绿条后 XNU 已运行；`SecurityLock ... LockCapsuleInterface` 是 UEFI 输出，不是内核挂点。XNU 现在等根设备。 |
 | 6. 存储与根卷 | 🟡 编译完成，待实机 | `uke-full_defconfig` 已链接 `NativeUfs` + `NativeAES` + mockfs + PMGR + pthread + legacy display，CI run `39495271779` 绿色；UFS 块类已绑定到固定 prelink candidate。`userdata`/root UUID/APFS 实机路径待设备。 |
-| 7. 用户态 | ❌ 未开始 | launchd、Data 卷、SpringBoard/设置界面、显示服务均未到。 |
+| 7. 用户态 | 🟡 大幅推进 | launchd 全流程跑通：`Early boot complete`、`driverkitd is active`、boot tasks（fixup/keybag/fips/prng_seedctl/launchd_cache_loader）、display user client 打开、**Apple logo 显示**；Data 卷可写（`apfs_trim_to_prev_fsize`）；watchdog policy/text_fixups/default-surface 均验证通过。卡在 Apple logo 后无预警重启（无 panic 文本，待 pram 定位）；SpringBoard/设置界面未到。 |
 
 ---
 
@@ -229,13 +229,12 @@
 
 ## 5. 下一步（按优先级）
 
-1. **刷 userdata（需用户确认，会清空 Android 数据）**：`fastboot flash userdata out/uke/userdata/userdata-root.img`，再刷 boot + root-mode payload；验证 `SHNGROOT`、OS/SystemOS 窗口、APFS 卷和 `root_match_volume_uuid`。
-2. **启动到 root/launchd**：观察 `NativeUfs: published ...` 日志、OS 卷挂载和 launchd；若失败，用 panic screen / `native-ufs-diagnostics=1` 定位。
-3. **认证读取/owner-root**：OS/SystemOS DMG 已拉取并校验；生成 verified-root policy bundle，补 live storage ABI snapshot，再开 `VERIFIED_ROOT_PROBE`/`OWNER_ROOT_*`/`BOOT_PROGRESS`（`uke-full-plus_defconfig`）。
-4. **GPU**：固件已收集（`gen71100_*`）；按 `docs/GPU-PORT.md` 改 `build-native-adreno-kits.py` 的 pin/路径，加 Adreno archives，再开 `CONFIG_XNU_NATIVE_ADRENO`。
-5. **阶段 7**：launchd、Data 卷、SpringBoard/设置界面；之后再处理显示/触摸/GPU 运行时。
-6. `panic_screen` 已启用；后续 panic 直接看屏。
-7. 每次测试后恢复 Android（KernelSU boot/vendor_boot 备份在 `uke-port/data/*_kernelsu.img`），并更新本文档。
+1. **读 pram 定位 Apple logo 后的重启**：重启进 UniXNU 菜单拍 `last panic:` 行，或 Linux 读 ramoops 高半区（`0xC4200000` 附近，sig `0x43474244`）拿完整 msgbuf 尾部；判定 display 路径 panic 还是 watchdog 复位。
+2. **显示收尾（slot242 / default surface）**：`s_map_display_type … display type is 0` 后 display client 已开、default surface 已收养（sid=1）；若 pram 指向 display，走 slot242/`s_default_fb_surface` 探针或 `surface_copy_port_name` 回退收尾，目标 WindowServer/SpringBoard。
+3. **GMU mode 4 实机验证**：GMU 内存已回到上游形状（`GMU Pool` 0xC8000000 预留 + `withRange` adopt）；下轮 `sheng-gpu-power=4` 验证 SMMU context 能否建立（GPU-PORT.md 选项 A 的真机验证点，该地址此前只验证过 4 MiB 可写）。
+4. **SpringBoard/设置界面**：text_fixups 已生效（`ext-fixup … applied`），启动约束注意 `AMFI: Launch Constraint Violation (not enforcing)` 是否转 enforcing。
+5. **认证读取/owner-root**：OS/SystemOS DMG 已拉取并校验；生成 verified-root policy bundle，补 live storage ABI snapshot，再开 `VERIFIED_ROOT_PROBE`/`OWNER_ROOT_*`/`BOOT_PROGRESS`（`uke-full-plus_defconfig`）。
+6. `panic_screen` 已启用；无 panic 文本的复位看 pram。每次测试后更新本文档（KernelSU 备份在 `uke-port/data/*_kernelsu.img`）。
 
 ---
 
@@ -405,6 +404,16 @@ fastboot reboot
 | 2026-10-22 | uke DT 是精简树 | `make-uke-adt.py` 手写 16 个节点，无 `reserved-memory`、无 GPU/GMU/SMMU 节点；DarwinBoot 只读 `kernel.macho.adt` 交给内核（`Args->DeviceTree`），完整 DTB（vendor_boot 1.8 MB、boot 475 KB，都含 kgsl/reserved-memory）都在设备上但没接进内核 —— 这也是驱动改用 `uke-gpu-inputs.json` 常量取窗口的原因 |
 | 2026-10-22 | 分区方案对比 | sheng 把 payload 放 `userdata`（boot 只能装 BootShim+FD：窗口 78 MiB < 内核 92 MiB），不动 `vendor_boot`，内核直接吃真机 DTB；uke 反过来：payload 放 `vendor_boot` 的 vendor ramdisk（`patch-vendor-boot.py` 原样保留 stock DTB），`boot` 装 UEFI |
 | 2026-10-22 | 文档 | `docs/GPU-PORT.md` 新增 "Device results so far"、mode 4 连续分配分析、DT/ADT 对比与 A/B/C 三条路线 |
+| 2026-10-22 | sheng 对比分析 | 只读对比 `UniXNU-sheng` 与 uke 路线：结构同源，分歧在 bring-up 权宜（unverified 存储、6 个 xnu 补丁、pram 日志、旧版 display 基线）；vendor_boot 交付/UFS 窗口/内存图是设备强制，保留 |
+| 2026-10-22 | board.toml 补齐 | 摘上游 3 提交（`1bcc447`/`e02d1c9`/`12ecfd1`）进 core：`native-text-fixup.patch` + `payload.py` text_fixups 管线；`make-uke-adt.py` 加 `--persistent-data`/`--text-fixup`；board 补 `trust_cache_sha256`、4 条 21H461 text_fixups、`persistent_data=true`、`native-ufs-root`/`allow-unverified`/`sheng-data-persist=2`/`sheng-lite`/`sheng-aks` |
+| 2026-10-22 | display 重基线 | `LegacyDisplayProbe.cpp` 以 sheng 版为基线（tail-queue swap 修复 int-132、GPU hand-off presenter、client interpose），保留 uke 增量（default-surface 播种/收养、slot242 fallback、client-panic）；builder 同步合并 |
+| 2026-10-22 | watchdog 完整版 | `BootWatchdogPolicy.c` 采用 sheng 全量（`lite_jobs` 作业隔离、`sheng_boot_setup_reset`、分块写入/原位重写），保留 uke 的 `com.apple.watchdog` 禁用键 |
+| 2026-10-22 | GPU 内存上游形状 | revert fork `fbedbed`（scattered-icache 实为 no-op）；新增 `NativeAdrenoMemory::adopt`（`IODeviceMemory::withRange` 接管既有物理页，同 sheng GpuPowerProbe hand-off）+ `GmuAllocator::adopt`（预留池切分，IOVA 同 allocate）；预留区三处对齐：UEFI MemoryMapLib `GMU Pool` 0xC8000000/32 MiB（2–4 GiB 空洞）、ADT `gmu-memory` 节点、board.toml `[gpu]` `gmu_pool_*` → `ShengGmuSource.h` |
+| 2026-10-22 | 提交推送 | 4 仓库推送：NativeAdreno fork `1f24cda`、core `a853953`（含 pin）、device 3 提交（`d1282e9`/`ee5d7f1`/`8d9a465`）、uefi-uke `9d08712`；补丁集重放 61 个全 PASS（含 `native-text-fixup.patch`） |
+| 2026-10-22 | CI 内核 | run `39790766052`（`uke-gpu-userland_defconfig`）成功；full 内核 `kernel.macho` 52,486,144 B，sha256 `3195da38…`；符号验证 `NativeAdrenoMemory::adopt`/`GmuAllocator::adopt`/`sheng_boot_watchdog_policy`/`native_legacy_swap_stage`/`default_surface_*` 全在（注：`uke-kernel` 产物是无归档版，刷机用 `uke-kernel-full`） |
+| 2026-10-22 | 实机轮 1 | panic `offline scratch Data mount failed: 2 @kern_exec.c:7488`（ENOENT）：打 payload 漏传 `--data-ramdisk`，payload 无 `scratch-data.img` —— 构建疏漏，非代码问题 |
+| 2026-10-22 | 实机轮 2/3 | 带 214 GiB 种子重建后：`sheng bring-up watchdogd launch policy: 0`（watchdog policy 真机验证 ✓）、OwnerData 挂载成功（vol-uuid 匹配 ✓）、`UKE: display surface adopted … sid=1`（default-surface 收养 ✓）、`ext-fixup: BTAudioHALPlugin+0x38bec applied`（text_fixups 真机生效 ✓）、SystemOS/OS 卷 ready、`Early boot complete`、`driverkitd is active`、`s_map_display_type` display client 打开、**Apple logo 显示**、`apfs_trim_to_prev_fsize`（Data 可写）；shared_region 首启抖动后自愈 |
+| 2026-10-22 | 当前卡点 | Apple logo 后无预警重启（尾部：`s_map_display_type` → `apfs_trim` ×3 → `ext-fixup BTAudioHALPlugin` → logo → 清屏 → 重启，无 panic 文本）；待读 pram（菜单 `last panic:` 或 ramoops 高半区 0xC4200000）定位是 display panic 还是 watchdog 复位 |
 
 ---
 
