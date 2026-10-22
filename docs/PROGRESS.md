@@ -397,6 +397,14 @@ fastboot reboot
 | 2026-10-22 | host 校验 | `check-uke-gpu.py`、`check-uke-gpu-host.py`、`check-gpu-power-host.py` 通过；`ci.yml` 已接入；实机未启动 |
 | 2026-10-22 | GPU 构建绿 | run `39685196474` 的 `kernel` + `full` 两 job 成功；A732 头文件、NativeAdreno（-Werror）、43 kit objects、staged AGXAccelerator、legacy display + `GpuPowerProbe.o` 全部生成；`kernel.macho` 52,416,512 B，sha256 `6883deac…`；CI 无固件，链接 weak 空镜像（预期） |
 | 2026-10-22 | GPU userland 构建绿 | run `39718041346` 两 job 成功；`uke-gpu-userland_defconfig` 内核 52,465,664 B，sha256 `db984d4e…`；修复 owner-cache 补丁与探针的 `native_gpu_addon_*` 重复定义（探针改为 weak），探针行同步到 `UKE GPU1..4:` 内核日志；本地准备 m1/m3/m5/m6 vendor_boot 测试镜像 |
+| 2026-10-22 | 实机 mode 1 | `gcc=ok cc=ok sm=skip gp=skip io=0 pw00`；GCC/GPUCC 可读，CX 未上电故 SMMU/GPU 窗不可读 |
+| 2026-10-22 | 实机 mode 3 | `gcc=ok cc=ok sm=ok gp=skip io=0 pw11`；CX GDSC + SMMU vote 时钟已开，SMMU 回 `SM 00290406 4c017e18 40000016 v0 R00000000`（ID0 是 sheng MMU-500），无 fault —— 迄今最关键的一步 |
+| 2026-10-22 | 实机 mode 4 失败 | 停在 GMU context step 1（`st=2bd` kIOReturnNoMemory）：`vm_page_find_contiguous(num=4092)` 与 `(num=1027)` 均找不到物理连续页（scanned 47503，wired ~34485） |
+| 2026-10-22 | 分散 icache 无效 | fork `fbedbed` 的 icache `contiguous=false` 改动无效：XNU `IOBufferMemoryDescriptor::initWithPhysicalMask()` 只要 `physicalMask` 非零就强制走 `kmem_alloc_contig()`，标志位没有作用空间 |
+| 2026-10-22 | sheng 连续内存机制 | sheng 不自己分配 GMU 载荷：`ShengGmuMemory` 只有 cpu/bytes/iova，物理地址由 `IODeviceMemory::withRange()` 直接取已存在的物理区间；sheng 的 DT 是完整真实树（`fetch-sheng-dts.py` 编译主线 DTS），带完整 `reserved-memory`，故可 `withRange` 到预留区 |
+| 2026-10-22 | uke DT 是精简树 | `make-uke-adt.py` 手写 16 个节点，无 `reserved-memory`、无 GPU/GMU/SMMU 节点；DarwinBoot 只读 `kernel.macho.adt` 交给内核（`Args->DeviceTree`），完整 DTB（vendor_boot 1.8 MB、boot 475 KB，都含 kgsl/reserved-memory）都在设备上但没接进内核 —— 这也是驱动改用 `uke-gpu-inputs.json` 常量取窗口的原因 |
+| 2026-10-22 | 分区方案对比 | sheng 把 payload 放 `userdata`（boot 只能装 BootShim+FD：窗口 78 MiB < 内核 92 MiB），不动 `vendor_boot`，内核直接吃真机 DTB；uke 反过来：payload 放 `vendor_boot` 的 vendor ramdisk（`patch-vendor-boot.py` 原样保留 stock DTB），`boot` 装 UEFI |
+| 2026-10-22 | 文档 | `docs/GPU-PORT.md` 新增 "Device results so far"、mode 4 连续分配分析、DT/ADT 对比与 A/B/C 三条路线 |
 
 ---
 

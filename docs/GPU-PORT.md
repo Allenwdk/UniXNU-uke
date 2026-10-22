@@ -118,6 +118,135 @@ pins; the second compiles and runs `NativeAdrenoProfile`'s A740/A732 test and
 checks the generated headers; the third runs the gated GPU power sequence over
 a software register peer.
 
+## Device results so far
+
+Three boots have been run on the uke tablet. The probe's four rows are the
+evidence; the kernel is `be25aa09…` (run `39725958294`) unless noted.
+
+| Mode | Result | Meaning |
+| --- | --- | --- |
+| 1 | `gcc=ok cc=ok sm=skip gp=skip io=0 pw00` | GCC and GPUCC read back; the SMMU and GPU windows are not readable yet because the CX rail is off. |
+| 3 | `gcc=ok cc=ok sm=ok gp=skip io=0 pw11` | CX GDSC and the SMMU vote clocks are on; the SMMU answers `SM 00290406 4c017e18 40000016 v0 R00000000` (ID0 `0x00290406` is the sheng MMU-500; ID1 `0x4c017e18` gives 24 context banks, 1 S2CR, 32 pages) with no fault. |
+| 4 | stopped in GMU context step 1 | The context allocator cannot get its memory. See below. |
+
+Mode 3 is the real milestone so far: the CX rail powers, the SMMU is readable
+and no fault is reported. Mode 4 is the first step that needs real memory.
+
+### Mode 4: the contiguous allocation
+
+Mode 4 builds the GMU's own SMMU context. It stops at step 1 (`Allocate`) with
+`st=2bd` (`kIOReturnNoMemory`) and the XNU VM prints:
+
+```
+vm_page_find_contiguous(num=4092,low=16777215): found 0 pages ... scanned 47503 pages ...
+vm_page_find_contiguous(num=1027,low=16777215): found 0 pages ... scanned 47503 pages ...
+```
+
+4092 pages is the 16 MiB GMU icache (`0xffc000`); 1027 pages is the native4K
+table pool. The allocator asks for the icache first and the table pool last
+(`NativeAdrenoGmuMemory.cpp`), so the order the two lines appear in does not
+matter: both requests are for *physically contiguous* memory, and both fail
+after userland has wired ~34 000 pages. By then DRAM has no 16 MiB contiguous
+run left, and XNU's scan also demands the run to start on a page aligned to the
+mask's own granularity (64 GiB for a 36-bit mask, 1 TiB for a 40-bit one).
+
+**The `contiguous` flag of `NativeAdrenoMemory::allocate()` cannot change this.**
+XNU's `IOBufferMemoryDescriptor::initWithPhysicalMask()` derives an alignment
+from the physical mask and, when the mask is non-zero, always takes the
+`kmem_alloc_contig()` path (`iokit/Kernel/IOLib.cpp`):
+
+```c
+if (physicalMask && (alignment <= 1)) {
+    alignment   = ((physicalMask ^ (-1ULL)) & (physicalMask - 1));
+    highestMask = (physicalMask | alignment);
+    alignment++;
+    ...
+}
+...
+kr = kmem_alloc_contig(kernel_map, &virt, size, alignMask, (ppnum_t)atop(maxPhys), ...);
+```
+
+The scattered-icache change in the NativeAdreno fork (`fbedbed`) therefore has
+no effect: the mask alone forces the contiguous path. It is kept because the
+GMU's SMMU translates every page anyway and a scattered icache is acceptable
+to the mapping code, but it is not what unblocks mode 4.
+
+## Where the memory has to come from
+
+Upstream sheng does not allocate the GMU payloads at all. `ShengGmuMemory` has
+no physical address (`package/ShengGmu.h`), and the payload handoff is:
+
+```c
+IODeviceMemory *m = IODeviceMemory::withRange(payloads[i].physical, payloads[i].bytes);
+gPayloadMaps[i] = OSSharedPtr<IOMemoryMap>(m->map(kIOMapAnywhere|kIOMapWriteCombineCache), OSNoRetain);
+```
+
+`IODeviceMemory::withRange()` takes memory that **already exists** at a
+physical address, so sheng never goes through XNU's allocator for the GMU
+icache. The uke `NativeAdrenoGmuContext` instead asks XNU for the memory, which
+is what fails.
+
+### uke's device tree is a reduced tree, sheng's is the real one
+
+This is the reason the sheng route is not available verbatim on uke.
+
+| | sheng | uke |
+| --- | --- | --- |
+| Device tree | the real mainline DTS (`scripts/fetch-sheng-dts.py` compiles `sm8550-xiaomi-sheng.dts`) or the on-device `vendor_boot` DTB | a hand-written reduced tree (`scripts/make-uke-adt.py`, 16 `node(...)` calls) |
+| `reserved-memory` | present in full | **absent** |
+| GPU / GMU / SMMU nodes | present, with `reg`, `reg-names`, `compatible` | **absent** |
+
+DarwinBoot passes the ADT to the kernel, not the `vendor_boot` DTB
+(`drivers/DarwinBoot/DarwinBootPkg/Driver/DarwinBoot.c`):
+
+```c
+CopyMem (TreePath, Request->KernelPath, Length);
+StrCatS (TreePath, Length / sizeof (CHAR16) + 11, L".adt");
+Status = ReadFile (Root, TreePath, SIZE_16MB, &Tree, &TreeSize);
+...
+Args->DeviceTree = Kernel.Base + TreeAddress - Address;
+```
+
+So the kernel sees the reduced tree, which has no `reserved-memory` and no GPU
+node. That is also why the driver reads its register windows from the recorded
+constants in `scripts/data/uke-gpu-inputs.json` instead of the DT: the DT has
+no `kgsl_3d0` node to read. (`NativeAdrenoService.cpp`'s `providerChipId()` and
+`windowNamed()` are written against a real DT and currently find nothing.)
+
+**Both full trees are already on the device, and neither one reaches the
+kernel.** The flashed `vendor_boot` carries the stock 1 885 893-byte DTB, and
+the flashed `boot` carries a 475 556-byte one (`gzip(BootShim+FD) + tree`, see
+`scripts/unixnu/bootimg.py`); both have the complete `reserved-memory`
+subtree and the GPU nodes:
+
+```
+reserved_memory: reserved-memory { ... }
+    reg-names = "kgsl_3d0_reg_memory", "rscc", "cx_dbgc", "cx_misc", "qdss_etr", "qdss_gfx", "qdss_tmc";
+    compatible = "qcom,adreno-gpu-gen7-11-0", "qcom,kgsl-3d0";
+    compatible = "qcom,qsmmu-v500", "qcom,adreno-smmu";
+```
+
+Those DTBs are for the **Android** boot chain: the stock ABL hands the
+`vendor_boot` DTB to the Android kernel, and the `boot` DTB is the one the
+Mu-Silicium bootloader appends for the Darwin chain. DarwinBoot does not read
+either of them — it reads `kernel.macho.adt` from the payload volume and puts
+**that** into `boot_args.DeviceTree`. So the full trees are available to be
+used, but nothing currently connects them to the kernel.
+
+### Options
+
+| Option | What it does | Risk |
+| --- | --- | --- |
+| A. Add a 16 MiB `reserved-memory` node to the ADT | Declare one `no-map` region in `make-uke-adt.py` and let `NativeAdrenoGmuMemory` adopt an existing physical range instead of allocating it. Verifies that the GMU SMMU context can be built. | Needs the region's physical address to be free of the Android `reserved-memory` claims. |
+| B. Publish the real DTB to the kernel instead of the reduced ADT | DarwinBoot would read a real `.dtb` sidecar (the stock `vendor_boot` DTB is already in the flashed image) instead of `.adt`, so the kernel gets `reserved-memory` and the GPU/GMU/SMMU nodes. Removes the need for the recorded window constants. | The tree is 1.8 MiB and carries Android-side memory reservations; XNU's handling of all of them is unverified. |
+| C. Reserve the pool in the kernel early | Move `NativeAdrenoMemory::reservePool()` from context build time to `NativeAdrenoGpuService::start()`, before userland has fragmented memory. | Depends on DRAM still having a 16 MiB run that early; not verifiable without a device. |
+
+Option A is the smallest step that reaches the actual milestone (a working GMU
+SMMU context). Option B is the shape upstream sheng has: sheng's kernel gets
+the real `vendor_boot` DTB, so its `IODeviceMemory::withRange()` can reach the
+`reserved-memory` regions. On uke the same data is present in the flashed
+images but the DarwinBoot -> ADT handoff drops it.
+
 ## Device test procedure
 
 The GPU probe is compiled into the kernel; the payload only carries it and the
@@ -133,6 +262,53 @@ the power/clock steps, and only then the firmware/GMU/CP path.
   so `fastboot set_active a` before each test and check
   `fastboot getvar slot-unbootable:a`.
 - The unique chip id and the trust cache are build inputs, not repository data.
+
+### Where the payload lives: uke and sheng differ
+
+The two ports put the Darwin payload in different partitions, and the reason is
+a size limit, not a preference.
+
+| | sheng | uke |
+| --- | --- | --- |
+| Payload location | the `userdata` partition, as a FAT32 volume | the `vendor_boot` vendor ramdisk |
+| `boot` partition | replaced, but carries only BootShim + UEFI FD (no kernel) | replaced with the UEFI image |
+| `vendor_boot` | **not** replaced; keeps the stock DTB and supplies it to the kernel | **replaced**; the payload is the vendor ramdisk |
+| Flash command | `fastboot flash userdata <payload>` | `fastboot flash boot` + `fastboot flash vendor_boot` |
+
+sheng could not put the kernel in `boot`: `scripts/build-sheng-payload.py`
+records the reason,
+
+```
+Kernel-in-boot.img is physically impossible: the stock ABL kernel window is
+~78 MiB before its own ~31 MiB vendor ramdisk + ~2 MiB DTB staging, while
+the kernel alone is 92 MiB (73 MiB LZMA). The v4 boot image carries only
+BootShim + UEFI FD.
+```
+
+so sheng's `boot` image keeps the stock DTB source and its payload goes to
+`userdata` (`fastboot flash userdata build/sheng/boot/sheng-userdata-payload.img`).
+Its `vendor_boot` is left alone, which is why the sheng kernel gets the stock
+`vendor_boot` DTB with ABL's runtime memory fixups
+(`'dtb_source': 'on-device vendor_boot (ABL runtime fixups); none appended'`).
+
+uke goes the other way. The uke ABL delivers the `vendor_boot` vendor ramdisk
+and ignores the boot image ramdisk (`scripts/patch-vendor-boot.py`), so the
+payload is built into a `vendor_boot` v4 image:
+
+```sh
+fastboot flash boot out/uke/boot/boot.img
+fastboot flash vendor_boot /path/to/vendor_boot_uke_full.img
+```
+
+`patch-vendor-boot.py` takes the stock `vendor_boot` header, DTB, vendor ramdisk
+table and bootconfig and only replaces the ramdisk content, so the **stock DTB
+is preserved** in the flashed image even though uke does not use it. The uke
+ABL also rejects `fastboot boot` ("Failed to load/authenticate boot image"), so
+the flash path above is the only one that works.
+
+The consequence for the GPU work is the one described above: uke's *kernel*
+sees the reduced ADT, not the `vendor_boot` DTB that the flashed image still
+carries.
 
 ### 1. Seed the private firmware (needed for modes 7 and above)
 
