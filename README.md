@@ -15,8 +15,9 @@ The device is not connected yet, so the storage/root runtime path is untested.
 Progress, remaining work and the update rule: **[docs/PROGRESS.md](docs/PROGRESS.md)**.
 The kernels are built in GitHub Actions with a cached `out/` tree; the payload
 and boot image are built on Linux. The userdata image still needs macOS
-`hdiutil` (or a Linux port of the DMG conversion). GPU port preparation and the
-A732 values are in **[docs/GPU-PORT.md](docs/GPU-PORT.md)**.
+`hdiutil` (or a Linux port of the DMG conversion). The Adreno 732 port builds
+and links in `uke-gpu_defconfig`; its on-device GMU/CP/SMMU/scanout path is
+still untested. Details are in **[docs/GPU-PORT.md](docs/GPU-PORT.md)**.
 
 ## Layout
 
@@ -37,6 +38,10 @@ A732 values are in **[docs/GPU-PORT.md](docs/GPU-PORT.md)**.
   it is not built by CI.
 - `configs/uke-full-minus-pmgr_defconfig` — PMGR + legacy display only; used
   to show that PMGR is not the root-device blocker.
+- `configs/uke-gpu_defconfig` — the stage-6 full set plus the A732 NativeAdreno
+  profile, GMU/vote headers and the GPU power probe. It builds without vendor
+  firmware (weak empty images; the GMU refuses at runtime) and is the
+  configuration for a first GPU bring-up.
 - `configs/bootstrap_defconfig` — no-device-archive bootstrap pass: compile
   records plus the prelinked candidate the legacy display ABI builder and the
   UFS binder need.

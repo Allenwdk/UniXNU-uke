@@ -84,6 +84,13 @@ Firmware pins (collected from the rooted device on 2026-10-21):
 - `configs/uke-gpu_defconfig` is the buildable A732 configuration: the stage-6
   set plus `CONFIG_XNU_NATIVE_ADRENO=y`. The shipping full/userland configs stay
   off until a device boot qualifies the path.
+- CI run `39685196474` (2026-10-22) built `uke-gpu_defconfig` green. The
+  archive chain produced the A732 headers, the NativeAdreno service, 43 kit
+  objects, the staged AGXAccelerator and the legacy display with
+  `GpuPowerProbe.o`; the resulting `kernel.macho` is 52,416,512 bytes,
+  sha256 `6883deac638d8e20479fc7559c692bd8e22720441d9e24f8d0582a8eadc43b67`.
+  That run had no vendor firmware, so the weak empty images were linked, as
+  intended.
 
 Host checks (Linux, no Apple SDK):
 
