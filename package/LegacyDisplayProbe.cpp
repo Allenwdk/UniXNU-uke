@@ -329,6 +329,9 @@ static ClientStat *statFor(IOUserClient *client) {
 }
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
     ClientStat *stat=statFor(client);
+    // Identify the user-client selector that enters the original power transition
+    // before the original call resets the tablet (the display is GOP-powered).
+    if(stat && selector<16 && !stat->selector_calls[selector])printf("UKEMEM: client selector %u\n",(unsigned)selector);
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
