@@ -264,7 +264,7 @@ text_fixups = [
 [payload.adt]
 tool = "scripts/make-uke-adt.py"
 chip_id = "207"
-owned_memory_size = "0x10000000"     # largest contiguous free run on uke is ~326 MiB
+owned_memory_size = "0x180000000"    # the full 6 GiB high range (0x980000000-0xB00000000); the kernel VM was capped at 256 MiB
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
 # mount(8) phase 1 requires a boot manifest hash to name /private/preboot/<hash>.
 # uke has no Apple personalization manifest, so this is an explicit bring-up
