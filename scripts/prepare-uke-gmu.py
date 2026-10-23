@@ -543,6 +543,12 @@ def build(args):
               '#define SHENG_GMU_CM3_FATAL_MASK %su' % hex(regs['cm3_fatal_mask']),
               '#define SHENG_GMU_POOL_BASE UINT64_C(%s)' % hex(int(str(pool_base), 0)),
               '#define SHENG_GMU_POOL_BYTES %du' % int(str(pool_bytes), 0),
+              # The last 8 MiB of the reserved pool hold the GPU context's SMMU tables and SQE/ring
+              # buffers, adopted the same way the GMU payloads are. The GMU allocator uses ~21 MiB
+              # of the 32 MiB pool, so the two regions do not overlap.
+              '#define SHENG_GPU_POOL_BASE (UINT64_C(%s) + UINT64_C(0x%x))' %
+              (hex(int(str(pool_base), 0)), int(str(pool_bytes), 0) - 0x800000),
+              '#define SHENG_GPU_POOL_BYTES 0x800000u',
               'static const uint8_t sheng_gmu_firmware_sha256[32]={%s};' %
               ','.join('0x' + gmu_pin['sha256'][i:i + 2] for i in range(0, 64, 2)),
               'static const uint64_t sheng_gmu_window_physical[5]={%s};' %
