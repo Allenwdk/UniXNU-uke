@@ -1,8 +1,10 @@
 # USB serial debug channel (uke)
 
-Status: **the read-only probe and the warm CDC-ACM/msgbuf path are built into
-the full kernel (CI run `39663424201`, 52,146,176 B, sha256 `2d31d5c0…`); the
-serial path is opt-in and awaits hardware validation.**
+Status: **the warm CDC-ACM path now gets through GDSC, clocks and the GCC
+resets on hardware and stops at the DWC3 core soft reset; the ordering fix
+(`7a29ee1`) is built but not yet booted.** The read-only probe and the warm
+CDC-ACM/msgbuf path are built into the full kernel; no `/dev/ttyACM0` has
+appeared yet.
 
 ## Why
 
@@ -69,10 +71,41 @@ the probe result into the existing pram log ring.
 - A zero/`0xffffffff` PHY snapshot usually means the PHY rail or reference
   clock is off; that is the signal to add the cold-init path.
 
+## First hardware result (2026-10-23)
+
+`native-usb-serial=1` on `uke-usb_defconfig` printed
+
+```text
+NativeUsbSerial: start probe=0 serial=1
+NativeUsbSerial: warm: gdsc
+NativeUsbSerial: warm: clocks
+NativeUsbSerial: warm: bcr
+NativeUsbSerial: warm: dwc3-reset
+NativeUsbSerial: DWC3 soft reset did not complete
+NativeUsbSerial: warm init failed
+NativeUsbSerial: serial start failed
+```
+
+so GDSC, the branch gates and the GCC resets are all fine, and the TCSR word
+was never touched. Two ordering bugs are the likely cause and are fixed in
+`7a29ee1`:
+
+- the QSCRATCH UTMI pipe-clock select ran *after* `DCTL.CSFTRST`; the wrapper
+  has to hand the core its pipe clock first (`dwc3-qcom` order);
+- the eUSB2 PHY reset pulse ran without the reprogramming table, which wipes
+  what ABL left in the PHY register file. The pulse now only happens with
+  `native-usb-phy=1`.
+
+`GUSB2PHYCFG.SUSPHY` is also cleared now, per the DT's
+`snps,dis_u2_susphy_quirk`. If the reset still times out, the next log line
+prints `gsnpsid/gctl/gsts/dctl/dsts`; `gsnpsid=ffffffff` means the wrapper is
+not decoding its window at all, which would point at the QSCRATCH core reset
+bit rather than at the clocks.
+
 ## Warm CDC-ACM + msgbuf (implemented, opt-in)
 
-1. Warm init: GDSC on, USB branch gates/resets, eUSB2 PHY 19.2 MHz sequence,
-   QSCRATCH UTMI pipe clock + VBUS override, DWC3 soft reset, apps-SMMU
+1. Warm init: GDSC on, USB branch gates/resets, QSCRATCH UTMI pipe clock,
+   DWC3 soft reset, apps-SMMU
    stream `0x40` bypass, physically-contiguous DMA.
 2. DWC3 device mode: event ring, EP0 control, EP1 notification, EP2 bulk IN,
    EP3 bulk OUT; CDC-ACM descriptors from `UsbDescriptors.h`.
@@ -97,6 +130,13 @@ touches the TCSR clock-ref word at `0x1f4b118`. Both are opt-in and off by
 default: the first probe boot died on the log line that read TCSR, and the
 stock DT assigns `0x1f4b000` to the ADSP as its `ipc_hwmutex` page even though
 the address also falls inside the `tcsrcc` window.
+
+The USB payload also needs the UFS bring-up arguments the CPU baseline uses,
+or the kernel panics with `Failed to mount root device` before the driver is
+any use: `native-ufs-root=1 native-ufs-allow-unverified=1
+sheng-data-persist=2 sheng-log=1 sheng-smp=0`. `sheng-log=1` keeps the pram
+ramoops ring recording, which is the only way to read the log back when the
+serial path itself is what fails.
 
 The first version deliberately does **not** become the `kprintf` console and
 does **not** implement KDP. Those need early-boot or polled paths and are a

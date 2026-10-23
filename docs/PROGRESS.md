@@ -348,6 +348,9 @@ fastboot reboot
 | 2026-10-22 | 当前阻塞 | 系统 alive（`CommCenter`/`logd`/`coresymbolicationd`/APFS tx），但 `IOMFB: default_fb_surface: No Default FB Surface found` + `display type is 0`，屏幕停在 Apple logo；下一步 NativeMobileDisplay / Adreno 732（暂不启动） |
 | 2026-10-22 | USB serial | 独立 worktree `uke-usbserial` 新增 `NativeUsbSerial`：`native-usb-probe=1` 只读 dump DWC3/PHY/GCC/SMMU；`native-usb-serial=1` 实现热接管 CDC-ACM + msgbuf 日志流，待实机验证 |
 | 2026-10-22 | USB serial CI | run `39663424201` 两 job 绿；archive 10/16 `NativeUsbSerial` 通过 `-Werror` + ARM64/iOS 17 对象审计；full kernel 52,146,176 B，sha256 `2d31d5c0…`；kernel 符号含 `NativeUsbSerial` 与 personality；待 probe/CDC-ACM 实机 |
+| 2026-10-23 | USB serial 实机 | `native-usb-serial=1` 启动到 `warm: gdsc` → `clocks` → `bcr` 全部通过，随后 `DWC3 soft reset did not complete`，`warm init failed`、`serial start failed`；同一启动最后 panic `Failed to mount root device`（payload 缺 `native-ufs-root=1 native-ufs-allow-unverified=1` 等 cpu1 参数）。TCSR `0x1f4b118` 全程未触碰，说明它就是之前那次复位的触发点 |
+| 2026-10-23 | USB serial 修复 | `7a29ee1`：QSCRATCH UTMI 时钟选择移到 DWC3 软复位**之前**（`dwc3-qcom` 顺序），eUSB2 PHY 复位脉冲只在 `native-usb-phy=1` 时做（否则会擦掉 ABL 的 PHY 配置），按 DT `snps,dis_u2_susphy_quirk` 清 SUSPHY，并在复位前后打印 `gsnpsid/gctl/gsts/dctl/gsts`；CI `39921840675` 绿，kernel `51d2e350…` |
+| 2026-10-23 | USB serial 构建 | CI `39919818930`（`uke-usb_defconfig`）绿；`kernel` job 的归档步骤曾对已禁用的 display 目录 `ls` 而失败，`dfca0e6` 修掉；`uke-userland_defconfig` 在旧基线上撞 `NativeLegacyDisplay.cpp:408 override` 回归，故本线统一用 `uke-usb_defconfig` |
 
 ---
 
