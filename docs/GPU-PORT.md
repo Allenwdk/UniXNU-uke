@@ -127,7 +127,8 @@ evidence; the kernel is `be25aa09…` (run `39725958294`) unless noted.
 | --- | --- | --- |
 | 1 | `gcc=ok cc=ok sm=skip gp=skip io=0 pw00` | GCC and GPUCC read back; the SMMU and GPU windows are not readable yet because the CX rail is off. |
 | 3 | `gcc=ok cc=ok sm=ok gp=skip io=0 pw11` | CX GDSC and the SMMU vote clocks are on; the SMMU answers `SM 00290406 4c017e18 40000016 v0 R00000000` (ID0 `0x00290406` is the sheng MMU-500; ID1 `0x4c017e18` gives 24 context banks, 1 S2CR, 32 pages) with no fault. |
-| 4 | stopped in GMU context step 1 | The context allocator cannot get its memory. See below. |
+| 4 | first attempt faulted inside `bzero` | With the reserved-pool `adopt` path, the device took an unaligned data abort at `_bzero+0x44` (`dc zva`): the default `IODeviceMemory` mapping of the pool is not cacheable. Fixed in NativeAdreno `59bcc5a` (write-combine map plus store zeroing); retest pending. |
+| 4 (before adopt) | stopped in GMU context step 1 | The context allocator could not get its memory. See below. |
 
 Mode 3 is the real milestone so far: the CX rail powers, the SMMU is readable
 and no fault is reported. Mode 4 is the first step that needs real memory.
@@ -170,6 +171,20 @@ The scattered-icache change in the NativeAdreno fork (`fbedbed`) therefore has
 no effect: the mask alone forces the contiguous path. It is kept because the
 GMU's SMMU translates every page anyway and a scattered icache is acceptable
 to the mapping code, but it is not what unblocks mode 4.
+
+### Mode 4 with the reserved pool: the mapping attribute
+
+`NativeAdrenoMemory::adopt` wraps the board's `GMU Pool` with
+`IODeviceMemory::withRange` and then mapped it with the default
+`kIOMapAnywhere`. That range lies outside the kernel's DRAM, so the mapping is
+not cacheable; the `bzero` that follows uses `DC ZVA`, and on that mapping the
+instruction takes an alignment abort (`esr=0x96000061`, `far` inside the 16 MiB
+icache). NativeAdreno `59bcc5a` maps the pool with
+`kIOMapAnywhere|kIOMapWriteCombineCache` — the same attribute sheng's
+`GpuPowerProbe` asks for the payload hand-off — and zeros it with ordinary
+8-byte stores. Cache maintenance by VA is skipped: the pages are outside
+`gPhysBase..gPhysBase+gPhysSize`, so `NativeAdrenoMaintainPhysicalPages`
+already ignores them, and non-cacheable writes are visible to the SMMU.
 
 ## Where the memory has to come from
 
