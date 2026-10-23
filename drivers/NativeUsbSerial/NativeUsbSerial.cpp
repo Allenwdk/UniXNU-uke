@@ -1342,11 +1342,23 @@ NativeUsbSerial::serialStart(void)
 		IOLog("NativeUsbSerial: EP0 configuration failed\n");
 		return false;
 	}
+	// Arm EP0 before the reconnect: the host answers the pull-up with a bus
+	// reset and a setup packet that must find a valid TRB.
+	ep0Arm();
 	IOLog("NativeUsbSerial: serial: run\n");
+	// ABL enumerated its own device on this controller, so the host keeps the
+	// descriptors it already read unless it sees a disconnect. Drop the USB2
+	// pull-up (DCTL.RUN_STOP), let the host notice, then connect again with
+	// our DCFG speed. This is dwc3_gadget_pullup()'s sequence.
+	uint32_t runDctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
+	wr32(fWrapper, UKE_USB_DWC3_DCTL, runDctl & ~UKE_USB_DWC3_DCTL_RUN_STOP);
+	IOSleep(200);
 	wr32(fWrapper, UKE_USB_DWC3_DCTL,
 	    rd32(fWrapper, UKE_USB_DWC3_DCTL) | UKE_USB_DWC3_DCTL_RUN_STOP);
+	IOSleep(200);
+	IOLog("NativeUsbSerial: serial: run dctl=%08x dsts=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
 	IOLog("NativeUsbSerial: serial: setup\n");
-	ep0Arm();
 
 	fTxMem = static_cast<uint8_t *>(IOMalloc(kTxBytes));
 	if (fTxMem == nullptr) {
