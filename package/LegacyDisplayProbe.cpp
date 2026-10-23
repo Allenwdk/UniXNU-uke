@@ -360,28 +360,6 @@ static void dumpSwapInput(const IOExternalMethodArguments *args) {
         printf("%s\n",line);
     }
 }
-static uint64_t swapActiveHead(void) {
-    uint64_t active=0;
-    const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
-    if(object)memcpy(&active,object+5496,8);
-    return active;
-}
-static uint64_t swapRequestSnapshot;
-static void dumpRequest(const char *tag,uint64_t req) {
-    // The kernel swap object the SwapEnd gate action walks: vptr, ID, started
-    // flag, next link and the surface pointer the driver validates.
-    if(!req)return;
-    uint64_t vptr=0,fn4=0,surface=0,next=0;uint32_t id=0;uint8_t started=0;
-    memcpy(&vptr,reinterpret_cast<const void *>((uintptr_t)req),8);
-    memcpy(&id,reinterpret_cast<const void *>((uintptr_t)req+788),4);
-    memcpy(&started,reinterpret_cast<const void *>((uintptr_t)req+1355),1);
-    memcpy(&surface,reinterpret_cast<const void *>((uintptr_t)req+2624),8);
-    memcpy(&next,reinterpret_cast<const void *>((uintptr_t)req+2960),8);
-    if(vptr)memcpy(&fn4,reinterpret_cast<const void *>((uintptr_t)vptr+32),8);
-    printf("UKE: %s req=%llx vptr=%llx fn4=%llx id=%x started=%x surf0=%llx next=%llx\n",
-        tag,(unsigned long long)req,(unsigned long long)vptr,(unsigned long long)fn4,
-        (unsigned)id,(unsigned)started,(unsigned long long)surface,(unsigned long long)next);
-}
 static void dumpSwapQueue(const char *tag,unsigned nth,IOReturn status) {
     // The original current/pending pointers, the active-list head the SwapEnd
     // gate action walks (+5496) and the family state words, including the
@@ -416,8 +394,6 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
         // The original SwapEnd gate action consumes the request from the
         // +5496 list before returning, so dump and drive the queue first.
         dumpSwapQueue("swap-before",stat->selector_calls[5]+1,kIOReturnSuccess);
-        swapRequestSnapshot=swapActiveHead();
-        dumpRequest("req-before",swapRequestSnapshot);
         void *display=reinterpret_cast<void *>((uintptr_t)native_legacy_object);
         if(display) {
             void **vptr=*reinterpret_cast<void ***>(display);
@@ -431,10 +407,7 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
     }
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
     if(traced)printf("UKEMEM: sel %u exit %x\n",(unsigned)selector,(unsigned)status);
-    if(stat && selector==5 && stat->selector_calls[5]<3) {
-        dumpSwapQueue("swap-end",stat->selector_calls[5]+1,status);
-        dumpRequest("req-after",swapRequestSnapshot);
-    }
+    if(stat && selector==5 && stat->selector_calls[5]<3) dumpSwapQueue("swap-end",stat->selector_calls[5]+1,status);
     if(stat && selector==6 && stat->selector_calls[6]<3) dumpSwapQueue("swap-wait",stat->selector_calls[6]+1,status);
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
