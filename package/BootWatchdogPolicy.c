@@ -76,6 +76,7 @@ extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation
 // this VM. Android's gh_virt_wdt pets it from a timer; the UEFI pet only covers
 // the firmware handoff, and the CPU display renderer can take minutes, so keep
 // petting it from a kernel thread even when boot-progress is compiled out.
+static volatile unsigned uke_gunyah_wdt_pets;
 static void uke_gunyah_wdt_pet_thread(void *arg, wait_result_t result) {
  (void)arg;(void)result;
  for (;;) {
@@ -88,6 +89,10 @@ static void uke_gunyah_wdt_pet_thread(void *arg, wait_result_t result) {
   register uint64_t x6 __asm("x6")=0;
   register uint64_t x7 __asm("x7")=0;
   __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1),"r"(x2),"r"(x3),"r"(x4),"r"(x5),"r"(x6),"r"(x7) : "memory");
+  // A minute of pets (12 x 5 s) proves the thread is alive even when the
+  // system stops printing; a missing heartbeat before a reset points elsewhere.
+  if((++uke_gunyah_wdt_pets%12)==0)
+   printf("sheng bring-up Gunyah watchdog pets=%u last=%d\n",uke_gunyah_wdt_pets,(int)x0);
   assert_wait_timeout((event_t)&uke_gunyah_wdt_pet_thread,THREAD_UNINT,5000,NSEC_PER_MSEC);
   thread_block(THREAD_CONTINUE_NULL);
  }
@@ -97,8 +102,9 @@ static void uke_gunyah_wdt_start(void) {
  thread_t thread;
  if(uke_gunyah_wdt_started)return;
  uke_gunyah_wdt_started=1;
- if(kernel_thread_start_priority(uke_gunyah_wdt_pet_thread,0,BASEPRI_PREEMPT,&thread)==KERN_SUCCESS)thread_deallocate(thread);
- else printf("sheng bring-up Gunyah watchdog pet thread failed\n");
+ kern_return_t started=kernel_thread_start_priority(uke_gunyah_wdt_pet_thread,0,BASEPRI_PREEMPT,&thread);
+ if(started==KERN_SUCCESS){thread_deallocate(thread);printf("sheng bring-up Gunyah watchdog pet thread started\n");}
+ else printf("sheng bring-up Gunyah watchdog pet thread failed: %d\n",(int)started);
 }
 
 int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
