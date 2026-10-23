@@ -206,7 +206,9 @@ class NativeUsbSerial : public IOService {
 	volatile bool fDump = false;
 	bool fEnablePhy = false;
 	bool fEnableTcsr = false;
+	bool fEnableQscratch = false;
 	uint32_t fProbeLevel = 0;
+	uint64_t fQscratchBase = UKE_USB_QSCRATCH_BASE;
 
 	uint8_t *fTxMem = nullptr;
 	UkeUsbByteRing fTxRing;
@@ -287,7 +289,7 @@ bool
 NativeUsbSerial::mapWindows(void)
 {
 	fWrapper = mapPhys(UKE_USB_WRAPPER_BASE, UKE_USB_WRAPPER_SIZE, fWrapperMap);
-	fQscratch = mapPhys(UKE_USB_QSCRATCH_BASE, UKE_USB_QSCRATCH_SIZE, fQscratchMap);
+	fQscratch = mapPhys(fQscratchBase, UKE_USB_QSCRATCH_SIZE, fQscratchMap);
 	fPhy = mapPhys(UKE_USB_PHY_BASE, UKE_USB_PHY_SIZE, fPhyMap);
 	fEudEnable = mapPhys(UKE_USB_EUD_ENABLE_BASE, 0x10, fEudEnableMap);
 	fEudDetect = mapPhys(UKE_USB_EUD_DETECT_BASE, 0x10, fEudDetectMap);
@@ -306,6 +308,12 @@ NativeUsbSerial::mapWindows(void)
 		    reinterpret_cast<void *>(fSmmu));
 		return false;
 	}
+	IOLog("NativeUsbSerial: maps wrapper=%llx qscratch=%llx phy=%llx gcc=%llx phybcr=%llx tcsr=%llx smmu=%llx eud=%llx/%llx\n",
+	    static_cast<unsigned long long>(fWrapper), static_cast<unsigned long long>(fQscratch),
+	    static_cast<unsigned long long>(fPhy), static_cast<unsigned long long>(fGcc),
+	    static_cast<unsigned long long>(fPhyBcr), static_cast<unsigned long long>(fTcsr),
+	    static_cast<unsigned long long>(fSmmu), static_cast<unsigned long long>(fEudEnable),
+	    static_cast<unsigned long long>(fEudDetect));
 	return true;
 }
 
@@ -419,8 +427,12 @@ NativeUsbSerial::dumpProbe(void)
 			IOLog("NativeUsbSerial: DWC3 event addr=%08x:%08x size=%08x count=%08x\n",
 			    rd32(fWrapper, UKE_USB_DWC3_GEVNTADRHI), rd32(fWrapper, UKE_USB_DWC3_GEVNTADRLO),
 			    rd32(fWrapper, UKE_USB_DWC3_GEVNTSIZ), rd32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT));
-			IOLog("NativeUsbSerial: QSCRATCH general=%08x hsphy=%08x\n",
-			    rd32(fQscratch, 0x08), rd32(fQscratch, 0x10));
+			if (fEnableQscratch) {
+				IOLog("NativeUsbSerial: QSCRATCH general=%08x hsphy=%08x\n",
+				    rd32(fQscratch, 0x08), rd32(fQscratch, 0x10));
+			} else {
+				IOLog("NativeUsbSerial: QSCRATCH skipped (native-usb-qscratch not set)\n");
+			}
 		}
 	}
 
@@ -514,14 +526,21 @@ NativeUsbSerial::warmInit(void)
 	// The wrapper has to hand the core its pipe clock before DCTL.CSFTRST can
 	// self-clear: select the UTMI clock and un-gate it here, not after the
 	// reset. This is dwc3-qcom's dwc3_qcom_select_utmi_clk() ordering.
-	IOLog("NativeUsbSerial: warm: qscratch\n");
-	uint32_t general = rd32(fQscratch, 0x08);
-	general |= 1U;
-	general &= ~(1U << 8);
-	wr32(fQscratch, 0x08, general);
-	uint32_t hs = rd32(fQscratch, 0x10);
-	hs |= (1U << 20) | (1U << 28);
-	wr32(fQscratch, 0x10, hs);
+	//
+	// It is opt-in: 0x0b58800 raises a synchronous external abort on this
+	// board (ESR 0x96000010), so the address is unverified even though the
+	// wrapper comment claims it is core_base + 0xf8800.
+	if (fEnableQscratch) {
+		IOLog("NativeUsbSerial: warm: qscratch base=%llx\n",
+		    static_cast<unsigned long long>(fQscratchBase));
+		uint32_t general = rd32(fQscratch, 0x08);
+		general |= 1U;
+		general &= ~(1U << 8);
+		wr32(fQscratch, 0x08, general);
+		uint32_t hs = rd32(fQscratch, 0x10);
+		hs |= (1U << 20) | (1U << 28);
+		wr32(fQscratch, 0x10, hs);
+	}
 
 	// The uke DT carries snps,dis_u2_susphy_quirk: a suspended PHY stops the
 	// UTMI clock, so clear SUSPHY before touching the core.
@@ -1395,14 +1414,21 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t dumpMode = 0;
 	uint32_t phyMode = 0;
 	uint32_t tcsrMode = 0;
+	uint32_t qscratchMode = 0;
 	PE_parse_boot_argn("native-usb-probe", &probeMode, sizeof(probeMode));
 	PE_parse_boot_argn("native-usb-serial", &serialMode, sizeof(serialMode));
 	PE_parse_boot_argn("native-usb-serial-dump", &dumpMode, sizeof(dumpMode));
 	PE_parse_boot_argn("native-usb-phy", &phyMode, sizeof(phyMode));
 	PE_parse_boot_argn("native-usb-tcsr", &tcsrMode, sizeof(tcsrMode));
+	PE_parse_boot_argn("native-usb-qscratch", &qscratchMode, sizeof(qscratchMode));
 	fProbeLevel = probeMode;
 	fEnablePhy = phyMode != 0;
 	fEnableTcsr = tcsrMode != 0;
+	fEnableQscratch = qscratchMode != 0;
+	// 1 = the transcribed 0x0b58800, 2 = core_base + 0xf8800 as the header
+	// comment describes. The first aborts; the second has not been tested.
+	fQscratchBase = (qscratchMode == 2) ?
+	    (UKE_USB_WRAPPER_BASE + 0xf8800ULL) : UKE_USB_QSCRATCH_BASE;
 	if (probeMode == 0 && serialMode == 0) {
 		IOService::stop(provider);
 		return false;
