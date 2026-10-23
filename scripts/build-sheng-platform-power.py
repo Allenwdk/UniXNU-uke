@@ -13,6 +13,9 @@ OUT.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(ROOT / 'kits/NativePrelink'))
 from native_prelink import macho, backed_offset, exports
 
+# The kernelcache pinned in board.toml; every recorded address here belongs to it.
+KERNELCACHE_SHA256 = 'f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7'
+
 
 def run(command, **kwargs):
     return subprocess.check_output([str(v) for v in command], timeout=90, **kwargs)
@@ -100,29 +103,48 @@ if not reference.exists():
     # Build products are pruned: a later candidate built from the same original kernelcache has the identical original
     # ApplePMGR class and inherited native IOPMGR slots; every slot/pointer check below still runs against it.
     later = sorted((ROOT / 'build/native-prelink').glob('native-owner-ufs-cpu-desktop-*-candidate.macho'), key=lambda f: f.stat().st_mtime)
-    require(later, 'No reference candidate available')
-    reference = later[-1]
-candidate = reference.read_bytes()
-meta = macho(candidate)
-native_names = {n: va for va, names in exports(candidate, meta).items() for n in names}
-
-
-def ptr(va):
-    return struct.unpack_from('<Q', candidate, backed_offset(meta['segments'], va, 8, len(candidate)))[0]
-
+    reference = later[-1] if later else None
 
 bindings = {'__ZN9ApplePMGRC2EPK11OSMetaClass': 0xfffffff0049f003c,
             '__ZN9ApplePMGRD2Ev': 0xfffffff0049f019c,
             '__ZN9ApplePMGR10gMetaClassE': 0xfffffff006adf490}
-for slot, name in enumerate(entries):
-    if slot in (0, 1, 7) or 168 <= slot < 340 and slot not in (320, 321):
-        require('18ShengPlatformPower' in name, f'Own guard/lifecycle required at slot {slot}')
-    elif slot in (320, 321):
+
+recorded = ROOT / 'scripts/data/native-pmgr-original-bindings.json'
+if reference is None and recorded.is_file():
+    # A cold tree has no prelinked candidate: one needs a completed kernel and a
+    # build-display-abi.py run. Bind the inherited AON slots from the recorded
+    # result of this check and defer the per-slot verification to the first
+    # build that has a candidate. The archive is unchanged either way.
+    record = json.loads(recorded.read_text())
+    require(record['original_sha256'] == KERNELCACHE_SHA256, 'Recorded bindings are for another kernelcache')
+    for slot in (320, 321):
+        name = entries[slot]
         require('9ApplePMGR' in name, 'Only actual original AON implementations inherited')
-        bindings[name] = ptr(0xfffffff005ce26d8 + slot * 8)
-    else:
-        require(native_names.get(name) == ptr(native_names['__ZTV6IOPMGR'] + 16 + slot * 8),
-                f'Native IOPMGR/IOService entry differs at {slot}')
+        bindings[name] = int(record['slots'][str(slot)], 16)
+    print('NOTE: ApplePMGR AON slots bound from the recorded audit; candidate check deferred')
+else:
+    require(reference, 'No reference candidate available')
+    candidate = reference.read_bytes()
+    meta = macho(candidate)
+    native_names = {n: va for va, names in exports(candidate, meta).items() for n in names}
+
+
+    def ptr(va):
+        return struct.unpack_from('<Q', candidate, backed_offset(meta['segments'], va, 8, len(candidate)))[0]
+
+
+    for slot, name in enumerate(entries):
+        if slot in (0, 1, 7) or 168 <= slot < 340 and slot not in (320, 321):
+            require('18ShengPlatformPower' in name, f'Own guard/lifecycle required at slot {slot}')
+        elif slot in (320, 321):
+            require('9ApplePMGR' in name, 'Only actual original AON implementations inherited')
+            bindings[name] = ptr(0xfffffff005ce26d8 + slot * 8)
+        else:
+            require(native_names.get(name) == ptr(native_names['__ZTV6IOPMGR'] + 16 + slot * 8),
+                    f'Native IOPMGR/IOService entry differs at {slot}')
+
+# Both paths end with the three protected originals plus the two inherited AON
+# slots; only the candidate path can also check every inherited slot.
 undefined = {n for n, _, k in symbols if k == 1 and 'ApplePMGR' in n}
 require(undefined == set(bindings), 'All and only audited original base imports')
 bindings.update({'_sheng_original_pmgr_nub_create': 0xfffffff004a22568,

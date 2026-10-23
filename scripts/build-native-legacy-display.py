@@ -109,9 +109,17 @@ require(all(compiled) and vtable+16+358*8 not in relocations,'Exact owned 358-en
 candidate=ROOT/'build/native-prelink/native-owner-mobile-graphics-candidate.macho'
 if not candidate.exists():  # pruned: same fallback as scripts/audit-mobile-graphics-legacy.py (identical original family executable)
     later=sorted((ROOT/'build/native-prelink').glob('native-owner-ufs-cpu-desktop-*-candidate.macho'),key=lambda f:f.stat().st_mtime)
-    require(later,'No reference candidate available');candidate=later[-1]
-old=candidate.read_bytes();old_image=macho(old)
-names={n:v for v,group in exports(old,old_image).items() for n in group}
+    candidate=later[-1] if later else None
+if candidate is None:
+    # A cold tree has no prelinked candidate: one needs a completed kernel and a
+    # build-display-abi.py run. The bindings below are constants and the audit's
+    # own result, so the archive is the same; only the checks that read the
+    # original executable bytes are deferred to the first build with a candidate.
+    old=None;old_image=None;names={}
+    print('NOTE: no prelinked candidate; IOMobileGraphicsFamily content checks deferred')
+else:
+    old=candidate.read_bytes();old_image=macho(old)
+    names={n:v for v,group in exports(old,old_image).items() for n in group}
 def read(va,n):
     at=backed_offset(old_image['segments'],va,n,len(old));return old[at:at+n]
 bindings={'__ZN25IOMobileFramebufferLegacyC2EPK11OSMetaClass':0xfffffff0057865cc,
@@ -126,7 +134,7 @@ for i,name in enumerate(compiled):
     elif '25IOMobileFramebufferLegacy' in name:
         require(i not in pure,'No unresolved original abstract backend target');bindings[name]=expected
     else:
-        require(i<168 and names.get(name)==expected,'Actual inherited native base symbol '+str(i));native.append(i)
+        require(i<168 and (old is None or names.get(name)==expected),'Actual inherited native base symbol '+str(i));native.append(i)
 require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,242,288,290,296]+pure),'Exact owned method set')
 undefined={n for n,_,k in symbols if k==1 and 'IOMobileFramebufferLegacy' in n}
 require(undefined==set(bindings),'All and only actual original-class imports qualified')
@@ -144,28 +152,31 @@ for name,address,field,wide in [
     ('allocation',0xfffffff004b9ebfc,144,True),('format',0xfffffff004b9ebac,128,False),
     ('planes',0xfffffff004b9ebf4,152,False)]:
     expected=(0xf9400000 if wide else 0xb9400000)|((field//(8 if wide else 4))<<10)
-    require(read(address,8)==struct.pack('<2I',expected,0xd65f03c0),'Exact original surface getter '+name)
+    if old is not None:
+        require(read(address,8)==struct.pack('<2I',expected,0xd65f03c0),'Exact original surface getter '+name)
     bindings['_native_legacy_surface_'+name]=address
-# Both protected destructors/constructors must follow the exact original chain.
-def branch(pc):
-    word=struct.unpack('<I',read(pc,4))[0];require(word&0xfc000000==0x94000000,'Actual protected base call')
-    value=word&0x3ffffff;return pc+4*(value-(1<<26) if value&(1<<25) else value)
-require(branch(0xfffffff0057865fc)==0xfffffff00577b510 and branch(0xfffffff005786630)==0xfffffff00577b55c,
-        'Original protected Legacy C2/D2 really call their original Service bases')
-# Actual caller passes only self at slot 288 and tests bit zero of w0.
-require(read(0xfffffff005787ef8,16)==bytes.fromhex('080040f9088144f900013fd6e0000037'),
-        'Original bool start_hardware() call and result check')
-getter=int(methods[249]['address'],16)
-for offset,field in [(0x30,5808),(0x58,5812)]:
-    require(struct.unpack('<I',read(getter+offset,4))[0]==0xb9400000|((field//4)<<10)|(8<<5)|8,
-            'Actual original width/height getter fields')
-require(int(methods[295]['address'],16)==0xfffffff005795b88 and
-        read(0xfffffff005795b98,16)==bytes.fromhex('e00740f9280080520101001272d3ff97'),
-        'Actual original slot-295 passes true to the normal current completion body')
-require(read(0xfffffff00578aa7c,24)==bytes.fromhex('080040f9084545f9030080d2e20303aa0400805200013fd6'),
-        'Original completion calls optional report slot 337 with null outputs and zero limit')
-require(read(0xfffffff005777e9c,16)==bytes.fromhex('080040f908e142f900013fd6c0000036'),
-        'Original isMainDisplay dispatch uses only self and tests boolean bit zero')
+# The checks below read the original executable through the candidate.
+if old is not None:
+    # Both protected destructors/constructors must follow the exact original chain.
+    def branch(pc):
+        word=struct.unpack('<I',read(pc,4))[0];require(word&0xfc000000==0x94000000,'Actual protected base call')
+        value=word&0x3ffffff;return pc+4*(value-(1<<26) if value&(1<<25) else value)
+    require(branch(0xfffffff0057865fc)==0xfffffff00577b510 and branch(0xfffffff005786630)==0xfffffff00577b55c,
+            'Original protected Legacy C2/D2 really call their original Service bases')
+    # Actual caller passes only self at slot 288 and tests bit zero of w0.
+    require(read(0xfffffff005787ef8,16)==bytes.fromhex('080040f9088144f900013fd6e0000037'),
+            'Original bool start_hardware() call and result check')
+    getter=int(methods[249]['address'],16)
+    for offset,field in [(0x30,5808),(0x58,5812)]:
+        require(struct.unpack('<I',read(getter+offset,4))[0]==0xb9400000|((field//4)<<10)|(8<<5)|8,
+                'Actual original width/height getter fields')
+    require(int(methods[295]['address'],16)==0xfffffff005795b88 and
+            read(0xfffffff005795b98,16)==bytes.fromhex('e00740f9280080520101001272d3ff97'),
+            'Actual original slot-295 passes true to the normal current completion body')
+    require(read(0xfffffff00578aa7c,24)==bytes.fromhex('080040f9084545f9030080d2e20303aa0400805200013fd6'),
+            'Original completion calls optional report slot 337 with null outputs and zero limit')
+    require(read(0xfffffff005777e9c,16)==bytes.fromhex('080040f908e142f900013fd6c0000036'),
+            'Original isMainDisplay dispatch uses only self and tests boolean bit zero')
 asm=OUT/'original-bindings.S';asm.write_text(''.join(f'.globl {name}\n.set {name}, {va:#x}\n' for name,va in sorted(bindings.items())))
 sdk=run(['xcrun','--sdk','iphoneos','--show-sdk-path'],text=True).strip()
 run(['xcrun','clang','-target','arm64-apple-ios17.0','-isysroot',sdk,'-c',asm,'-o',OUT/'original-bindings.o'])

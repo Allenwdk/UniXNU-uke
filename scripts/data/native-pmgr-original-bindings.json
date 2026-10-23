@@ -1,0 +1,9 @@
+{
+  "original_sha256": "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7",
+  "vtable": "0xfffffff005ce26d8",
+  "note": "Recorded result of build-sheng-platform-power.py's ApplePMGR slot check against the pinned original candidate. Checked in so a cold tree can bind before any candidate exists. Same convention as scripts/data/native-aes-original-bindings.S.",
+  "slots": {
+    "320": "0xfffffff004a20fbc",
+    "321": "0xfffffff004a20fc4"
+  }
+}
