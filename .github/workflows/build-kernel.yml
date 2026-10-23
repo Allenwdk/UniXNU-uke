@@ -168,8 +168,14 @@ jobs:
           PY
           ( cd "$workspace" && python3 scripts/build-native-legacy-display.py )
           ls -l "$workspace/build/corecrypto-2023/"*.a \
-                "$workspace/build/armdt-platform/" "$workspace/build/armcpu/" \
-                "$workspace/build/native-legacy-display/"
+                "$workspace/build/armdt-platform/" "$workspace/build/armcpu/"
+          # uke_defconfig turns the legacy display off, so its archive is
+          # absent and must not turn the diagnostics listing into a failure.
+          if [ -d "$workspace/build/native-legacy-display" ]; then
+            ls -l "$workspace/build/native-legacy-display/"
+          else
+            echo "native-legacy-display: not built (CONFIG_XNU_NATIVE_LEGACY_DISPLAY is not set)"
+          fi
 
       - name: Build and prelink the first-console kernel
         working-directory: UniXNU
