@@ -421,7 +421,8 @@ fastboot reboot
 | 2026-10-23 | 当前镜像/内核 | gunyah-pet 内核 `430e4d83…`（run `39829956845`，`uke-gpu-userland_defconfig`）；高内存 payload `vendor_boot_uke_himem4g.img` `21dbecaf…`（GPU pool 1024 MiB）；nomg `5d277d09…`；UEFI `e09219ff…`（Gunyah + DT memory range 打印） |
 | 2026-10-23 | CPU 基线 | `main` 用 fork `NativeMobileDisplay` `274f1e4`（`setPowerState` 不触发原厂 `request_power_change`）+ QEMU 的 `LegacyDisplayProbe`/`ShengPlatformPower`/display ABI；`uke-cpu_defconfig` 关闭 `NATIVE_ADRENO`、`offline-mobile-graphics-client=0`；`BootWatchdogPolicy` 增加不依赖 boot-progress 的 Gunyah pet 线程 |
 | 2026-10-23 | CPU display 收养补回 | QEMU 版 probe 整文件替换时丢了 default-surface 流程：重新加入 `+0x1780/+0x17c0` 播种（32 MiB 系统内存 region、BGRA/1 plane/4 bpp mode 块）和 `start()` 后把 `+0x1620` retain 写入 `+0x1618` 的收养，日志 `UKE: display surface …/adopted`；Gunyah pet 线程加启动日志与每分钟心跳（`pets=`），用于区分 watchdog 复位与其他复位 |
-| 2026-10-23 | CPU display 构建 | CI run `39890292502` 绿色（`uke-cpu_defconfig`）；full 内核 `a3d1ab03…`（含 `display surface adopted`/`Gunyah watchdog pets` 字符串）；payload `e0c44d78…`（200 GiB 种子）；`vendor_boot_uke_cpuadopt.img` `3d5b8b3c…`（与 cpu200 相同 base、bootconfig 0）；已刷 `boot`+`vendor_boot` 并重启，待实机日志 |
+| 2026-10-23 | CPU display 构建 | CI run `39890292502` 绿色（`uke-cpu_defconfig`）；full 内核 `a3d1ab03…`（含 `display surface adopted`/`Gunyah watchdog pets` 字符串）；payload `e0c44d78…`（200 GiB 种子）；`vendor_boot_uke_cpuadopt.img` `3d5b8b3c…`（与 cpu200 相同 base、bootconfig 0）；实机到 `pets=12 last=0`（pet 线程存活、SMC 成功）后仍在 `s_map_display_type` + `kext-fixup BTAudioHALPlugin` 后复位；无 panic 文本 |
+| 2026-10-23 | selector 抑制 + 诊断 | 把 GPU 分支验证过的 user-client selector 抑制搬到 `main`：selector 12（进 `request_power_change`）和 6（其后的 wait）直接返回成功，其余照旧转发；加 `UKEMEM: client selector N` 首调用日志、client 打开时打印 `+0x1618/+0x1620/sid`；Gunyah pet 改为每 1 s、每 10 s 打一次带 uptime 的心跳。CI run `39892387621` 绿色，内核 `535f21c1…`、payload `9abb3d5f…`、`vendor_boot_uke_cpusel.img` `778ddb46…`，已刷入待测 |
 
 ---
 
