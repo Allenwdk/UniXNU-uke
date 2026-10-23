@@ -437,6 +437,8 @@ fastboot reboot
 | 2026-10-23 | SwapEnd 结构诊断 | 在 selector 5 前打印 `structureInputSize`/delivery/前 0x120 字节，用于确定 iOS 17 的 swap 记录布局（surface ID/rect/mask），为 Ace 5 式 own-present 做准备。device `8b30cac`、CI run `39909862208` |
 | 2026-10-23 | 原厂 swap 路径反汇编 | 在构建内核里定位到 IOMobileFramebufferUserClient dispatch 表（`0xfffffff005f354c0`）：sel 3/4/5/6/8 的 handler 与 check counts，SwapEnd 期望 structureInputSize=1288。SwapEnd → slot 178（`0xfffffff00578f224`）→ IOCommandGate action（`0xfffffff005790894`）按 `structInput+152` 的 ID 在 **framebuffer+5496** 的链表里查找请求（请求 +788=ID、+2960=next），命中后置 +1355 并调用请求对象 vtable[32]。我们的驱动读的是 +5480（另一条队列），所以永远找不到请求 |
 | 2026-10-23 | active list 修复 | `kickOnce` 改为优先读 +5496（回退 +5480），dump 增加 `active=`；子模块 `8277751`、core `b65ccf2`、device `144838c`、CI run `39913325398` |
+| 2026-10-23 | active list 实机 | SwapEnd 返回后 `active=0`，但**进入原厂前** `active=fffffff8e22f1000`：请求确实挂在 +5496。self-kick 触发 `UKE: kick`，但 `swap accepted=0 reason=2 surface=0` —— 请求对象 +2624 的 surface 在 SwapEnd 入口还是空，原厂要到 SwapEnd 内部才解析/填充。结构体 1288 字节、前 0x20 是 4 个 32 位大数值（疑似 surface ID/port），+0x98 是 ID，+0xb0/+0x118 是 3200×2136 两组矩形 |
+| 2026-10-23 | 请求快照诊断 | 在 SwapEnd 前后打印请求对象的 vptr、vtable[4]（原厂 gate action 调用的 fn）、ID(+788)、started(+1355)、next(+2960)、surface(+2624)，用于判断原厂是否在 SwapEnd 内填充 surface 以及请求类；device `42032c1`、CI run `39920278411` |
 
 ---
 
