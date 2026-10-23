@@ -105,6 +105,21 @@ static void uke_gunyah_wdt_start(void) {
  thread_t thread;
  if(uke_gunyah_wdt_started)return;
  uke_gunyah_wdt_started=1;
+ // Raise the hypervisor bite time before petting: a kernel hang then shows as
+ // a long freeze instead of a reset 30 s later, which separates a hang from
+ // a power/PMIC reset. 0xffff is the cookie UEFI passes for the same call.
+ {
+  register uint64_t x0 __asm("x0")=0x86000008;
+  register uint64_t x1 __asm("x1")=0xffff;
+  register uint64_t x2 __asm("x2")=300000;
+  register uint64_t x3 __asm("x3")=0;
+  register uint64_t x4 __asm("x4")=0;
+  register uint64_t x5 __asm("x5")=0;
+  register uint64_t x6 __asm("x6")=0;
+  register uint64_t x7 __asm("x7")=0;
+  __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1) : "r"(x2),"r"(x3),"r"(x4),"r"(x5),"r"(x6),"r"(x7) : "memory");
+  printf("sheng bring-up Gunyah watchdog bite=300000 status=%d\n",(int)x0);
+ }
  kern_return_t started=kernel_thread_start_priority(uke_gunyah_wdt_pet_thread,0,BASEPRI_PREEMPT,&thread);
  if(started==KERN_SUCCESS){thread_deallocate(thread);printf("sheng bring-up Gunyah watchdog pet thread started\n");}
  else printf("sheng bring-up Gunyah watchdog pet thread failed: %d\n",(int)started);

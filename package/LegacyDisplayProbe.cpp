@@ -309,21 +309,21 @@ static ClientStat *statFor(IOUserClient *client) {
 }
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
     ClientStat *stat=statFor(client);
+    unsigned calls=(stat && selector<kSelectors)?stat->selector_calls[selector]:0;
+    bool traced=stat && selector<kSelectors && calls<2;
+    if(traced)printf("UKEMEM: sel %u enter calls=%u\n",(unsigned)selector,calls+1);
     // The panel is already lit by the firmware GOP frame buffer. Selector 12
     // enters the original request_power_change transition and selector 6 is
     // the wait that follows; on hardware both end in the tablet's hard reset,
     // so acknowledge them here and keep forwarding every other selector.
     if(stat && (selector==6 || selector==12)) {
-        if(selector<kSelectors && !stat->selector_calls[selector])
-            printf("UKEMEM: client selector %u (suppressed)\n",(unsigned)selector);
         if(selector<kSelectors){++stat->selector_calls[selector];stat->selector_status[selector]=(uint32_t)kIOReturnSuccess;}
         ++stat->calls;
+        if(traced)printf("UKEMEM: sel %u exit 0 (suppressed)\n",(unsigned)selector);
         return kIOReturnSuccess;
     }
-    // First call of every other selector, before the original can reset.
-    if(stat && selector<16 && !stat->selector_calls[selector])
-        printf("UKEMEM: client selector %u\n",(unsigned)selector);
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
+    if(traced)printf("UKEMEM: sel %u exit %x\n",(unsigned)selector,(unsigned)status);
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
             const uint64_t *in=args->scalarInput;
