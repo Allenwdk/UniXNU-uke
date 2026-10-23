@@ -1269,7 +1269,7 @@ void gpuStart() {
     // 1. The GPU's own context bank and buffers (arm-smmu-qcom: the GPU always gets bank 0; DT iommus SIDs 0 and 1).
     NativeAdrenoGmuContextReport &q = native_gpu_context;
     const IOReturn ctx = NativeAdrenoGpuContextBringup(reinterpret_cast<volatile uint8_t *>(gSmmuMap->getVirtualAddress()),
-        kSmmuWindow, 0, 2, 0, 0, 1, 2, gpuCtxProgress, &q);
+        kSmmuWindow, 0, 2, 0, 0, 1, 0xffff, gpuCtxProgress, &q);
     // Q s<step> st<IOReturn> k<program>/<attach kit status> p<phase>e<enabled> r<route phase>v<verified> n<spans>
     snprintf(row, sizeof row, "Q s%u st%x k%u/%u p%ue%u r%uv%u n%u", q.step, unsigned(ctx), q.program_status, q.route_status,
              q.program_phase, q.program_enabled, q.route_phase, q.routes_verified, q.spans);
