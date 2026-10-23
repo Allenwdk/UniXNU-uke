@@ -348,6 +348,20 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
     }
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
     if(traced)printf("UKEMEM: sel %u exit %x\n",(unsigned)selector,(unsigned)status);
+    if(stat && selector==5 && stat->selector_calls[5]<3) {
+        // SwapEnd returned: does the original queue hold the request, and does
+        // the family consider the display powered? Nothing else processes the
+        // queue without the absent platform driver's vblank interrupt.
+        const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
+        uint64_t current=0,head=0;uint32_t state[8]={};
+        if(object) {
+            memcpy(&current,object+5472,8);memcpy(&head,object+5480,8);
+            for(unsigned k=0;k<8;++k)memcpy(&state[k],object+5808+4*k,4);
+        }
+        printf("UKE: swap-end %u status=%x current=%p head=%p state=%x/%x/%x/%x/%x/%x/%x/%x\n",
+            stat->selector_calls[5]+1,(unsigned)status,current,head,state[0],state[1],state[2],state[3],
+            state[4],state[5],state[6],state[7]);
+    }
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
             const uint64_t *in=args->scalarInput;
