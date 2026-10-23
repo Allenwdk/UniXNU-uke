@@ -120,6 +120,23 @@ for at in range(vtable + 16, end, 8):
 require(len(methods) == 190 and methods.count('___cxa_pure_virtual') == 14,
         'Public iOS IOBlockStorageDevice dispatch shape changed')
 
+# Without a prelinked candidate -- which needs a completed kernel and a
+# build-display-abi.py run -- bind with the recorded result of that audit, the
+# way build-native-aes-bindings.py does. The addresses belong to the kernelcache
+# pinned in board.toml.
+recorded = ROOT / 'scripts/data/native-ufs-original-bindings.S'
+if not args.candidate.is_file() and recorded.is_file() and component == 'NativeUfs':
+    object_path = out / (component + '.o')
+    require(object_path.is_file(), f'Build {component}.o before this binder')
+    subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror',
+                    '-Wno-incompatible-sysroot', '-c', recorded,
+                    '-o', out / 'original-bindings.o'], check=True)
+    archive = out / ('lib' + component + '.a')
+    archive.unlink(missing_ok=True)
+    subprocess.run(['xcrun', 'ar', 'rcs', archive, object_path, out / 'original-bindings.o'], check=True)
+    print(f'PASS: {component} bound with the recorded original-kernelcache addresses')
+    raise SystemExit(0)
+
 # The candidate is the prelinked original kernelcache. Its plan pins the same
 # kernelcache as board.toml, and the final kernel uses the same prelink plan.
 candidate = args.candidate.read_bytes()
