@@ -218,6 +218,7 @@ class NativeUsbSerial : public IOService {
 
 	uint8_t fCmd[160] = {};
 	uint32_t fCmdLength = 0;
+	uint32_t fSetupLog = 0;
 
 	// Probe helpers.
 	void releaseMaps(void);
@@ -906,6 +907,16 @@ NativeUsbSerial::handleSetup(const uint8_t *setup)
 	const uint8_t type = static_cast<uint8_t>(requestType & 0x60U);
 	const bool directionIn = (requestType & 0x80U) != 0;
 
+	// The first few setups tell us how far enumeration got when the host
+	// reports descriptor timeouts.
+	if (fSetupLog < 8) {
+		IOLog("NativeUsbSerial: setup rt=%02x req=%02x val=%04x idx=%04x len=%u\n",
+		    static_cast<unsigned>(requestType), static_cast<unsigned>(request),
+		    static_cast<unsigned>(value), static_cast<unsigned>(index),
+		    static_cast<unsigned>(length));
+		fSetupLog++;
+	}
+
 	if (type == 0x00U) {
 		switch (request) {
 		case 0x06: { // GET_DESCRIPTOR
@@ -1345,19 +1356,6 @@ NativeUsbSerial::serialStart(void)
 	// Arm EP0 before the reconnect: the host answers the pull-up with a bus
 	// reset and a setup packet that must find a valid TRB.
 	ep0Arm();
-	IOLog("NativeUsbSerial: serial: run\n");
-	// ABL enumerated its own device on this controller, so the host keeps the
-	// descriptors it already read unless it sees a disconnect. Drop the USB2
-	// pull-up (DCTL.RUN_STOP), let the host notice, then connect again with
-	// our DCFG speed. This is dwc3_gadget_pullup()'s sequence.
-	uint32_t runDctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
-	wr32(fWrapper, UKE_USB_DWC3_DCTL, runDctl & ~UKE_USB_DWC3_DCTL_RUN_STOP);
-	IOSleep(200);
-	wr32(fWrapper, UKE_USB_DWC3_DCTL,
-	    rd32(fWrapper, UKE_USB_DWC3_DCTL) | UKE_USB_DWC3_DCTL_RUN_STOP);
-	IOSleep(200);
-	IOLog("NativeUsbSerial: serial: run dctl=%08x dsts=%08x\n",
-	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
 	IOLog("NativeUsbSerial: serial: setup\n");
 
 	fTxMem = static_cast<uint8_t *>(IOMalloc(kTxBytes));
@@ -1388,6 +1386,22 @@ NativeUsbSerial::serialStart(void)
 	}
 	thread_deallocate(thread);
 	IOLog("NativeUsbSerial: serial: started\n");
+
+	// Only now is the polled thread servicing EP0 and the event ring, so this
+	// is the first moment a pull-up cycle can survive the host's bus reset and
+	// its first setup packet. ABL enumerated its own device on this
+	// controller, so the host keeps those descriptors unless it sees a
+	// disconnect: drop the USB2 pull-up (DCTL.RUN_STOP), wait, connect again
+	// with our DCFG speed. This is dwc3_gadget_pullup()'s sequence.
+	IOLog("NativeUsbSerial: serial: run\n");
+	uint32_t runDctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
+	wr32(fWrapper, UKE_USB_DWC3_DCTL, runDctl & ~UKE_USB_DWC3_DCTL_RUN_STOP);
+	IOSleep(200);
+	wr32(fWrapper, UKE_USB_DWC3_DCTL,
+	    rd32(fWrapper, UKE_USB_DWC3_DCTL) | UKE_USB_DWC3_DCTL_RUN_STOP);
+	IOSleep(200);
+	IOLog("NativeUsbSerial: serial: run dctl=%08x dsts=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
 	IOLog("NativeUsbSerial: warm USB2 device started\n");
 	return true;
 }
