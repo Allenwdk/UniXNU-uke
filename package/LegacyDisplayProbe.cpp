@@ -358,9 +358,9 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
             memcpy(&current,object+5472,8);memcpy(&head,object+5480,8);
             for(unsigned k=0;k<10;++k)memcpy(&state[k],object+5808+4*k,4);
         }
-        printf("UKE: swap-end %u status=%x current=%p head=%p state=%x/%x/%x/%x/%x/%x/%x/%x/%x/%x\n",
-            stat->selector_calls[5]+1,(unsigned)status,current,head,state[0],state[1],state[2],state[3],
-            state[4],state[5],state[6],state[7],state[8],state[9]);
+        printf("UKE: swap-end %u status=%x current=%llx head=%llx state=%x/%x/%x/%x/%x/%x/%x/%x/%x/%x\n",
+            stat->selector_calls[5]+1,(unsigned)status,(unsigned long long)current,(unsigned long long)head,
+            state[0],state[1],state[2],state[3],state[4],state[5],state[6],state[7],state[8],state[9]);
     }
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
