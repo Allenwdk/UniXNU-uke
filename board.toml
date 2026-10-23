@@ -50,7 +50,7 @@ archives = [
   "build-ufs-original-bindings.py",
   "build-arm-driver.py NativeRamBlock",
   "build-mockfs-fixture.py",
-  "build-platform-power.py",
+  "build-sheng-platform-power.py",
   "build-libpthread-kernel.py",
   "build-native-legacy-display.py",
   "build-boot-log.py",
