@@ -24,7 +24,7 @@ hardware-validated yet; the probe is the first hardware gate.
 | `native-usb-qscratch=0` | Skip the UTMI pipe-clock select |
 | `native-usb-qscratch=2` | Default: `core_base + 0xf8800` = `0x0a6f8800` |
 | `native-usb-qscratch=1` | The first revision's transcribed `0x0b58800` (aborts) |
-| `native-usb-softreset=1` | Also try `DCTL.CSFTRST` after the block reset (off by default; it never self-clears here) |
+| `native-usb-softreset=0` | Skip `DCTL.CSFTRST` (on by default; written alone after the halt) |
 | `native-usb-serial-cold=1` | Reserved: WCD939x/repeater cold init |
 
 `0x1f4b000` sits inside the `tcsrcc` window but the stock DT also assigns that

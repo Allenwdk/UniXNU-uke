@@ -207,7 +207,7 @@ class NativeUsbSerial : public IOService {
 	bool fEnablePhy = false;
 	bool fEnableTcsr = false;
 	bool fEnableQscratch = false;
-	bool fSoftReset = false;
+	bool fSoftReset = true;
 	bool fForceFs = false;
 	uint32_t fProbeLevel = 0;
 	uint64_t fQscratchBase = UKE_USB_QSCRATCH_BASE;
@@ -464,78 +464,41 @@ NativeUsbSerial::smmuWrite(void *context, unsigned offset, uint32_t value)
 bool
 NativeUsbSerial::warmInit(void)
 {
-	IOLog("NativeUsbSerial: warm: gdsc\n");
+	// Reference sequence, from the K70 CDC driver this port follows
+	// (xnu/vermeer/vermeer_usb_debug.c): verify that the bootloader left the
+	// USB block powered and clocked, then touch nothing but the DWC3 core.
+	// No GCC writes, no PHY programming, no TCSR: that is ABL state, and
+	// rewriting it is what made the earlier revisions fail.
 	uint32_t gdscr = rd32(fGcc, 0x004);
-	if ((gdscr & UKE_USB_GDSCR_HW_CONTROL) != 0) {
-		IOLog("NativeUsbSerial: GDSC is hardware-controlled (gdscr=%08x)\n", gdscr);
+	uint32_t cfg = rd32(fGcc, 0x008);
+	uint32_t master = rd32(fGcc, 0x018);
+	uint32_t sleepClk = rd32(fGcc, 0x024);
+	uint32_t utmi = rd32(fGcc, 0x028);
+	uint32_t cfgNoc = rd32(fGcc, 0x088);
+	uint32_t aggre = rd32(fGcc, 0x08c);
+	IOLog("NativeUsbSerial: warm: gcc gdscr=%08x cfg=%08x master=%08x sleep=%08x utmi=%08x cfg_noc=%08x aggre=%08x\n",
+	    gdscr, cfg, master, sleepClk, utmi, cfgNoc, aggre);
+	if ((gdscr & (1U << 31)) == 0) {
+		IOLog("NativeUsbSerial: USB block not powered by the bootloader; controller untouched\n");
 		return false;
 	}
-	wr32(fGcc, 0x004, gdscr & ~UKE_USB_GDSCR_SW_COLLAPSE);
-	IODelay(1);
-	bool powered = false;
-	for (unsigned i = 0; i < UKE_USB_GDSC_TIMEOUT_US; i++) {
-		if ((rd32(fGcc, 0x008) & UKE_USB_GDSCR_CFG_POWER_UP) != 0) {
-			powered = true;
-			break;
-		}
-		IODelay(1);
-	}
-	if (!powered) {
-		IOLog("NativeUsbSerial: GDSC did not power up (cfg=%08x)\n", rd32(fGcc, 0x008));
+	if (((master | cfgNoc | aggre) & (1U << 31)) != 0) {
+		IOLog("NativeUsbSerial: USB clocks not enabled by the bootloader; controller untouched\n");
 		return false;
 	}
 
-	IOLog("NativeUsbSerial: warm: clocks\n");
-	static const uint32_t branches[] = { 0x018, 0x024, 0x028, 0x088, 0x08c };
-	for (uint32_t offset : branches) {
-		wr32(fGcc, offset, rd32(fGcc, offset) | UKE_USB_GCC_BRANCH_ENABLE);
-	}
-	// A full block reset, the way dwc3-qcom's resets_assert/deassert treats
-	// GCC_USB30_PRIM_BCR: assert, let it settle, release. This resets the
-	// wrapper and the core without needing the pipe clock that DCTL.CSFTRST
-	// waits on, and it is the only reset available while the eUSB2 PHY is
-	// still coming up.
-	// Keep ABL's block state: asserting GCC_USB30_PRIM_BCR here leaves the
-	// core running (RUN_STOP sticks) but the host never sees a connection
-	// again, so only release the reset and re-enable the branch clocks that
-	// sit behind it.
-	IOLog("NativeUsbSerial: warm: bcr\n");
-	wr32(fGcc, 0x000, rd32(fGcc, 0x000) & ~UKE_USB_GCC_RESET_ASSERT);
-	IODelay(1000);
-	// The block reset also drops the branch clocks and the bus clocks behind
-	// them, so re-enable them before anything in the window is touched again.
-	// Without this the QSCRATCH page reads and writes back zero.
-	for (uint32_t offset : branches) {
-		wr32(fGcc, offset, rd32(fGcc, offset) | UKE_USB_GCC_BRANCH_ENABLE);
-	}
-	IODelay(1000);
-	IOLog("NativeUsbSerial: warm: bcr released gdscr=%08x cfg=%08x master=%08x utmi=%08x tcsr=%08x\n",
-	    rd32(fGcc, 0x004), rd32(fGcc, 0x008), rd32(fGcc, 0x018),
-	    rd32(fGcc, 0x028), rd32(fGcc, 0x08c));
-	if (fEnablePhy) {
-		// Resetting the eUSB2 PHY wipes the register file ABL programmed, so
-		// the pulse only makes sense together with the reprogramming table
-		// below. The warm path leaves the PHY exactly as it was handed over.
-		wr32(fPhyBcr, 0x000, 1);
-		IODelay(100);
-		wr32(fPhyBcr, 0x000, 0);
-		IODelay(100);
-	}
-
-	// The TCSR clock-ref block and the PHY register file are opt-in: on the
-	// observed uke the TCSR read hangs unless its clock controller is up, and
-	// the PHY needs its own rails. The minimal path below only uses GCC and
-	// the DWC3 wrapper.
+	// Experiments that write state ABL owns stay opt-in and off.
 	if (fEnableTcsr) {
-		// TCSR_USB2_CLKREF_EN is bit 0 of tcsrcc 0xb1118. Write only: a read
-		// of this page hung the first probe, and bit 0 is the only defined
-		// field in that word.
 		IOLog("NativeUsbSerial: warm: tcsr clkref enable\n");
 		wr32(fTcsr, 0x118, 1);
 		IODelay(100);
 	}
 	if (fEnablePhy) {
-		IOLog("NativeUsbSerial: warm: phy\n");
+		IOLog("NativeUsbSerial: warm: phy (opt-in)\n");
+		wr32(fPhyBcr, 0x000, 1);
+		IODelay(100);
+		wr32(fPhyBcr, 0x000, 0);
+		IODelay(100);
 		for (size_t i = 0; i < UKE_USB_PHY_INIT_COUNT; i++) {
 			const UkeUsbPhyWrite &write = kUkeUsbPhyInit19Mhz[i];
 			uint32_t before = rd32(fPhy, write.offset);
@@ -550,69 +513,32 @@ NativeUsbSerial::warmInit(void)
 		}
 	}
 
-	// The wrapper has to hand the core its pipe clock before DCTL.CSFTRST can
-	// self-clear: select the UTMI clock and un-gate it here, not after the
-	// reset. This is dwc3-qcom's dwc3_qcom_select_utmi_clk() ordering.
-	//
-	// It is opt-in: 0x0b58800 raises a synchronous external abort on this
-	// board (ESR 0x96000010), so the address is unverified even though the
-	// wrapper comment claims it is core_base + 0xf8800.
-	if (fEnableQscratch) {
-		IOLog("NativeUsbSerial: warm: qscratch base=%llx\n",
-		    static_cast<unsigned long long>(fQscratchBase));
-		// dwc3_qcom_select_utmi_clk(): gate the pipe clock, select UTMI with
-		// the software PHY status, then reconnect. The uke overlay asks for
-		// exactly this with qcom,select-utmi-as-pipe-clk.
-		uint32_t general = rd32(fQscratch, 0x08);
-		wr32(fQscratch, 0x08, general | (1U << 8));
-		IODelay(100);
-		general = rd32(fQscratch, 0x08);
-		wr32(fQscratch, 0x08, general | 1U | (1U << 3));
-		IODelay(100);
-		general = rd32(fQscratch, 0x08);
-		wr32(fQscratch, 0x08, general & ~(1U << 8));
-		IODelay(100);
-		uint32_t hs = rd32(fQscratch, 0x10);
-		hs |= (1U << 20) | (1U << 28);
-		wr32(fQscratch, 0x10, hs);
-		IOLog("NativeUsbSerial: warm: qscratch general=%08x hsphy=%08x\n",
-		    rd32(fQscratch, 0x08), rd32(fQscratch, 0x10));
-	}
-
-	// The uke DT carries snps,dis_u2_susphy_quirk: a suspended PHY stops the
-	// UTMI clock, so clear SUSPHY before touching the core.
-	uint32_t phycfg = rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0));
-	if ((phycfg & UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY) != 0) {
-		wr32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0), phycfg & ~UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY);
-	}
-
-	IOLog("NativeUsbSerial: warm: dwc3-reset gsnpsid=%08x gctl=%08x gsts=%08x dctl=%08x gusb2phycfg=%08x\n",
-	    rd32(fWrapper, UKE_USB_DWC3_GSNPSID), rd32(fWrapper, UKE_USB_DWC3_GCTL),
-	    rd32(fWrapper, UKE_USB_DWC3_GSTS), rd32(fWrapper, UKE_USB_DWC3_DCTL),
-	    rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0)));
-	// native-usb-softreset=0 keeps whatever ABL left in the core: a warm
-	// hand-off may not need the reset at all, and this separates "the reset
-	// never completes" from "the core is unusable".
-	if (fSoftReset) {
-		// ABL leaves the controller running with a live session. DCTL.CSFTRST
-		// never self-clears on a running core, so stop it and wait for
-		// DSTS.DEVCTRLHLT before resetting.
-		uint32_t stopDctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
-		if ((stopDctl & UKE_USB_DWC3_DCTL_RUN_STOP) != 0) {
-			wr32(fWrapper, UKE_USB_DWC3_DCTL, stopDctl & ~UKE_USB_DWC3_DCTL_RUN_STOP);
-			for (unsigned i = 0; i < 100; i++) {
-				if ((rd32(fWrapper, UKE_USB_DWC3_DSTS) & UKE_USB_DWC3_DSTS_DEVCTRLHLT) != 0) {
-					break;
-				}
-				IOSleep(1);
-			}
-			IOLog("NativeUsbSerial: warm: dwc3-reset stopped dctl=%08x dsts=%08x\n",
-			    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
+	// Stop whatever ABL left running: the core reset below only self-clears
+	// once the controller is halted.
+	IOLog("NativeUsbSerial: warm: stop dctl=%08x dsts=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
+	wr32(fWrapper, UKE_USB_DWC3_DEVTEN, 0);
+	wr32(fWrapper, UKE_USB_DWC3_DCTL,
+	    rd32(fWrapper, UKE_USB_DWC3_DCTL) & ~UKE_USB_DWC3_DCTL_RUN_STOP);
+	bool halted = false;
+	for (unsigned i = 0; i < 500; i++) {
+		if ((rd32(fWrapper, UKE_USB_DWC3_DSTS) & UKE_USB_DWC3_DSTS_DEVCTRLHLT) != 0) {
+			halted = true;
+			break;
 		}
-		uint32_t dctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
-		wr32(fWrapper, UKE_USB_DWC3_DCTL, dctl | UKE_USB_DWC3_DCTL_CSFTRST);
+		IOSleep(1);
+	}
+	if (!halted) {
+		IOLog("NativeUsbSerial: controller halt timeout dsts=%08x\n",
+		    rd32(fWrapper, UKE_USB_DWC3_DSTS));
+		return false;
+	}
+	if (fSoftReset) {
+		// The reset bit has to be written alone; carrying DCTL's other bits
+		// over is what left CSFTRST stuck in the earlier revisions.
+		wr32(fWrapper, UKE_USB_DWC3_DCTL, UKE_USB_DWC3_DCTL_CSFTRST);
 		bool resetDone = false;
-		for (unsigned i = 0; i < 1000; i++) {
+		for (unsigned i = 0; i < 500; i++) {
 			if ((rd32(fWrapper, UKE_USB_DWC3_DCTL) & UKE_USB_DWC3_DCTL_CSFTRST) == 0) {
 				resetDone = true;
 				break;
@@ -620,16 +546,14 @@ NativeUsbSerial::warmInit(void)
 			IOSleep(1);
 		}
 		if (!resetDone) {
-			IOLog("NativeUsbSerial: DWC3 soft reset did not complete (dctl=%08x gsnpsid=%08x gsts=%08x dsts=%08x); continuing after the BCR reset\n",
-			    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_GSNPSID),
-			    rd32(fWrapper, UKE_USB_DWC3_GSTS), rd32(fWrapper, UKE_USB_DWC3_DSTS));
-		} else {
-			IOLog("NativeUsbSerial: warm: dwc3-reset done dctl=%08x dsts=%08x\n",
-			    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
+			IOLog("NativeUsbSerial: DWC3 soft reset did not complete (dctl=%08x)\n",
+			    rd32(fWrapper, UKE_USB_DWC3_DCTL));
+			return false;
 		}
+		IOLog("NativeUsbSerial: warm: dwc3-reset done dctl=%08x\n",
+		    rd32(fWrapper, UKE_USB_DWC3_DCTL));
 	} else {
-		IOLog("NativeUsbSerial: warm: dwc3-reset skipped dsts=%08x\n",
-		    rd32(fWrapper, UKE_USB_DWC3_DSTS));
+		IOLog("NativeUsbSerial: warm: dwc3-reset skipped\n");
 	}
 
 	IOLog("NativeUsbSerial: warm: done\n");
@@ -750,44 +674,26 @@ NativeUsbSerial::eventInit(void)
 void
 NativeUsbSerial::deviceInit(void)
 {
-	// DCFG.DevSpd may only change while the core is stopped. ABL hands the
-	// controller over running and configured for SuperSpeed, so stop it and
-	// wait for DSTS.DEVCTRLHLT first: a speed write on a running core is
-	// ignored and leaves RUN_STOP no longer sticking.
-	uint32_t stop = rd32(fWrapper, UKE_USB_DWC3_DCTL);
-	if ((stop & UKE_USB_DWC3_DCTL_RUN_STOP) != 0) {
-		wr32(fWrapper, UKE_USB_DWC3_DCTL, stop & ~UKE_USB_DWC3_DCTL_RUN_STOP);
-		for (unsigned i = 0; i < 100; i++) {
-			if ((rd32(fWrapper, UKE_USB_DWC3_DSTS) & UKE_USB_DWC3_DSTS_DEVCTRLHLT) != 0) {
-				break;
-			}
-			IOSleep(1);
-		}
-	}
+	// The core was halted and reset in warmInit, so DCFG is writable here.
 	IOLog("NativeUsbSerial: serial: dcfg before=%08x dsts=%08x\n",
 	    rd32(fWrapper, UKE_USB_DWC3_DCFG), rd32(fWrapper, UKE_USB_DWC3_DSTS));
-	// Select device mode explicitly: dwc3_core_init() writes GCTL.PrtCapDir
-	// from dr_mode, and a core left in host or OTG mode never asserts the
-	// device pull-up and generates no device events.
-	uint32_t gctl = rd32(fWrapper, UKE_USB_DWC3_GCTL);
-	gctl &= ~UKE_USB_DWC3_GCTL_PRTCAP_MASK;
-	gctl |= UKE_USB_DWC3_GCTL_PRTCAP_DEVICE | UKE_USB_DWC3_GCTL_DSBLCLKGTNG;
-	wr32(fWrapper, UKE_USB_DWC3_GCTL, gctl);
-	IOLog("NativeUsbSerial: serial: gctl=%08x\n", rd32(fWrapper, UKE_USB_DWC3_GCTL));
-	wr32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0),
-	    rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0)) &
-	    ~(UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY | UKE_USB_DWC3_GUSB2PHYCFG_ENBLSLPM));
-	wr32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0),
-	    rd32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0)) |
-	    UKE_USB_DWC3_GUSB3PIPECTL_SUSPHY | UKE_USB_DWC3_GUSB3PIPECTL_DEP1P2P3_EN);
-	wr32(fWrapper, UKE_USB_DWC3_DCFG,
-	    (fForceFs ? UKE_USB_DWC3_DCFG_DEVSPD_FS : UKE_USB_DWC3_DCFG_DEVSPD_HS) |
-	    UKE_USB_DWC3_DCFG_DEVADDR(0));
-	IOLog("NativeUsbSerial: serial: dcfg=%08x speed=%s\n",
-	    rd32(fWrapper, UKE_USB_DWC3_DCFG), fForceFs ? "full" : "high");
+	// Reference: clear the speed and address fields and let the core run high
+	// speed at address 0, as dwc3_gadget_start does for a peripheral.
+	uint32_t dcfg = rd32(fWrapper, UKE_USB_DWC3_DCFG);
+	dcfg &= ~(7U | (127U << 3));
+	if (fForceFs) {
+		dcfg |= UKE_USB_DWC3_DCFG_DEVSPD_FS;
+	}
+	wr32(fWrapper, UKE_USB_DWC3_DCFG, dcfg);
+	IOLog("NativeUsbSerial: serial: dcfg=%08x speed=%s gctl=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_DCFG), fForceFs ? "full" : "high",
+	    rd32(fWrapper, UKE_USB_DWC3_GCTL));
+	// The reference enables disconnect, USB reset, connect done and two link
+	// bits; GCTL, GUSB2PHYCFG and GUSB3PIPECTL are left exactly as ABL set
+	// them.
 	wr32(fWrapper, UKE_USB_DWC3_DEVTEN,
 	    UKE_USB_DWC3_DEVTEN_DISCONN | UKE_USB_DWC3_DEVTEN_USBRST |
-	    UKE_USB_DWC3_DEVTEN_CONNECTDONE | UKE_USB_DWC3_DEVTEN_ULSTCNG);
+	    UKE_USB_DWC3_DEVTEN_CONNECTDONE | (1U << 9) | (1U << 11));
 }
 
 bool
@@ -1479,6 +1385,15 @@ NativeUsbSerial::serialStart(void)
 	// disconnect: drop the USB2 pull-up (DCTL.RUN_STOP), wait, connect again
 	// with our DCFG speed. This is dwc3_gadget_pullup()'s sequence.
 	IOLog("NativeUsbSerial: serial: run\n");
+	// Reference QSCRATCH programming: HS_PHY_CTRL keeps the UTMI clock and the
+	// software session-valid bit, SS_PHY_CTRL advertises the lane power that
+	// the QMP PHY already has. Both pages are ABL state we only OR into.
+	uint32_t hs = rd32(fQscratch, 0x10);
+	wr32(fQscratch, 0x10, hs | (1U << 20) | (1U << 28));
+	uint32_t ss = rd32(fQscratch, 0x30);
+	wr32(fQscratch, 0x30, ss | (1U << 24));
+	IOLog("NativeUsbSerial: serial: qscratch hs=%08x ss=%08x\n",
+	    rd32(fQscratch, 0x10), rd32(fQscratch, 0x30));
 	uint32_t runDctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
 	wr32(fWrapper, UKE_USB_DWC3_DCTL, runDctl & ~UKE_USB_DWC3_DCTL_RUN_STOP);
 	IOSleep(200);
@@ -1558,7 +1473,7 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t phyMode = 0;
 	uint32_t tcsrMode = 0;
 	uint32_t qscratchMode = 2;
-	uint32_t softResetMode = 0;
+	uint32_t softResetMode = 1;
 	PE_parse_boot_argn("native-usb-probe", &probeMode, sizeof(probeMode));
 	PE_parse_boot_argn("native-usb-serial", &serialMode, sizeof(serialMode));
 	PE_parse_boot_argn("native-usb-serial-dump", &dumpMode, sizeof(dumpMode));
