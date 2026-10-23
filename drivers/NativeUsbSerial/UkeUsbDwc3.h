@@ -21,7 +21,10 @@
 #define UKE_USB_DWC3_GHWPARAMS1      0xc144U
 #define UKE_USB_DWC3_GHWPARAMS2      0xc148U
 #define UKE_USB_DWC3_GHWPARAMS3      0xc14cU
-#define UKE_USB_DWC3_GUSB2PHYCFG(n)  (0xc200U + 4U * (n))
+// GUSB2PHYCFG sits below GCTL in the global block: 0xc100..0xc11f, then GCTL
+// at 0xc110 and GSNPSID at 0xc120. The previous 0xc200 base pointed at
+// reserved space, so every PHY config access landed nowhere.
+#define UKE_USB_DWC3_GUSB2PHYCFG(n)  (0xc100U + 4U * (n))
 #define UKE_USB_DWC3_GUSB3PIPECTL(n) (0xc2c0U + 4U * (n))
 #define UKE_USB_DWC3_GTXFIFOSIZ(n)   (0xc300U + 4U * (n))
 #define UKE_USB_DWC3_GRXFIFOSIZ(n)   (0xc380U + 4U * (n))

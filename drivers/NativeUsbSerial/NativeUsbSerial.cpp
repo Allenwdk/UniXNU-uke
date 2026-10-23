@@ -513,6 +513,23 @@ NativeUsbSerial::warmInit(void)
 		}
 	}
 
+	// Core identity and port mode. The reference refuses cores other than
+	// DWC_usb3 (GSNPSID 5533) and DWC_usb31 (3331) and refuses a core whose
+	// GCTL.PrtCapDir is not device mode; log both here instead. ABL should
+	// leave device mode behind, but a host-mode core would make every
+	// device-domain write below a no-op.
+	uint32_t id = rd32(fWrapper, UKE_USB_DWC3_GSNPSID);
+	uint32_t gctl = rd32(fWrapper, UKE_USB_DWC3_GCTL);
+	unsigned prtcap = (gctl & UKE_USB_DWC3_GCTL_PRTCAP_MASK) >> 12;
+	IOLog("NativeUsbSerial: warm: id=%08x gctl=%08x prtcap=%u\n", id, gctl, prtcap);
+	if (prtcap != 2) {
+		IOLog("NativeUsbSerial: warm: switching prtcap %u -> device\n", prtcap);
+		wr32(fWrapper, UKE_USB_DWC3_GCTL,
+		    (gctl & ~UKE_USB_DWC3_GCTL_PRTCAP_MASK) | UKE_USB_DWC3_GCTL_PRTCAP_DEVICE);
+		IODelay(100);
+		IOLog("NativeUsbSerial: warm: gctl now=%08x\n", rd32(fWrapper, UKE_USB_DWC3_GCTL));
+	}
+
 	// Stop whatever ABL left running: the core reset below only self-clears
 	// once the controller is halted.
 	IOLog("NativeUsbSerial: warm: stop dctl=%08x dsts=%08x\n",
@@ -534,6 +551,26 @@ NativeUsbSerial::warmInit(void)
 		return false;
 	}
 	if (fSoftReset) {
+		// A suspended PHY stops the UTMI clock the reset sequencer runs
+		// on, so CSFTRST then never self-clears (this is the exact
+		// symptom every earlier revision showed). ABL leaves both suspend
+		// bits set once fastboot stops using the port; Linux clears
+		// GUSB2PHYCFG.SUSPHY and GUSB3PIPECTL.SUSPHY before a soft reset
+		// for the same reason.
+		uint32_t usb2 = rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0));
+		uint32_t usb3 = rd32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0));
+		IOLog("NativeUsbSerial: warm: usb2phycfg=%08x usb3pipectl=%08x\n", usb2, usb3);
+		if ((usb2 & UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY) != 0) {
+			IOLog("NativeUsbSerial: warm: clearing usb2 suspend\n");
+			wr32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0),
+			    usb2 & ~UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY);
+		}
+		if ((usb3 & UKE_USB_DWC3_GUSB3PIPECTL_SUSPHY) != 0) {
+			IOLog("NativeUsbSerial: warm: clearing usb3 suspend\n");
+			wr32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0),
+			    usb3 & ~UKE_USB_DWC3_GUSB3PIPECTL_SUSPHY);
+		}
+		IODelay(100);
 		// The reset bit has to be written alone; carrying DCTL's other bits
 		// over is what left CSFTRST stuck in the earlier revisions.
 		wr32(fWrapper, UKE_USB_DWC3_DCTL, UKE_USB_DWC3_DCTL_CSFTRST);
@@ -546,12 +583,17 @@ NativeUsbSerial::warmInit(void)
 			IOSleep(1);
 		}
 		if (!resetDone) {
-			IOLog("NativeUsbSerial: DWC3 soft reset did not complete (dctl=%08x)\n",
+			// Non-fatal on purpose: the rest of the bring-up (event ring,
+			// endpoint commands, RUN) still runs and its log lines say
+			// more about the core state than a bare failure return did.
+			IOLog("NativeUsbSerial: DWC3 soft reset did not complete (dctl=%08x usb2=%08x usb3=%08x); continuing without reset\n",
+			    rd32(fWrapper, UKE_USB_DWC3_DCTL),
+			    rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0)),
+			    rd32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0)));
+		} else {
+			IOLog("NativeUsbSerial: warm: dwc3-reset done dctl=%08x\n",
 			    rd32(fWrapper, UKE_USB_DWC3_DCTL));
-			return false;
 		}
-		IOLog("NativeUsbSerial: warm: dwc3-reset done dctl=%08x\n",
-		    rd32(fWrapper, UKE_USB_DWC3_DCTL));
 	} else {
 		IOLog("NativeUsbSerial: warm: dwc3-reset skipped\n");
 	}
