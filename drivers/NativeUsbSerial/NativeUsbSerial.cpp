@@ -498,7 +498,17 @@ NativeUsbSerial::warmInit(void)
 	wr32(fGcc, 0x000, rd32(fGcc, 0x000) | UKE_USB_GCC_RESET_ASSERT);
 	IODelay(100);
 	wr32(fGcc, 0x000, rd32(fGcc, 0x000) & ~UKE_USB_GCC_RESET_ASSERT);
-	IODelay(100);
+	IODelay(1000);
+	// The block reset also drops the branch clocks and the bus clocks behind
+	// them, so re-enable them before anything in the window is touched again.
+	// Without this the QSCRATCH page reads and writes back zero.
+	for (uint32_t offset : branches) {
+		wr32(fGcc, offset, rd32(fGcc, offset) | UKE_USB_GCC_BRANCH_ENABLE);
+	}
+	IODelay(1000);
+	IOLog("NativeUsbSerial: warm: bcr released gdscr=%08x cfg=%08x master=%08x utmi=%08x tcsr=%08x\n",
+	    rd32(fGcc, 0x004), rd32(fGcc, 0x008), rd32(fGcc, 0x018),
+	    rd32(fGcc, 0x028), rd32(fGcc, 0x08c));
 	if (fEnablePhy) {
 		// Resetting the eUSB2 PHY wipes the register file ABL programmed, so
 		// the pulse only makes sense together with the reprogramming table
@@ -1381,6 +1391,9 @@ NativeUsbSerial::serialStart(void)
 	}
 	IOLog("NativeUsbSerial: serial: event\n");
 	eventInit();
+	IOLog("NativeUsbSerial: serial: event adr=%08x siz=%08x count=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_GEVNTADRLO), rd32(fWrapper, UKE_USB_DWC3_GEVNTSIZ),
+	    rd32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT));
 	IOLog("NativeUsbSerial: serial: fifo\n");
 	fifoConfig();
 	IOLog("NativeUsbSerial: serial: device\n");
@@ -1445,6 +1458,12 @@ NativeUsbSerial::serialStart(void)
 	fEp0Waiting = false;
 	IOLog("NativeUsbSerial: serial: run dctl=%08x dsts=%08x\n",
 	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
+	// One second later the host has either answered the pull-up or not; the
+	// event count says whether the controller is generating anything at all.
+	IOSleep(1000);
+	IOLog("NativeUsbSerial: serial: run+1s dctl=%08x dsts=%08x devten=%08x gevt=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS),
+	    rd32(fWrapper, UKE_USB_DWC3_DEVTEN), rd32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT));
 	IOLog("NativeUsbSerial: warm USB2 device started\n");
 	return true;
 }
