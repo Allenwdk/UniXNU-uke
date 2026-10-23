@@ -1057,6 +1057,10 @@ NativeUsbSerial::configureData(void)
 		IOLog("NativeUsbSerial: data endpoint configuration failed\n");
 		return false;
 	}
+	// Endpoints 1..3 carry the notification and both bulk pipes.
+	wr32(fWrapper, UKE_USB_DWC3_DALEPENA, rd32(fWrapper, UKE_USB_DWC3_DALEPENA) | 0x0eU);
+	IOLog("NativeUsbSerial: data endpoints enabled dalepena=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_DALEPENA));
 	fSerialReady = true;
 	queueBanner("UniXNU uke USB serial\n"
 	            "CDC-ACM ready; commands: help, dump, version\n");
@@ -1108,6 +1112,8 @@ NativeUsbSerial::serviceEvents(void)
 				    !configEp(fEp0In, UKE_USB_DWC3_EP_TYPE_CONTROL, 64, 0, true, true)) {
 					IOLog("NativeUsbSerial: EP0 reconfiguration after reset failed\n");
 				}
+				wr32(fWrapper, UKE_USB_DWC3_DALEPENA,
+				    rd32(fWrapper, UKE_USB_DWC3_DALEPENA) | 1U);
 				ep0Arm();
 			} else if (type == UKE_USB_DWC3_DEV_DISCONNECT) {
 				fConfigured = false;
@@ -1344,6 +1350,10 @@ NativeUsbSerial::serialStart(void)
 		IOLog("NativeUsbSerial: EP0 configuration failed\n");
 		return false;
 	}
+	// DALEPENA bit 0 must be set or the controller ignores endpoint 0
+	// entirely: the reference driver writes 3 (EP0 + EP1) at this point.
+	wr32(fWrapper, UKE_USB_DWC3_DALEPENA, rd32(fWrapper, UKE_USB_DWC3_DALEPENA) | 1U);
+	IOLog("NativeUsbSerial: serial: dalepena=%08x\n", rd32(fWrapper, UKE_USB_DWC3_DALEPENA));
 	// Arm EP0 before the reconnect: the host answers the pull-up with a bus
 	// reset and a setup packet that must find a valid TRB.
 	ep0Arm();

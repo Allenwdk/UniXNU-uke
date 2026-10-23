@@ -33,12 +33,16 @@
 #define UKE_USB_DWC3_DCTL            0xc704U
 #define UKE_USB_DWC3_DEVTEN          0xc708U
 #define UKE_USB_DWC3_DSTS            0xc70cU
-// DWC3_DEP_BASE(n) = 0xc700 + 0x20 + 0x10*n; the four words are
-// PAR2, PAR1, PAR0, CMD (Linux core.h lines 168-171).
-#define UKE_USB_DWC3_DEPCMDPAR2(n)   (0xc720U + 16U * (n))
-#define UKE_USB_DWC3_DEPCMDPAR1(n)   (0xc724U + 16U * (n))
-#define UKE_USB_DWC3_DEPCMDPAR0(n)   (0xc728U + 16U * (n))
-#define UKE_USB_DWC3_DEPCMD(n)       (0xc72cU + 16U * (n))
+// DWC3_DEP_BASE(n) = 0xc800 + 0x10*n; the four words are PAR2, PAR1, PAR0,
+// CMD. The previous revision used 0xc720 as the base, which is DALEPENA: every
+// endpoint command was written into the endpoint-enable register instead of the
+// command register, so no endpoint command ever reached the controller.
+#define UKE_USB_DWC3_DEPCMDPAR2(n)   (0xc800U + 16U * (n))
+#define UKE_USB_DWC3_DEPCMDPAR1(n)   (0xc804U + 16U * (n))
+#define UKE_USB_DWC3_DEPCMDPAR0(n)   (0xc808U + 16U * (n))
+#define UKE_USB_DWC3_DEPCMD(n)       (0xc80cU + 16U * (n))
+// Device all-endpoints-enable: bit n enables endpoint n.
+#define UKE_USB_DWC3_DALEPENA        0xc720U
 
 // GCTL.
 #define UKE_USB_DWC3_GCTL_DSBLCLKGTNG   (1U << 0)
