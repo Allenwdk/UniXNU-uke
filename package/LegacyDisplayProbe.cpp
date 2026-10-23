@@ -309,6 +309,20 @@ static ClientStat *statFor(IOUserClient *client) {
 }
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
     ClientStat *stat=statFor(client);
+    // The panel is already lit by the firmware GOP frame buffer. Selector 12
+    // enters the original request_power_change transition and selector 6 is
+    // the wait that follows; on hardware both end in the tablet's hard reset,
+    // so acknowledge them here and keep forwarding every other selector.
+    if(stat && (selector==6 || selector==12)) {
+        if(selector<kSelectors && !stat->selector_calls[selector])
+            printf("UKEMEM: client selector %u (suppressed)\n",(unsigned)selector);
+        if(selector<kSelectors){++stat->selector_calls[selector];stat->selector_status[selector]=(uint32_t)kIOReturnSuccess;}
+        ++stat->calls;
+        return kIOReturnSuccess;
+    }
+    // First call of every other selector, before the original can reset.
+    if(stat && selector<16 && !stat->selector_calls[selector])
+        printf("UKEMEM: client selector %u\n",(unsigned)selector);
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
@@ -385,6 +399,19 @@ void native_legacy_client_observed(IOReturn status,IOUserClient *client) {
     if(client && !status)interpose(client,native_legacy_client_pid);
     native_legacy_client_status=status;native_legacy_client_object=(uintptr_t)client;
     if(client)strlcpy(native_legacy_client_class,client->getMetaClass()->getClassName(),sizeof(native_legacy_client_class));
+    {
+        // Adoption state at the moment a client opens: the +0x1618 default
+        // surface and the +0x1620 temporary one the original slot299 created.
+        void *surface=nullptr,*temp=nullptr;uint32_t sid=0;
+        const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
+        if(object) {
+            memcpy(&surface,object+0x1618,sizeof(surface));
+            memcpy(&temp,object+0x1620,sizeof(temp));
+        }
+        if(temp)memcpy(&sid,reinterpret_cast<const unsigned char *>(temp)+0x10,sizeof(sid));
+        printf("UKE: display client status=%x pid=%d surface=%p temp=%p sid=%u\n",
+            (unsigned)status,native_legacy_client_pid,surface,temp,(unsigned)sid);
+    }
     native_legacy_client_checkpoint();
 }
 __attribute__((noinline)) bool native_legacy_gop_mapping_observed(IOService *object,IOMemoryMap *mapping,uint32_t width,uint32_t height) {
