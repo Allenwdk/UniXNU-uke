@@ -495,6 +495,9 @@ int32_t native_gpu_zap[8];
 // per SMC (init, mem_setup, auth): milliseconds and INTERRUPTED resumes; free pages before the zap and 2 s after its last step
 uint32_t native_gpu_zap_cost[6], native_gpu_zap_free[2];
 extern unsigned int vm_page_free_count __attribute__((weak));
+extern unsigned int vm_page_wire_count __attribute__((weak));
+extern unsigned int vm_page_active_count __attribute__((weak));
+extern unsigned int vm_page_inactive_count __attribute__((weak));
 }
 uint32_t rd32le(const uint8_t *p) {return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;}
 uint16_t rd16le(const uint8_t *p) {return uint16_t(p[0] | p[1] << 8);}
@@ -1418,6 +1421,12 @@ void heartbeat() {
     // tells a live kernel from a hung one and shows whether the GPU stays idle.
     char row[64];
     for (unsigned t = 0;; t += 2) {
+        if (!(t % 10))
+            IOLog("UKE MEM: free=%u wire=%u active=%u inactive=%u\n",
+                  &vm_page_free_count ? vm_page_free_count : 0,
+                  &vm_page_wire_count ? vm_page_wire_count : 0,
+                  &vm_page_active_count ? vm_page_active_count : 0,
+                  &vm_page_inactive_count ? vm_page_inactive_count : 0);
         uint32_t info = 0;
         gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuCore, kG2hInfo, &info);
         if (gxOn() && gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR)) {
