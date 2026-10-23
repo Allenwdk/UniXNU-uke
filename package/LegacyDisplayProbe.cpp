@@ -191,6 +191,11 @@ void native_legacy_frame_colors_observed(const uint32_t *colors,const uint64_t *
 struct SwapEvent {uint64_t submitted,offered,done;uint32_t number;};
 static SwapEvent swapEvents[64];static uint32_t swapEventCount;
 extern "C" void native_legacy_swap_stage(unsigned stage) {
+    if(stage==3) {
+        static unsigned kicks;
+        if(++kicks<=4)printf("UKE: kick %u\n",kicks);
+        return;
+    }
     const uint64_t now=probeNowUs();
     uint32_t total=swapEventCount;
     if(stage==0) {
@@ -331,16 +336,29 @@ static ClientStat *statFor(IOUserClient *client) {
     for(unsigned i=0;i<seenClientCount;++i)if(seenClients[i].object==(uintptr_t)client)return &seenClients[i];
     return nullptr;
 }
+static void dumpSwapQueue(const char *tag,unsigned nth,IOReturn status) {
+    // The original queue head/current and the family state words, including
+    // the +5840 powered word.
+    const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
+    uint64_t current=0,head=0;uint32_t state[10]={};
+    if(object) {
+        memcpy(&current,object+5472,8);memcpy(&head,object+5480,8);
+        for(unsigned k=0;k<10;++k)memcpy(&state[k],object+5808+4*k,4);
+    }
+    printf("UKE: %s %u status=%x current=%llx head=%llx state=%x/%x/%x/%x/%x/%x/%x/%x/%x/%x\n",
+        tag,nth,(unsigned)status,(unsigned long long)current,(unsigned long long)head,
+        state[0],state[1],state[2],state[3],state[4],state[5],state[6],state[7],state[8],state[9]);
+}
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
     ClientStat *stat=statFor(client);
     unsigned calls=(stat && selector<kSelectors)?stat->selector_calls[selector]:0;
     bool traced=stat && selector<kSelectors && calls<2;
     if(traced)printf("UKEMEM: sel %u enter calls=%u\n",(unsigned)selector,calls+1);
-    // The panel is already lit by the firmware GOP frame buffer. Selector 12
-    // enters the original request_power_change transition and selector 6 is
-    // the wait that follows; on hardware both end in the tablet's hard reset,
-    // so acknowledge them here and keep forwarding every other selector.
-    if(stat && (selector==6 || selector==12)) {
+    // Selector 12 enters the original request_power_change transition, which
+    // has no platform driver behind it on this GOP-lit panel; acknowledge it.
+    // Selector 6 (SwapWait) is forwarded: with the powered word set it may be
+    // the call that submits the staged swap to the framebuffer queue.
+    if(stat && selector==12) {
         if(selector<kSelectors){++stat->selector_calls[selector];stat->selector_status[selector]=(uint32_t)kIOReturnSuccess;}
         ++stat->calls;
         if(traced)printf("UKEMEM: sel %u exit 0 (suppressed)\n",(unsigned)selector);
@@ -348,20 +366,8 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
     }
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
     if(traced)printf("UKEMEM: sel %u exit %x\n",(unsigned)selector,(unsigned)status);
-    if(stat && selector==5 && stat->selector_calls[5]<3) {
-        // SwapEnd returned: does the original queue hold the request, and does
-        // the family consider the display powered? Nothing else processes the
-        // queue without the absent platform driver's vblank interrupt.
-        const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
-        uint64_t current=0,head=0;uint32_t state[10]={};
-        if(object) {
-            memcpy(&current,object+5472,8);memcpy(&head,object+5480,8);
-            for(unsigned k=0;k<10;++k)memcpy(&state[k],object+5808+4*k,4);
-        }
-        printf("UKE: swap-end %u status=%x current=%llx head=%llx state=%x/%x/%x/%x/%x/%x/%x/%x/%x/%x\n",
-            stat->selector_calls[5]+1,(unsigned)status,(unsigned long long)current,(unsigned long long)head,
-            state[0],state[1],state[2],state[3],state[4],state[5],state[6],state[7],state[8],state[9]);
-    }
+    if(stat && selector==5 && stat->selector_calls[5]<3) dumpSwapQueue("swap-end",stat->selector_calls[5]+1,status);
+    if(stat && selector==6 && stat->selector_calls[6]<3) dumpSwapQueue("swap-wait",stat->selector_calls[6]+1,status);
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
             const uint64_t *in=args->scalarInput;
