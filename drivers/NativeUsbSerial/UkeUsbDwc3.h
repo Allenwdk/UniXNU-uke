@@ -57,6 +57,7 @@
 
 // DCFG/DCTL/DSTS.
 #define UKE_USB_DWC3_DCFG_DEVSPD_HS   0U
+#define UKE_USB_DWC3_DCFG_DEVSPD_FS   1U
 #define UKE_USB_DWC3_DCFG_DEVADDR(n)  (((n) & 0x7fU) << 3)
 #define UKE_USB_DWC3_DCTL_RUN_STOP    (1U << 31)
 #define UKE_USB_DWC3_DCTL_CSFTRST     (1U << 30)

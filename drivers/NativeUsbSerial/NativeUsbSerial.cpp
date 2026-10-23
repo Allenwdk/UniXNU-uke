@@ -208,6 +208,7 @@ class NativeUsbSerial : public IOService {
 	bool fEnableTcsr = false;
 	bool fEnableQscratch = false;
 	bool fSoftReset = false;
+	bool fForceFs = false;
 	uint32_t fProbeLevel = 0;
 	uint64_t fQscratchBase = UKE_USB_QSCRATCH_BASE;
 
@@ -408,8 +409,8 @@ NativeUsbSerial::dumpProbe(void)
 	// stock DT also hands that page to the ADSP as its ipc_hwmutex region, so
 	// an APPS read may not be legal. It is opt-in on its own argument.
 	if (fEnableTcsr) {
-		IOLog("NativeUsbSerial: probe: reading TCSR\n");
-		IOLog("NativeUsbSerial: GCC tcsr-usb2-clkref=%08x\n", rd32(fTcsr, 0x118));
+		IOLog("NativeUsbSerial: probe: TCSR base=%llx (read skipped; the read hangs)\n",
+		    static_cast<unsigned long long>(0x01f4b118ULL));
 	}
 
 	if (fProbeLevel >= 2) {
@@ -526,8 +527,11 @@ NativeUsbSerial::warmInit(void)
 	// the PHY needs its own rails. The minimal path below only uses GCC and
 	// the DWC3 wrapper.
 	if (fEnableTcsr) {
-		IOLog("NativeUsbSerial: warm: tcsr\n");
-		wr32(fTcsr, 0x118, rd32(fTcsr, 0x118) | 1);
+		// TCSR_USB2_CLKREF_EN is bit 0 of tcsrcc 0xb1118. Write only: a read
+		// of this page hung the first probe, and bit 0 is the only defined
+		// field in that word.
+		IOLog("NativeUsbSerial: warm: tcsr clkref enable\n");
+		wr32(fTcsr, 0x118, 1);
 		IODelay(100);
 	}
 	if (fEnablePhy) {
@@ -759,7 +763,10 @@ NativeUsbSerial::deviceInit(void)
 	    rd32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0)) |
 	    UKE_USB_DWC3_GUSB3PIPECTL_SUSPHY | UKE_USB_DWC3_GUSB3PIPECTL_DEP1P2P3_EN);
 	wr32(fWrapper, UKE_USB_DWC3_DCFG,
-	    UKE_USB_DWC3_DCFG_DEVSPD_HS | UKE_USB_DWC3_DCFG_DEVADDR(0));
+	    (fForceFs ? UKE_USB_DWC3_DCFG_DEVSPD_FS : UKE_USB_DWC3_DCFG_DEVSPD_HS) |
+	    UKE_USB_DWC3_DCFG_DEVADDR(0));
+	IOLog("NativeUsbSerial: serial: dcfg=%08x speed=%s\n",
+	    rd32(fWrapper, UKE_USB_DWC3_DCFG), fForceFs ? "full" : "high");
 	wr32(fWrapper, UKE_USB_DWC3_DEVTEN,
 	    UKE_USB_DWC3_DEVTEN_DISCONN | UKE_USB_DWC3_DEVTEN_USBRST |
 	    UKE_USB_DWC3_DEVTEN_CONNECTDONE | UKE_USB_DWC3_DEVTEN_ULSTCNG);
@@ -1541,11 +1548,14 @@ NativeUsbSerial::start(IOService *provider)
 	PE_parse_boot_argn("native-usb-tcsr", &tcsrMode, sizeof(tcsrMode));
 	PE_parse_boot_argn("native-usb-qscratch", &qscratchMode, sizeof(qscratchMode));
 	PE_parse_boot_argn("native-usb-softreset", &softResetMode, sizeof(softResetMode));
+	uint32_t fsMode = 0;
+	PE_parse_boot_argn("native-usb-fs", &fsMode, sizeof(fsMode));
 	fProbeLevel = probeMode;
 	fEnablePhy = phyMode != 0;
 	fEnableTcsr = tcsrMode != 0;
 	fEnableQscratch = qscratchMode != 0;
 	fSoftReset = softResetMode != 0;
+	fForceFs = fsMode != 0;
 	// 2 (the default) is core_base + 0xf8800, the address dwc3-qcom maps.
 	// 1 keeps the first revision's transcribed 0x0b58800, which aborts, so a
 	// boot can still reproduce that failure.
