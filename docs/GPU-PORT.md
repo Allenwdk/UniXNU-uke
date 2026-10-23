@@ -344,13 +344,20 @@ The three `gen71100_*` files are not in Git. Either:
 tar -czf /tmp/uke-gpu-firmware.tar.gz -C .cache/firmware/uke-gpu \
     gen71100_sqe.fw gen71100_gmu.bin gen71100_zap.mbn
 base64 -w0 /tmp/uke-gpu-firmware.tar.gz > /tmp/uke-gpu-firmware.b64
-gh secret set UKE_GPU_FIRMWARE_B64 < /tmp/uke-gpu-firmware.b64
-gh workflow run seed-gpu-firmware.yml -f key=v1
+# GitHub caps one Actions secret at 48 KB and this base64 is ~120 KB: split it.
+split -b 40143 -d -a 1 /tmp/uke-gpu-firmware.b64 /tmp/uke-gpu-firmware.b64.
+gh secret set UKE_GPU_FIRMWARE_B64_1 < /tmp/uke-gpu-firmware.b64.0
+gh secret set UKE_GPU_FIRMWARE_B64_2 < /tmp/uke-gpu-firmware.b64.1
+gh secret set UKE_GPU_FIRMWARE_B64_3 < /tmp/uke-gpu-firmware.b64.2
+gh workflow run seed-gpu-firmware.yml --ref uke-gpu -f key=v1
 ```
 
-`build-kernel.yml` restores `uke-gpu-firmware-*` for the two GPU defconfigs and
-the kit builder verifies every pin before embedding. Without the cache the
-kernel still builds, but the GMU cold start refuses.
+The seed workflow joins the three secrets before decoding, so the archive
+never exists in Git. `build-kernel.yml` restores `uke-gpu-firmware-*` for the
+two GPU defconfigs and the kit builder verifies every pin before embedding.
+Without the cache the kernel still builds, but the GMU cold start refuses.
+The workflow file has to exist on the default branch before `gh workflow run`
+can dispatch it, which is why `main` carries a copy of the CI file only.
 
 ### 2. Build the test kernel
 
