@@ -54,7 +54,7 @@ env:
 
 jobs:
   kernel:
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 240
 
     steps:
@@ -201,7 +201,7 @@ jobs:
           retention-days: 14
 
   full:
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 240
 
     steps:
