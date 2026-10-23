@@ -235,9 +235,24 @@ void native_legacy_copy_timing_observed(uint64_t ticks,uint64_t bytes) {
     native_legacy_copy_n=native_legacy_copy_n+1;native_legacy_copy_last=ticks;native_legacy_copy_sum=native_legacy_copy_sum+ticks;
     if(ticks>native_legacy_copy_max)native_legacy_copy_max=ticks;
 }
+// XNU's console switch keeps drawing text into the firmware frame buffer that
+// the display stack now presents over. Once launchd starts a daemon storm the
+// 3200x2136 scroll work can wedge the console and stop every later log line;
+// muting the screen console after the first frame keeps the msgbuf (and the
+// pram ring) alive. Panic text still reaches the pram dump.
+extern "C" int disableConsoleOutput;
+static int native_legacy_console_muted;
+static void native_legacy_mute_console(void) {
+    unsigned enabled=0;
+    PE_parse_boot_argn("offline-legacy-noconsole",&enabled,sizeof(enabled));
+    if(enabled!=1 || native_legacy_console_muted)return;
+    native_legacy_console_muted=1;
+    printf("UKE: screen console muted after the first frame\n");
+    disableConsoleOutput=1;
+}
 __attribute__((noinline)) void native_legacy_transfer_observed(IOReturn status,const void *request,uint64_t bytes) {
     native_legacy_transfer_calls=native_legacy_transfer_calls+1;
-    if(status==kIOReturnSuccess)native_legacy_swap_stage(2);
+    if(status==kIOReturnSuccess){native_legacy_swap_stage(2);native_legacy_mute_console();}
     native_legacy_transfer_status=status;native_legacy_transfer_request=(uintptr_t)request;native_legacy_transfer_bytes=bytes;
     if(status!=kIOReturnSuccess && boot_progress_stage) {
         char message[120];snprintf(message,sizeof(message),"DISPLAY COPY FAILED status=%08x prepare=%u tries=%u",
