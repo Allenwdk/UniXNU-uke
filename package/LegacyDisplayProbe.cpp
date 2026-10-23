@@ -353,14 +353,14 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
         // the family consider the display powered? Nothing else processes the
         // queue without the absent platform driver's vblank interrupt.
         const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
-        uint64_t current=0,head=0;uint32_t state[8]={};
+        uint64_t current=0,head=0;uint32_t state[10]={};
         if(object) {
             memcpy(&current,object+5472,8);memcpy(&head,object+5480,8);
-            for(unsigned k=0;k<8;++k)memcpy(&state[k],object+5808+4*k,4);
+            for(unsigned k=0;k<10;++k)memcpy(&state[k],object+5808+4*k,4);
         }
-        printf("UKE: swap-end %u status=%x current=%p head=%p state=%x/%x/%x/%x/%x/%x/%x/%x\n",
+        printf("UKE: swap-end %u status=%x current=%p head=%p state=%x/%x/%x/%x/%x/%x/%x/%x/%x/%x\n",
             stat->selector_calls[5]+1,(unsigned)status,current,head,state[0],state[1],state[2],state[3],
-            state[4],state[5],state[6],state[7]);
+            state[4],state[5],state[6],state[7],state[8],state[9]);
     }
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
