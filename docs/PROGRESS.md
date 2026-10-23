@@ -433,6 +433,10 @@ fastboot reboot
 | 2026-10-23 | 队列诊断 | 单 CPU + `swap-end` 打印：`status=0 current=0 head=0 state=c80/858/3/0/0/0/0/0/1/0` —— SwapEnd 成功但**请求没有进 framebuffer 队列**（+5472/+5480 全空），powered 位 `+5840`=1。因此 `validateSwap`/`kickSwapQueue`/拷贝都不可能有输入，问题在 user client 未提交，不在拷贝或电源状态 |
 | 2026-10-23 | 12 归因修正 | 早期“selector 12 导致硬复位”只是时间相关性，未证实：抑制 6/12 后复位只是移到 selector 0；当前 SMP 复位中 12 一直是被抑制的；单 CPU 下 t≈847 的 `request_power_change` 出现后系统仍存活 30s+（真实原因是 interpose 上限 8 溢出）。保留 12 的抑制作为防御（原厂电源切换缺少平台驱动），但不再当作复位根因 |
 | 2026-10-23 | selector 6 测试构建 | 只抑制 12、转发 6（SwapWait），并在 5/6 返回后 dump 队列与状态；驱动侧 pin `748d39f`（kickOnce 对未验证请求补 `validateSwap`，kick 入口打 stage 3）。device `495443e`、core `2330732`、CI run `39908310402` |
+| 2026-10-23 | selector 6 实机 | SwapWait 立即返回 0（不阻塞、不提交），SwapEnd 后队列仍 `head=0`，多次 swap 后只有一次 `UKE: kick 1`（family 调用了 kick，但队列空无请求）；`state[2]` 随 SwapEnd 递增。结论：原厂 user client 完全没有把 swap 交给 framebuffer 队列，SwapWait 不是提交点；需要自己接管 selector 5 |
+| 2026-10-23 | SwapEnd 结构诊断 | 在 selector 5 前打印 `structureInputSize`/delivery/前 0x120 字节，用于确定 iOS 17 的 swap 记录布局（surface ID/rect/mask），为 Ace 5 式 own-present 做准备。device `8b30cac`、CI run `39909862208` |
+| 2026-10-23 | 原厂 swap 路径反汇编 | 在构建内核里定位到 IOMobileFramebufferUserClient dispatch 表（`0xfffffff005f354c0`）：sel 3/4/5/6/8 的 handler 与 check counts，SwapEnd 期望 structureInputSize=1288。SwapEnd → slot 178（`0xfffffff00578f224`）→ IOCommandGate action（`0xfffffff005790894`）按 `structInput+152` 的 ID 在 **framebuffer+5496** 的链表里查找请求（请求 +788=ID、+2960=next），命中后置 +1355 并调用请求对象 vtable[32]。我们的驱动读的是 +5480（另一条队列），所以永远找不到请求 |
+| 2026-10-23 | active list 修复 | `kickOnce` 改为优先读 +5496（回退 +5480），dump 增加 `active=`；子模块 `8277751`、core `b65ccf2`、device `144838c`、CI run `39913325398` |
 
 ---
 
