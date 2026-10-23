@@ -494,9 +494,11 @@ NativeUsbSerial::warmInit(void)
 	// wrapper and the core without needing the pipe clock that DCTL.CSFTRST
 	// waits on, and it is the only reset available while the eUSB2 PHY is
 	// still coming up.
+	// Keep ABL's block state: asserting GCC_USB30_PRIM_BCR here leaves the
+	// core running (RUN_STOP sticks) but the host never sees a connection
+	// again, so only release the reset and re-enable the branch clocks that
+	// sit behind it.
 	IOLog("NativeUsbSerial: warm: bcr\n");
-	wr32(fGcc, 0x000, rd32(fGcc, 0x000) | UKE_USB_GCC_RESET_ASSERT);
-	IODelay(100);
 	wr32(fGcc, 0x000, rd32(fGcc, 0x000) & ~UKE_USB_GCC_RESET_ASSERT);
 	IODelay(1000);
 	// The block reset also drops the branch clocks and the bus clocks behind
@@ -1458,12 +1460,15 @@ NativeUsbSerial::serialStart(void)
 	fEp0Waiting = false;
 	IOLog("NativeUsbSerial: serial: run dctl=%08x dsts=%08x\n",
 	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
-	// One second later the host has either answered the pull-up or not; the
-	// event count says whether the controller is generating anything at all.
-	IOSleep(1000);
-	IOLog("NativeUsbSerial: serial: run+1s dctl=%08x dsts=%08x devten=%08x gevt=%08x\n",
-	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS),
-	    rd32(fWrapper, UKE_USB_DWC3_DEVTEN), rd32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT));
+	// The host answers a pull-up within about a second with a bus reset; three
+	// samples show whether it happened and whether the controller produced any
+	// event for it.
+	for (unsigned i = 1; i <= 3; i++) {
+		IOSleep(1000);
+		IOLog("NativeUsbSerial: serial: run+%us dctl=%08x dsts=%08x devten=%08x gevt=%08x\n",
+		    i, rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS),
+		    rd32(fWrapper, UKE_USB_DWC3_DEVTEN), rd32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT));
+	}
 	IOLog("NativeUsbSerial: warm USB2 device started\n");
 	return true;
 }
