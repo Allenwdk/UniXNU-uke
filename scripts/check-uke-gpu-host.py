@@ -65,7 +65,7 @@ def main():
             r'#define SHENG_GMU_VOTES_CHIP_ID 0x43030b00u',
             r'#define SHENG_GPU_OPPS 10u',
             r'#define SHENG_GMU_OPPS 3u',
-            r'#define SHENG_GPU_BANDWIDTHS 6u',
+            r'#define SHENG_GPU_BANDWIDTHS 7u',
         ],
         'ShengGmuCommandDbSource.h': [
             r'#define SHENG_GMU_COMMAND_DB_BASE UINT64_C\(0x81c60000\)',

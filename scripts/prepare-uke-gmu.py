@@ -327,9 +327,11 @@ def derive(args):
                                   for i in range(1, len(pwrlevels))):
         raise SystemExit('GPU pwrlevels are not 9 ascending OPPs')
     gpu_opps = [dict(hz=0, level=0, kbps=0, acd_present=0, acd=0)] + pwrlevels
-    bandwidths = sorted({entry['kbps'] for entry in pwrlevels if entry['kbps']})
-    if not bandwidths or bandwidths[0] == 0:
-        raise SystemExit('GPU bandwidth table is empty')
+    # Level 0 carries no bandwidth vote: AdrenoHfiBuildBandwidth requires kbps[0]==0.
+    bandwidths = [0] + sorted({entry['kbps'] for entry in pwrlevels if entry['kbps']})
+    if len(bandwidths) < 2 or bandwidths[0] != 0 or any(
+            bandwidths[i] <= bandwidths[i - 1] for i in range(1, len(bandwidths))):
+        raise SystemExit('GPU bandwidth table is not a rising list with a zero level')
 
     gmu_freqs = cells(dtb, gmu_node, 'qcom,gmu-freq-table')
     if len(gmu_freqs) % 2:
