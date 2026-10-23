@@ -361,16 +361,18 @@ static void dumpSwapInput(const IOExternalMethodArguments *args) {
     }
 }
 static void dumpSwapQueue(const char *tag,unsigned nth,IOReturn status) {
-    // The original queue head/current and the family state words, including
-    // the +5840 powered word.
+    // The original current/pending pointers, the active-list head the SwapEnd
+    // gate action walks (+5496) and the family state words, including the
+    // +5840 powered word.
     const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
-    uint64_t current=0,head=0;uint32_t state[10]={};
+    uint64_t current=0,head=0,active=0;uint32_t state[10]={};
     if(object) {
-        memcpy(&current,object+5472,8);memcpy(&head,object+5480,8);
+        memcpy(&current,object+5472,8);memcpy(&head,object+5480,8);memcpy(&active,object+5496,8);
         for(unsigned k=0;k<10;++k)memcpy(&state[k],object+5808+4*k,4);
     }
-    printf("UKE: %s %u status=%x current=%llx head=%llx state=%x/%x/%x/%x/%x/%x/%x/%x/%x/%x\n",
+    printf("UKE: %s %u status=%x current=%llx head=%llx active=%llx state=%x/%x/%x/%x/%x/%x/%x/%x/%x/%x\n",
         tag,nth,(unsigned)status,(unsigned long long)current,(unsigned long long)head,
+        (unsigned long long)active,
         state[0],state[1],state[2],state[3],state[4],state[5],state[6],state[7],state[8],state[9]);
 }
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
