@@ -430,6 +430,9 @@ fastboot reboot
 | 2026-10-23 | 控制台静音 | 参照 ios-sweet `sweetfb_noconsole`：新增 `offline-legacy-noconsole=1`，首帧成功拷贝后设 `disableConsoleOutput=1`，停止向已被显示栈接管的 3200×2136 framebuffer 画字，msgbuf/pram 日志继续写入。CI run `39899959208` 绿色，内核 `2c59a9ba…`、payload `2b4b1f58…`、`vendor_boot_uke_cpumute.img` `ff9133fd…`；实机无 `screen console muted`，说明 CPU 拷贝路径根本没执行 |
 | 2026-10-23 | 单 CPU 实机 | `sheng-smp=0`（payload `6be7c34a…`、`vendor_boot_uke_cpu1.img` `f42fc16c…`）系统稳定运行到 `t=877s` 未重启：SMP 是卡死/重启的触发条件；单 CPU 下系统持续启动 daemon、反复打开 display client（pid 500/501/520/535/615/639/649/677…）。t≈847 出现 `request_power_change second_external 0 powerstate1 fdisplaytype 0`：display client 数超过 interpose 上限 8 后，后来的 client 没被包装，selector 12 走回原厂实现 |
 | 2026-10-23 | client 表扩容 + swap 追踪 | `kSeenClients` 8→128 并在表满时打印一次；新增 `UKE: swap N accepted/reason`、`UKE: transfer N status/bytes`、`UKE: retire N generation/presented` 首调用日志；`offline-legacy-noconsole` 默认关闭，保持屏幕日志可读。CI run `39903223181` |
+| 2026-10-23 | 队列诊断 | 单 CPU + `swap-end` 打印：`status=0 current=0 head=0 state=c80/858/3/0/0/0/0/0/1/0` —— SwapEnd 成功但**请求没有进 framebuffer 队列**（+5472/+5480 全空），powered 位 `+5840`=1。因此 `validateSwap`/`kickSwapQueue`/拷贝都不可能有输入，问题在 user client 未提交，不在拷贝或电源状态 |
+| 2026-10-23 | 12 归因修正 | 早期“selector 12 导致硬复位”只是时间相关性，未证实：抑制 6/12 后复位只是移到 selector 0；当前 SMP 复位中 12 一直是被抑制的；单 CPU 下 t≈847 的 `request_power_change` 出现后系统仍存活 30s+（真实原因是 interpose 上限 8 溢出）。保留 12 的抑制作为防御（原厂电源切换缺少平台驱动），但不再当作复位根因 |
+| 2026-10-23 | selector 6 测试构建 | 只抑制 12、转发 6（SwapWait），并在 5/6 返回后 dump 队列与状态；驱动侧 pin `748d39f`（kickOnce 对未验证请求补 `validateSwap`，kick 入口打 stage 3）。device `495443e`、core `2330732`、CI run `39908310402` |
 
 ---
 
