@@ -120,8 +120,9 @@ a software register peer.
 
 ## Device results so far
 
-Three boots have been run on the uke tablet. The probe's four rows are the
-evidence; the kernel is `be25aa09…` (run `39725958294`) unless noted.
+The staged probe has now been run through mode 9 on the uke tablet. The four
+rows are the evidence; kernels and images are named in each row. Everything
+below the table still applies except where a row records a device result.
 
 | Mode | Result | Meaning |
 | --- | --- | --- |
@@ -132,12 +133,15 @@ evidence; the kernel is `be25aa09…` (run `39725958294`) unless noted.
 | 4 (before adopt) | stopped in GMU context step 1 | The context allocator could not get its memory. See below. |
 | 6 | **passes (2026-10-23, `m6`)** | `C s7 f0 l2 u2/1 pe0000005 o1 h505 g303` (PLL1 locked, hub on GPLL0/3, GMU on PLL1/2, GPLL0 votes 3), post-read `K pe0000005 o1 l44440016 g303 h505 b1111013 v3`; GMU state still `G1/0/0/0` (reset held until mode 7); command DB still `p0 s1 x0`. |
 | 5 | **passes (read-only, 2026-10-23, `m5`)** | `K p00000100 o0 l00000000 g0000 h0000 b111013 v0` (PLL1 off, GMU/HUB roots off, branches `cx_gmu/cxo/hub_cx_int/axi` on, `demet` off, memnoc 3), `G1/0/0/0` (SYSRESET set), `D v1 m0c0330db p0 s1 x0` (command DB v1 magic `0x0c0330db` parses; startup build returns 1 = `AdrenoHfiStartupInvalid`, to resolve before mode 7). |
+| 7 | **passes (2026-10-23, `m7b`)** | `G1/0/0/0>G0/1/0/1`, `P0 g8 kc6 e0 t0 n4 1ms`, `S0 ph7 h1 f100 H1 r11 a0 c1 v0 p18`: GMU cold start and the HFI handshake complete. Kernel `c6f7bbfe…`, `vendor_boot_uke_gpu_m7b.img` `b7751002…`. |
+| 8 | **passes (2026-10-23, `m8`)** | `X v0/0 o3 x3>0 cf8222800 R1 H8`: GX powered and the HFI performance vote acknowledged; the heartbeat takes over. |
+| 9 | **passes (2026-10-23, `m9g`)** | `Q s7 st0 k0/0 p5e1 r4v1 n5`, `C6sent`/`C10ok`, `S zap`/`S irq`, `P published`, `M … k0 s5/0 r1`: GPU SMMU context (user stream only), SQE/CP ring, zap/IRQ, and the kernel-side Metal accelerator publish. The GPU context tables and buffers adopt the reserved pool at `0xC9600000`; the secure SID 2 stream stays skipped. |
 
-Mode 3 was the first power milestone; mode 4 now completes the GMU's own SMMU
-context on the reserved pool (step 7 `Ready`, status 0), which is the stage-4
-gate. The next device steps are mode 5 (read-only GMU clocks and the AOP
-command DB) and mode 6 (GMU clock bring-up); mode 7 needs the gen71100 firmware
-in the CI cache.
+Mode 3 was the first power milestone; modes 4-9 now complete the whole staged
+path: the GMU context, clocks, command DB, cold start and HFI, GX power, the
+GPU SMMU context and CP ring, zap/IRQ, and the kernel-side Metal publish. The
+remaining work is userland (NativeMetal plugin and scanout), the secure stream,
+and the memory window described above.
 
 ### Mode 4: from the contiguous allocation to the reserved pool
 
@@ -451,19 +455,21 @@ to 7/9 before 6 has shown the clocks and the command DB.
 
 ## Still needs a device
 
-The port is build-ready, not hardware-qualified. The first device boot still has
-to establish:
+The staged path to the GPU is hardware-qualified through mode 9. Still to do:
 
-- the SMMU context bank, ASID and SMR slot assignment (the DT gives stream IDs
-  only; the probe's bank 0/1 choices are not yet observed on uke hardware);
-- the GPU CX/GX rail and clock votes for the Cliffs GPUCC, and whether the
-  bootloader leaves the domains in the state the probe assumes;
-- the AOP command DB version word and the actual rail/BCM payloads;
-- the gen71100 GMU cold start (RSC/PDC writes, firmware load/readback, HFI
-  handshake) and the CP ring/SQE start;
-- ZAP authentication and the secure-mode exit;
-- scanout from the GPU context into the uke panel, then
-  NativeMetal/QuartzCore/Turnip.
+- the second GPU stream (secure SID 2): its `SMR[1]` write takes a synchronous
+  external abort in this non-secure VM, so only the user stream is attached;
+- userland: stage the NativeMetal plugin bundle (addon plist plus trust cache)
+  so the render server can open a Metal device, then GPU scanout;
+- the legacy display path still rejects every swap (`surface=0`): the original
+  SwapEnd resolves the surface internally and frees the request, so a visible
+  frame needs the ios-sweet-style own-present path (parse the 1200-byte record's
+  four per-frame IDs and copy the surface to the scanout buffer);
+- memory: the XNU VM is the DarwinBoot `owned_memory_size` window (`boot_args`
+  memSize), not the ADT `dram-size`. It is 256 MiB today (320 MiB is the
+  largest low UEFI run); a larger window needs the high DRAM range mapped in
+  the UEFI firmware (`UkeBootMemoryDxe` `ADD_BELOW` is 4 GiB). Without it the
+  desktop attempt dies in jetsam after a few minutes.
 
 The firmware files are private physical evidence and are not in Git. A CI build
 without them links the weak empty firmware and the GMU cold start refuses, as

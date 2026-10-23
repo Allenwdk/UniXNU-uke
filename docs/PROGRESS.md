@@ -1,8 +1,8 @@
 # UniXNU on Xiaomi Pad 7 (uke) — 进度文档
 
-> **Last updated:** 2026-10-22
+> **Last updated:** 2026-10-24
 >
-> **当前一句话状态：** 2026-10-22 晚三大件落机验证通过：watchdog policy 写入成功（`sheng bring-up watchdogd launch policy: 0`）、default-surface 收养成功（`UKE: display surface adopted … sid=1`）、text_fixups 真机生效（`ext-fixup: BTAudioHALPlugin+0x38bec applied`）；**Apple logo 已能显示**（图形栈接管 scanout），系统活到 `Early boot complete`/`driverkitd is active`/display client 打开。当前卡点：Apple logo 后无预警重启（无 panic 文本），待读 pram 定位。GMU 内存已回到上游形状（`withRange` 接管预留区 `GMU Pool` 0xC8000000，mode 4 待下轮实机验证）。
+> **当前一句话状态：** **GPU 阶段 4 的 9 级探针全部在真机通过**（GMU SMMU context、时钟、command DB、cold start + HFI、GX、GPU SMMU context/CP ring、zap/irq、kernel 侧 Metal accelerator publish `s5/0 r1`），内核 `d7fce63b`/`f5beb87e` 系列稳定；mobile graphics client 已在持续提交 swap（`sel 4/5`，1200 字节记录），但 **Legacy 路径拿不到 surface（`surface=0`）所以屏幕还没有内容**。另一个硬限制：XNU 的 VM 大小等于 DarwinBoot 的 `owned_memory_size` window（当前 256/320 MiB，`boot_args.memSize`），不是 ADT 的 `dram-size`；6 GiB window 因 UEFI 只映射 4 GiB 以下而 `Out of Resources`，所以 desktop 会在几分钟后 jetsam OOM。**下一里程碑：UEFI 高区映射（根治内存）+ own-present（把 swap 记录里的 surface 呈现出来）。**
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -30,7 +30,7 @@
 | 4. DarwinBoot | ✅ 完成 | `Exiting boot services`、entry pa、window 0x10000000、video base 0xE3940000、CurrentEL 1、SCTLR/ID_AA64 打印；绿条出现。 |
 | 5. 内核入口 | ✅ 到达 | 绿条后 XNU 已运行；`SecurityLock ... LockCapsuleInterface` 是 UEFI 输出，不是内核挂点。XNU 现在等根设备。 |
 | 6. 存储与根卷 | 🟡 编译完成，待实机 | `uke-full_defconfig` 已链接 `NativeUfs` + `NativeAES` + mockfs + PMGR + pthread + legacy display，CI run `39495271779` 绿色；UFS 块类已绑定到固定 prelink candidate。`userdata`/root UUID/APFS 实机路径待设备。 |
-| 7. 用户态 | 🟡 大幅推进 | launchd 全流程跑通：`Early boot complete`、`driverkitd is active`、boot tasks（fixup/keybag/fips/prng_seedctl/launchd_cache_loader）、display user client 打开、**Apple logo 显示**；Data 卷可写（`apfs_trim_to_prev_fsize`）；watchdog policy/text_fixups/default-surface 均验证通过。卡在 Apple logo 后无预警重启（无 panic 文本，待 pram 定位）；SpringBoard/设置界面未到。 |
+| 7. 用户态 | 🟡 大幅推进 | launchd/`Early boot complete`/`driverkitd`/Data 卷/display client 全部跑通；**GPU 9 级 bring-up + kernel Metal publish 已在真机验证**（见 3.1.2）；compositor 已在提交 swap。卡点：Legacy display 的 swap 没有 surface（`surface=0`，需 own-present），以及 VM 只有 `owned_memory_size` 的 256/320 MiB 导致 jetsam OOM（需 UEFI 高区映射）。 |
 
 ---
 
@@ -72,6 +72,35 @@
 - 仍需真机：SMMU bank/ASID/slot、GPU CX/GX rail/clock votes、AOP command DB 版本、GMU cold start、CP ring/SQE、ZAP 认证、scanout、NativeMetal/Turnip。详见 `docs/GPU-PORT.md`。
 
 
+
+### 3.1.2 GPU 阶段 4：真机结果（2026-10-24）
+
+**9 级探针**（`sheng-gpu-power=N`，`sheng-smp=0`，`vendor_boot_uke_gpu_*`）：
+
+| Mode | 结果 | 关键证据 |
+|---|---|---|
+| 4 | ✅ GMU SMMU context Ready | `B s7 st0 k0/0 p5w13r1e1 r4w2v1`，SMR valid `R80000005` |
+| 5 | ✅ 只读时钟 + command DB | `K p00000100 … g0000 h0000 b111013 v0`，`D v1 m0c0330db p0 s1 x0` |
+| 6 | ✅ GMU 时钟 bring-up | `C s7 f0 l2 u2/1 pe0000005 o1 h505 g303`，post `l44440016` |
+| 7 | ✅ GMU cold start + HFI | `G1/0/0/0>G0/1/0/1`，`P0 g8 kc6 e0 t0 n4 1ms`，`S0 ph7 h1 f100 H1 r11 … p18` |
+| 8 | ✅ GX 上电 + HFI perf vote | `X v0/0 o3 x3>0 cf8222800 R1 H8`，心跳开始 |
+| 9 | ✅ GPU context + CP ring + publish | `Q s7 st0 k0/0 p5e1 r4v1 n5`，`C10ok`，`S zap/irq`，`P published`，`M … k0 s5/0 r1` |
+
+镜像/内核（按时间）：`vendor_boot_uke_gpu_m4b.img` `46409c67…`（kernel `b0fdff6f…`）→ `m7b` `b7751002…`（`c6f7bbfe…`）→ `m9l` `386f9c20…`（本地 `f39883cd…`）→ `m9g` `2e0fbbde…`（`d7fce63b…`）→ desktop 系列 `f5beb87e…`。
+
+**本阶段修掉的坑**
+1. GMU pool 的 `adopt` 映射必须用 `kIOMapWriteCombineCache` + 普通 store 清零（默认映射上 `bzero` 的 `DC ZVA` 对齐中止，`59bcc5a`）。
+2. 共用 `poll()` 的 10 ms 窗口太短：对齐 Linux 的 100 ms，`poll_budget` 200→1000（`b5ae88d`）。
+3. `ShengGmuBuildStartup` 的 `fail=5`：派生带宽表缺 level-0 的 `0`，补回 7 项（`68caad2`）。
+4. GPU context 的 1027 页连续表池在 userland wired 后抢不到：预留池 `+0x1600000`（`0xC9600000`）起 8 MiB 给 GPU context，tables+buffers 全部 adopt；adopt 成功后必须跳过 VM 回退（`adopted_pool` 标志，`3ec59c2`/`f1a2aee`）。
+5. GPU context 的第二条 secure SID 2 流在非安全 VM 里写 `SMR[1]` 会同步外部中止：改为 `sid1==0xffff` 只挂 user SID 0（`e000d06`）。
+
+**本阶段跑通但仍有问题**
+- **Desktop 尝试**（`sheng-gpu-power=9 sheng-gpu-metal=1 sheng-fb-gpu=1 offline-mobile-graphics-client=1 sheng-gpu-pool=0`）：系统活到 500+ 秒，compositor 持续 `sel 4/5` swap，`M` 行 `n`（name reads）增长；但 swap 被 `surface=0` 拒绝（原厂在 SwapEnd 内填 surface 并释放请求），屏幕仍只有启动日志。swap 记录 1200 字节：`+0x00/+0x08/+0x18/+0x20` 是 4 个每帧变化的大 32 位值（疑似 IOSurface ID），`+0xa0/+0x100` 出现 `0xc80/0x500`（3200×1280）尺寸。内核里 `IOSurfaceLookup` 不在 kernelcache 符号表，own-present 需要另找 surface 解析路径。
+- **内存**：`UKE MEM` 显示 wire≈47.5k + active/inactive≈5k 页 ≈ 200 MB。XNU 的 `arm_vm_init` 用 `boot_args->memSize`（DarwinBoot window）作为 `gPhysSize`，即 `owned_memory_size`；ADT 的 `dram-size` 只描述物理 DRAM，不决定 VM。`owned_memory_size=0x180000000` 时 loader 直接 `Out of Resources`（`UkeBootMemoryDxe` `ADD_BELOW=SIZE_4GB`，高区不在固件 MMU/GCD）。低区最大连续 run ≈326 MiB，故 320 MiB（`0x14000000`）是当前上限。根治需要 uefi-uke 把高区 `0x980000000-0xB00000000` 映射进 GCD/MMU。
+- **本地 Linux 工具链**：独立 worktree（core `linux-host` + device 5a110b2/`gpu-m7-local`）可完整编 `uke-gpu-userland_defconfig`；修了 `out/` 预建、`UNIXNU_HOST_COMPAT_INCLUDE`、`compression_tool` shim 三个环境缺口，增量重编约 3-4 分钟。
+
+**分支/CI 恢复**：并行的 Linux 移植提交（device `5a110b2` 的 `patches/xnu/linux-*`）会破坏 macOS CI（hostcompat / Xcode 16.4 warning），已 revert（`24ab7fd`）并在 `linux-host`/`linux-werror` 保留；CI 回到 `macos-latest`；固件改走三个 40 KB secret chunk + path 对齐的 Actions cache（`f61f3c3`）。
 
 ### 3.2 UEFI 固件（uefi-uke）
 
