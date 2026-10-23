@@ -207,7 +207,7 @@ class NativeUsbSerial : public IOService {
 	bool fEnablePhy = false;
 	bool fEnableTcsr = false;
 	bool fEnableQscratch = false;
-	bool fSoftReset = true;
+	bool fSoftReset = false;
 	uint32_t fProbeLevel = 0;
 	uint64_t fQscratchBase = UKE_USB_QSCRATCH_BASE;
 
@@ -489,8 +489,16 @@ NativeUsbSerial::warmInit(void)
 	for (uint32_t offset : branches) {
 		wr32(fGcc, offset, rd32(fGcc, offset) | UKE_USB_GCC_BRANCH_ENABLE);
 	}
+	// A full block reset, the way dwc3-qcom's resets_assert/deassert treats
+	// GCC_USB30_PRIM_BCR: assert, let it settle, release. This resets the
+	// wrapper and the core without needing the pipe clock that DCTL.CSFTRST
+	// waits on, and it is the only reset available while the eUSB2 PHY is
+	// still coming up.
 	IOLog("NativeUsbSerial: warm: bcr\n");
+	wr32(fGcc, 0x000, rd32(fGcc, 0x000) | UKE_USB_GCC_RESET_ASSERT);
+	IODelay(100);
 	wr32(fGcc, 0x000, rd32(fGcc, 0x000) & ~UKE_USB_GCC_RESET_ASSERT);
+	IODelay(100);
 	if (fEnablePhy) {
 		// Resetting the eUSB2 PHY wipes the register file ABL programmed, so
 		// the pulse only makes sense together with the reprogramming table
@@ -596,13 +604,13 @@ NativeUsbSerial::warmInit(void)
 			IOSleep(1);
 		}
 		if (!resetDone) {
-			IOLog("NativeUsbSerial: DWC3 soft reset did not complete (dctl=%08x gsnpsid=%08x gsts=%08x dsts=%08x)\n",
+			IOLog("NativeUsbSerial: DWC3 soft reset did not complete (dctl=%08x gsnpsid=%08x gsts=%08x dsts=%08x); continuing after the BCR reset\n",
 			    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_GSNPSID),
 			    rd32(fWrapper, UKE_USB_DWC3_GSTS), rd32(fWrapper, UKE_USB_DWC3_DSTS));
-			return false;
+		} else {
+			IOLog("NativeUsbSerial: warm: dwc3-reset done dctl=%08x dsts=%08x\n",
+			    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
 		}
-		IOLog("NativeUsbSerial: warm: dwc3-reset done dctl=%08x dsts=%08x\n",
-		    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
 	} else {
 		IOLog("NativeUsbSerial: warm: dwc3-reset skipped dsts=%08x\n",
 		    rd32(fWrapper, UKE_USB_DWC3_DSTS));
@@ -1484,7 +1492,7 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t phyMode = 0;
 	uint32_t tcsrMode = 0;
 	uint32_t qscratchMode = 2;
-	uint32_t softResetMode = 1;
+	uint32_t softResetMode = 0;
 	PE_parse_boot_argn("native-usb-probe", &probeMode, sizeof(probeMode));
 	PE_parse_boot_argn("native-usb-serial", &serialMode, sizeof(serialMode));
 	PE_parse_boot_argn("native-usb-serial-dump", &dumpMode, sizeof(dumpMode));
