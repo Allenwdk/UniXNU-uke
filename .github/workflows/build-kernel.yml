@@ -56,6 +56,12 @@ jobs:
   kernel:
     runs-on: macos-15
     timeout-minutes: 240
+    env:
+      # The Linux-portability patch adds a hostcompat shim for non-Apple hosts;
+      # the runner SDKs have no usr/include/compat/hostcompat.h, so the macOS
+      # build keeps the pre-patch (empty) flags.
+      HOST_COMPAT_CFLAGS: ''
+      HOST_COMPAT_LIBS: ''
 
     steps:
       - name: Check out the device repository
@@ -203,6 +209,9 @@ jobs:
   full:
     runs-on: macos-15
     timeout-minutes: 240
+    env:
+      HOST_COMPAT_CFLAGS: ''
+      HOST_COMPAT_LIBS: ''
 
     steps:
       - name: Check out the device repository
