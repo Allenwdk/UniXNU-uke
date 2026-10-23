@@ -219,6 +219,7 @@ class NativeUsbSerial : public IOService {
 	uint8_t fCmd[160] = {};
 	uint32_t fCmdLength = 0;
 	uint32_t fSetupLog = 0;
+	uint32_t fEventLog = 0;
 
 	// Probe helpers.
 	void releaseMaps(void);
@@ -569,6 +570,21 @@ NativeUsbSerial::warmInit(void)
 	// hand-off may not need the reset at all, and this separates "the reset
 	// never completes" from "the core is unusable".
 	if (fSoftReset) {
+		// ABL leaves the controller running with a live session. DCTL.CSFTRST
+		// never self-clears on a running core, so stop it and wait for
+		// DSTS.DEVCTRLHLT before resetting.
+		uint32_t stopDctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
+		if ((stopDctl & UKE_USB_DWC3_DCTL_RUN_STOP) != 0) {
+			wr32(fWrapper, UKE_USB_DWC3_DCTL, stopDctl & ~UKE_USB_DWC3_DCTL_RUN_STOP);
+			for (unsigned i = 0; i < 100; i++) {
+				if ((rd32(fWrapper, UKE_USB_DWC3_DSTS) & UKE_USB_DWC3_DSTS_DEVCTRLHLT) != 0) {
+					break;
+				}
+				IOSleep(1);
+			}
+			IOLog("NativeUsbSerial: warm: dwc3-reset stopped dctl=%08x dsts=%08x\n",
+			    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
+		}
 		uint32_t dctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
 		wr32(fWrapper, UKE_USB_DWC3_DCTL, dctl | UKE_USB_DWC3_DCTL_CSFTRST);
 		bool resetDone = false;
@@ -1110,6 +1126,14 @@ NativeUsbSerial::serviceEvents(void)
 		cacheInvalidate(event, sizeof(*event));
 		if ((event->info & 1U) == 0) {
 			const uint32_t type = (event->info >> 1) & 0x7fU;
+			// A host that reports descriptor timeouts means either the reset
+			// event never arrived or EP0 never saw the setup packet; this
+			// tells the two apart.
+			if (fEventLog < 12) {
+				IOLog("NativeUsbSerial: event type=%u info=%08x\n",
+				    static_cast<unsigned>(type), event->info);
+				fEventLog++;
+			}
 			if (type == UKE_USB_DWC3_DEV_RESET) {
 				fConfigured = false;
 				fSerialReady = false;
