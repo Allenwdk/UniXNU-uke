@@ -419,7 +419,9 @@ fastboot reboot
 | 2026-10-23 | 高内存 | DT 10 个 memory range：低 2 GB 实际只有 ~682 MB 可用；高区 `0x980000000-0xB00000000` 6 GiB 等合计 ~9.9 GiB 未使用。ADT 改为 `dram-base=0x980000000`、`dram-size=4 GiB`（`make-uke-adt.py --dram-base` + board `[payload] dram_base/dram_size` + core `payload.py` 透传）；XNU 接受非连续高 DRAM，`memorystatus_jetsam_thread: no victim!` OOM 消失 |
 | 2026-10-23 | mobile graphics 隔离 | 关闭 `offline-mobile-graphics-client/load`：不复位，但 SpringBoard/liveactivitiesd 反复 `Too many corpses being created`；打开：走到 `s_map_display_type` → `request_power_change second_external 0 powerstate1 fcdisplaytype 0` 后无 panic 硬复位。下一阻塞是 A732 GPU 电源/GMU（mode 4），不是内存 |
 | 2026-10-23 | 当前镜像/内核 | gunyah-pet 内核 `430e4d83…`（run `39829956845`，`uke-gpu-userland_defconfig`）；高内存 payload `vendor_boot_uke_himem4g.img` `21dbecaf…`（GPU pool 1024 MiB）；nomg `5d277d09…`；UEFI `e09219ff…`（Gunyah + DT memory range 打印） |
-| 2026-10-23 | CPU 基线 | `main` 切到 upstream `NativeMobileDisplay` `c031d88` + QEMU 的 `LegacyDisplayProbe`/`ShengPlatformPower`/display ABI；`uke-cpu_defconfig` 关闭 `NATIVE_ADRENO`、`offline-mobile-graphics-client=0`；`BootWatchdogPolicy` 增加不依赖 boot-progress 的 Gunyah pet 线程；待 CI/实机 |
+| 2026-10-23 | CPU 基线 | `main` 用 fork `NativeMobileDisplay` `274f1e4`（`setPowerState` 不触发原厂 `request_power_change`）+ QEMU 的 `LegacyDisplayProbe`/`ShengPlatformPower`/display ABI；`uke-cpu_defconfig` 关闭 `NATIVE_ADRENO`、`offline-mobile-graphics-client=0`；`BootWatchdogPolicy` 增加不依赖 boot-progress 的 Gunyah pet 线程 |
+| 2026-10-23 | CPU display 收养补回 | QEMU 版 probe 整文件替换时丢了 default-surface 流程：重新加入 `+0x1780/+0x17c0` 播种（32 MiB 系统内存 region、BGRA/1 plane/4 bpp mode 块）和 `start()` 后把 `+0x1620` retain 写入 `+0x1618` 的收养，日志 `UKE: display surface …/adopted`；Gunyah pet 线程加启动日志与每分钟心跳（`pets=`），用于区分 watchdog 复位与其他复位 |
+| 2026-10-23 | CPU display 构建 | CI run `39890292502` 绿色（`uke-cpu_defconfig`）；full 内核 `a3d1ab03…`（含 `display surface adopted`/`Gunyah watchdog pets` 字符串）；payload `e0c44d78…`（200 GiB 种子）；`vendor_boot_uke_cpuadopt.img` `3d5b8b3c…`（与 cpu200 相同 base、bootconfig 0）；已刷 `boot`+`vendor_boot` 并重启，待实机日志 |
 
 ---
 
