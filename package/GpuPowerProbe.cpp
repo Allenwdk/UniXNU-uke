@@ -145,6 +145,7 @@ extern "C" const uint8_t native_adreno_firmware_image[] __attribute__((weak));
 extern "C" const uint64_t native_adreno_firmware_image_size __attribute__((weak));
 extern "C" ShengGmuDbStatus ShengGmuCommandDbInputs(const uint8_t *, size_t, uint32_t, ShengGmuVoteInputs *) __attribute__((weak));
 extern "C" AdrenoHfiStartupStatus ShengGmuBuildStartup(const ShengGmuVoteInputs *, AdrenoHfiStartupConfig *) __attribute__((weak));
+extern "C" volatile uint32_t sheng_gmu_build_fail;
 
 extern "C" {
 extern char boot_progress_ext[8][48];
@@ -1697,6 +1698,16 @@ void gmuPrerequisites(const gpb_result &r) {
     if (gmuText[0] == 'H') snprintf(row, sizeof row, "D p%u %s", parse, gmuText);   // int-011 read v1 m0c0330db already
     else snprintf(row, sizeof row, "D v%x m%08x p%u s%u x%u %s", version, magic, parse, build, gVoteInputs.gmxc_present,
                   gmuText);
+    if (build != AdrenoHfiStartupSuccess) {
+        // int-156: name the ShengGmuBuildStartup refusal and the parsed command-DB input sizes.
+        snprintf(row, sizeof row, "D v%x m%08x p%u s%u x%u F%u %s", version, magic, parse, build,
+                 gVoteInputs.gmxc_present, (unsigned)sheng_gmu_build_fail, gmuText);
+        IOLog("UKE GMUDB: fail=%u chip=%x gmxc=%u gfx=%u cx=%u mx=%u sh0=%u mc0=%u acv=%u cn0=%x acd=%u ifpc=%u\n",
+            (unsigned)sheng_gmu_build_fail, gVoteInputs.chip_id, gVoteInputs.gmxc_present,
+            (unsigned)gVoteInputs.gfx.bytes, (unsigned)gVoteInputs.cx.bytes, (unsigned)gVoteInputs.mx.bytes,
+            (unsigned)gVoteInputs.sh0.aux.bytes, (unsigned)gVoteInputs.mc0.aux.bytes, (unsigned)gVoteInputs.acv.aux.bytes,
+            gVoteInputs.cn0_address, gVoteInputs.enable_acd, gVoteInputs.enable_ifpc);
+    }
     setRow(7, row);
     native_gpu_power_stage = 0x5f;
     if (mode() >= 7) {
