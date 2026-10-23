@@ -390,7 +390,21 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
         if(traced)printf("UKEMEM: sel %u exit 0 (suppressed)\n",(unsigned)selector);
         return kIOReturnSuccess;
     }
-    if(stat && selector==5 && stat->selector_calls[5]<2) dumpSwapInput(args);
+    if(stat && selector==5 && stat->selector_calls[5]<2) {
+        // The original SwapEnd gate action consumes the request from the
+        // +5496 list before returning, so dump and drive the queue first.
+        dumpSwapQueue("swap-before",stat->selector_calls[5]+1,kIOReturnSuccess);
+        void *display=reinterpret_cast<void *>((uintptr_t)native_legacy_object);
+        if(display) {
+            void **vptr=*reinterpret_cast<void ***>(display);
+            typedef void (*Kick)(void *);
+            if(vptr && vptr[290]) {
+                printf("UKE: self-kick\n");
+                reinterpret_cast<Kick>(vptr[290])(display);
+            }
+        }
+        dumpSwapInput(args);
+    }
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
     if(traced)printf("UKEMEM: sel %u exit %x\n",(unsigned)selector,(unsigned)status);
     if(stat && selector==5 && stat->selector_calls[5]<3) dumpSwapQueue("swap-end",stat->selector_calls[5]+1,status);
