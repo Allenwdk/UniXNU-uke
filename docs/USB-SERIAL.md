@@ -23,7 +23,7 @@ register is written and no DMA is allocated until that is known.
 | Item | Value |
 | --- | --- |
 | DWC3 wrapper | `0xa600000`, size `0x100000` |
-| QSCRATCH | `0xb58800`, size `0x400` |
+| QSCRATCH | `0xa6f8800` (wrapper + `0xf8800`), size `0x400` |
 | eUSB2 PHY | `0x88e3000`, size `0x154`; EUD at `0x88e2000`/`0xc278000` |
 | USB GDSC | `0x139004` / `0x139008` (GCC window `0x100000`) |
 | USB30 reset | `0x139000` bit 0 (`GCC_USB30_PRIM_BCR`) |
@@ -97,10 +97,34 @@ was never touched. Two ordering bugs are the likely cause and are fixed in
   `native-usb-phy=1`.
 
 `GUSB2PHYCFG.SUSPHY` is also cleared now, per the DT's
-`snps,dis_u2_susphy_quirk`. If the reset still times out, the next log line
-prints `gsnpsid/gctl/gsts/dctl/dsts`; `gsnpsid=ffffffff` means the wrapper is
-not decoding its window at all, which would point at the QSCRATCH core reset
-bit rather than at the clocks.
+`snps,dis_u2_susphy_quirk`.
+
+## Second hardware result: the reset is real, the QSCRATCH address was not
+
+With the register dump in place the same boot printed
+
+```text
+warm: dwc3-reset gsnpsid=33313130 gctl=00102000 gsts=7e000000 dctl=00f00000 gusb2phycfg=00102500
+DWC3 soft reset did not complete (dctl=40f00000 gsnpsid=33313130 gsts=7e000000 dsts=00400004)
+```
+
+`dctl` reads back `00f00000` and, after the write, `40f00000`: bit 30 stuck,
+which means the register file is live and writable and the core simply never
+finishes the reset. `dsts=0x00400004` reports `CONNECTSPD=4` (SuperSpeed) and
+`DEVCTRLHLT`, the state ABL left the controller in.
+
+Before that, both boots died at `warmInit+0x21c` with `esr=0x96000010`. DFSC
+`0x10` is a *synchronous external abort*, not a translation fault, so the
+mapping was valid and the physical page did not answer: the transcribed
+QSCRATCH address `0x0b58800` is simply not a register block. `dwc3-qcom.c`
+maps QSCRATCH at `core_base + 0xf8800` (`SDM845_QSCRATCH_BASE_OFFSET`,
+`0x400` bytes), so the page is `0x0a6f8800`, inside the wrapper window the DT
+describes. The uke overlay enables `qcom,select-utmi-as-pipe-clk`, and the
+driver implements it as three writes to `GENERAL_CFG`: set
+`PIPE_UTMI_CLK_DIS` (bit 8), then set `PIPE_UTMI_CLK_SEL` (bit 0) with
+`PIPE3_PHYSTATUS_SW` (bit 3), then clear bit 8. The warm path now does exactly
+that at the corrected address, before `DCTL.CSFTRST`, because the core cannot
+finish its soft reset without the pipe clock.
 
 ## Warm CDC-ACM + msgbuf (implemented, opt-in)
 

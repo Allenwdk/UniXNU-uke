@@ -534,13 +534,23 @@ NativeUsbSerial::warmInit(void)
 	if (fEnableQscratch) {
 		IOLog("NativeUsbSerial: warm: qscratch base=%llx\n",
 		    static_cast<unsigned long long>(fQscratchBase));
+		// dwc3_qcom_select_utmi_clk(): gate the pipe clock, select UTMI with
+		// the software PHY status, then reconnect. The uke overlay asks for
+		// exactly this with qcom,select-utmi-as-pipe-clk.
 		uint32_t general = rd32(fQscratch, 0x08);
-		general |= 1U;
-		general &= ~(1U << 8);
-		wr32(fQscratch, 0x08, general);
+		wr32(fQscratch, 0x08, general | (1U << 8));
+		IODelay(100);
+		general = rd32(fQscratch, 0x08);
+		wr32(fQscratch, 0x08, general | 1U | (1U << 3));
+		IODelay(100);
+		general = rd32(fQscratch, 0x08);
+		wr32(fQscratch, 0x08, general & ~(1U << 8));
+		IODelay(100);
 		uint32_t hs = rd32(fQscratch, 0x10);
 		hs |= (1U << 20) | (1U << 28);
 		wr32(fQscratch, 0x10, hs);
+		IOLog("NativeUsbSerial: warm: qscratch general=%08x hsphy=%08x\n",
+		    rd32(fQscratch, 0x08), rd32(fQscratch, 0x10));
 	}
 
 	// The uke DT carries snps,dis_u2_susphy_quirk: a suspended PHY stops the
@@ -1423,7 +1433,7 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t dumpMode = 0;
 	uint32_t phyMode = 0;
 	uint32_t tcsrMode = 0;
-	uint32_t qscratchMode = 0;
+	uint32_t qscratchMode = 2;
 	uint32_t softResetMode = 1;
 	PE_parse_boot_argn("native-usb-probe", &probeMode, sizeof(probeMode));
 	PE_parse_boot_argn("native-usb-serial", &serialMode, sizeof(serialMode));
@@ -1437,10 +1447,11 @@ NativeUsbSerial::start(IOService *provider)
 	fEnableTcsr = tcsrMode != 0;
 	fEnableQscratch = qscratchMode != 0;
 	fSoftReset = softResetMode != 0;
-	// 1 = the transcribed 0x0b58800, 2 = core_base + 0xf8800 as the header
-	// comment describes. The first aborts; the second has not been tested.
-	fQscratchBase = (qscratchMode == 2) ?
-	    (UKE_USB_WRAPPER_BASE + 0xf8800ULL) : UKE_USB_QSCRATCH_BASE;
+	// 2 (the default) is core_base + 0xf8800, the address dwc3-qcom maps.
+	// 1 keeps the first revision's transcribed 0x0b58800, which aborts, so a
+	// boot can still reproduce that failure.
+	fQscratchBase = (qscratchMode == 1) ?
+	    UKE_USB_QSCRATCH_BASE_BAD : UKE_USB_QSCRATCH_BASE;
 	if (probeMode == 0 && serialMode == 0) {
 		IOService::stop(provider);
 		return false;

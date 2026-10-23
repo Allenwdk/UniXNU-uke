@@ -14,9 +14,15 @@
 #define UKE_USB_CORE_BASE           0x0a600000ULL
 #define UKE_USB_CORE_SIZE           0x0000d93cULL
 
-// QSCRATCH is wrapper base + 0xf8800 (dwc3-qcom.c).
-#define UKE_USB_QSCRATCH_BASE       0x0b58800ULL
+// QSCRATCH is wrapper base + 0xf8800: dwc3-qcom.c maps
+// SDM845_QSCRATCH_BASE_OFFSET (0xf8800) for SDM845_QSCRATCH_SIZE (0x400)
+// bytes. The stock uke DT gives usb0 one 1 MiB window at 0xa600000, so the
+// page sits inside it.
+#define UKE_USB_QSCRATCH_BASE       (UKE_USB_WRAPPER_BASE + 0xf8800ULL)
 #define UKE_USB_QSCRATCH_SIZE       0x00000400ULL
+// The value the first revision transcribed. It is outside the wrapper window
+// and raises a synchronous external abort; kept only to reproduce that.
+#define UKE_USB_QSCRATCH_BASE_BAD   0x0b58800ULL
 
 // GCC window. The USB GDSC is the gcc_usb30_prim_gdsc at 0x139004.
 #define UKE_USB_GCC_BASE            0x00100000ULL

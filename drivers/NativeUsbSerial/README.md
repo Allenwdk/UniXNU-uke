@@ -20,8 +20,9 @@ hardware-validated yet; the probe is the first hardware gate.
 | `native-usb-serial-dump=1` | Reserved: send the full msgbuf |
 | `native-usb-phy=1` | Program the eUSB2 PHY register file (opt-in) |
 | `native-usb-tcsr=1` | Touch the TCSR clock-ref word `0x1f4b118` (opt-in, see below) |
-| `native-usb-qscratch=1` | Read/write the transcribed QSCRATCH page `0x0b58800` (aborts) |
-| `native-usb-qscratch=2` | Same, but at `core_base + 0xf8800` = `0x0a6f8800` |
+| `native-usb-qscratch=0` | Skip the UTMI pipe-clock select |
+| `native-usb-qscratch=2` | Default: `core_base + 0xf8800` = `0x0a6f8800` |
+| `native-usb-qscratch=1` | The first revision's transcribed `0x0b58800` (aborts) |
 | `native-usb-softreset=0` | Keep ABL's DWC3 state; skip `DCTL.CSFTRST` |
 | `native-usb-serial-cold=1` | Reserved: WCD939x/repeater cold init |
 
@@ -30,11 +31,15 @@ page to the ADSP as its `ipc_hwmutex` region, and the first probe revision
 reset the tablet on the log line that read it. It is therefore its own
 opt-in argument and is never touched by the default probe or warm path.
 
-The transcribed QSCRATCH page `0x0b58800` raises a synchronous external abort
-(ESR `0x96000010`) the first time it is read, so it is opt-in too. The header
-comment says the page is `core_base + 0xf8800`, which is `0x0a6f8800`, not the
-constant that was transcribed; `native-usb-qscratch=2` selects that address.
-Neither is on the default path until one is confirmed against the DT.
+The QSCRATCH page is where `qcom,select-utmi-as-pipe-clk` is implemented, and
+the uke mainline overlay asks for that property, so the warm path runs the
+`dwc3_qcom_select_utmi_clk()` sequence by default: set `PIPE_UTMI_CLK_DIS`
+(bit 8 of `GENERAL_CFG`), wait, set `PIPE_UTMI_CLK_SEL` (bit 0) with
+`PIPE3_PHYSTATUS_SW` (bit 3), wait, clear bit 8. `dwc3-qcom.c` maps the page
+at `core_base + SDM845_QSCRATCH_BASE_OFFSET` (`0xf8800`), which is `0x0a6f8800`
+here. The first revision transcribed that as `0x0b58800`; that address is
+outside the wrapper window and aborts with ESR `0x96000010`, so
+`native-usb-qscratch=1` now selects it only to reproduce the failure.
 
 Without either `native-usb-probe` or `native-usb-serial`, `start()` returns
 false and no hardware is touched.
