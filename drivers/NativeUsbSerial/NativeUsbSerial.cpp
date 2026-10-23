@@ -1081,7 +1081,14 @@ NativeUsbSerial::ep0Poll(void)
 		return;
 	}
 	fEp0Waiting = false;
-	if (((trb->size >> 28) & 0xfU) == UKE_USB_DWC3_TRB_STS_SETUP_PENDING) {
+	const uint32_t trbStatus = (trb->size >> 28) & 0xfU;
+	if (trbStatus != UKE_USB_DWC3_TRB_STS_OK &&
+	    trbStatus != UKE_USB_DWC3_TRB_STS_SETUP_PENDING && fSetupLog < 8) {
+		IOLog("NativeUsbSerial: ep0 setup trb status=%u size=%08x\n",
+		    static_cast<unsigned>(trbStatus), trb->size);
+		fSetupLog++;
+	}
+	if (trbStatus == UKE_USB_DWC3_TRB_STS_SETUP_PENDING) {
 		ep0Arm();
 		return;
 	}
@@ -1432,6 +1439,10 @@ NativeUsbSerial::serialStart(void)
 	wr32(fWrapper, UKE_USB_DWC3_DCTL,
 	    rd32(fWrapper, UKE_USB_DWC3_DCTL) | UKE_USB_DWC3_DCTL_RUN_STOP);
 	IOSleep(200);
+	// The bus reset that follows the pull-up discards whatever setup TRB was
+	// armed; clearing the flag makes ep0Poll post a fresh one instead of
+	// treating the discarded TRB as a completed setup.
+	fEp0Waiting = false;
 	IOLog("NativeUsbSerial: serial: run dctl=%08x dsts=%08x\n",
 	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
 	IOLog("NativeUsbSerial: warm USB2 device started\n");
