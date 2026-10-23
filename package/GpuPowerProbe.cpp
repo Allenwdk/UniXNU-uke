@@ -1572,7 +1572,7 @@ void gmuColdStart(const gpb_result &r) {
     gColdConfig.chip_id = 0x43030b00;
     gColdConfig.firmware = native_adreno_firmware_image;
     gColdConfig.firmware_bytes = static_cast<size_t>(native_adreno_firmware_image_size);
-    gColdConfig.poll_budget = 200;   // ShengGmu also stops each poll at 10 ms, as gmu_poll_timeout(.., 100, 10000)
+    gColdConfig.poll_budget = 1000;  // 100 ms window as Linux gmu_poll_timeout(.., 100, 100000); was 200 at 10 ms (int-157)
     // a6xx_gmu_resume, before a6xx_gmu_fw_start: clear every AO interrupt and unmask only the fatal ones.
     d.io.write32(d.io.cookie, ShengGmuCore, kAoIrqClr, ~0u);
     d.io.write32(d.io.cookie, ShengGmuCore, kAoIrqMask, ~kAoFatal);
@@ -1601,9 +1601,9 @@ void gmuColdStart(const gpb_result &r) {
     setRow(6, row);
     // GPU4: S<ShengGmuStatus> ph<load phase> h<hash ok> f<FW_INIT_RESULT> H<HFI status> r<FW ready>/<HFI ready>
     //   a<AO fault status> c<GMU2HOST info> v<reset verified>
-    snprintf(row, sizeof row, "S%u ph%u h%u f%x H%x r%u%u a%x c%x v%u", status, l.phase, l.complete_hash_verified,
+    snprintf(row, sizeof row, "S%u ph%u h%u f%x H%x r%u%u a%x c%x v%u p%u", status, l.phase, l.complete_hash_verified,
              l.firmware_init_result, l.hfi_status, l.firmware_ready_observed, l.hfi_ready_observed, l.ao_fault_status,
-             l.cm3_fault_status, l.reset_verified);
+             l.cm3_fault_status, l.reset_verified, static_cast<unsigned>(l.poll_reads));
     setRow(7, row);
     if (mode() >= 8 && status == ShengGmuSuccess) gpuOn();
     (void)r;

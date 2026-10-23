@@ -43,7 +43,7 @@ static ShengGmuStatus poll(ShengGmuDevice *d,uint32_t reg,uint32_t mask,
     last=start;
     for(unsigned i=0;i<budget;++i) {
         if(d->services.now_us(d->services.cookie,&now) || now<last)return ShengGmuClockError;
-        if(now-start>=10000)return ShengGmuTimeout;
+        if(now-start>=100000)return ShengGmuTimeout;   /* Linux gmu_poll_timeout(.., 100, 100000) */
         last=now;++r->poll_reads;
         ShengGmuStatus fault=check_faults(d,r);if(fault!=ShengGmuSuccess)return fault;
         if(core_read(d,reg,observed,r))return ShengGmuIoError;
