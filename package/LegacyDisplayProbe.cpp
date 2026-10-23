@@ -336,6 +336,30 @@ static ClientStat *statFor(IOUserClient *client) {
     for(unsigned i=0;i<seenClientCount;++i)if(seenClients[i].object==(uintptr_t)client)return &seenClients[i];
     return nullptr;
 }
+static void dumpSwapInput(const IOExternalMethodArguments *args) {
+    // What userland actually passes to SwapEnd: size, delivery form and the
+    // first 0x120 bytes. The record layout names the surfaces and the mask the
+    // own-present path would need.
+    if(!args)return;
+    printf("UKE: swap-in size=%u in=%u desc=%u scalar=%u/%u structOut=%u\n",
+        (unsigned)args->structureInputSize,args->structureInput?1u:0u,
+        args->structureInputDescriptor?1u:0u,
+        (unsigned)args->scalarInputCount,(unsigned)args->scalarOutputCount,
+        (unsigned)args->structureOutputSize);
+    const unsigned char *p=reinterpret_cast<const unsigned char *>(args->structureInput);
+    unsigned n=args->structureInputSize;
+    if(!p||!n)return;
+    if(n>0x120)n=0x120;
+    for(unsigned off=0;off<n;off+=32) {
+        char line[160];unsigned at=snprintf(line,sizeof(line),"UKE: swap+%03x",off);
+        for(unsigned k=0;k<32&&off+k+4<=n;k+=4) {
+            if(at+12>=sizeof(line))break;
+            uint32_t v;memcpy(&v,p+off+k,4);
+            at+=snprintf(line+at,sizeof(line)-at," %08x",v);
+        }
+        printf("%s\n",line);
+    }
+}
 static void dumpSwapQueue(const char *tag,unsigned nth,IOReturn status) {
     // The original queue head/current and the family state words, including
     // the +5840 powered word.
@@ -364,6 +388,7 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
         if(traced)printf("UKEMEM: sel %u exit 0 (suppressed)\n",(unsigned)selector);
         return kIOReturnSuccess;
     }
+    if(stat && selector==5 && stat->selector_calls[5]<2) dumpSwapInput(args);
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
     if(traced)printf("UKEMEM: sel %u exit %x\n",(unsigned)selector,(unsigned)status);
     if(stat && selector==5 && stat->selector_calls[5]<3) dumpSwapQueue("swap-end",stat->selector_calls[5]+1,status);
