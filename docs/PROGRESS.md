@@ -438,7 +438,9 @@ fastboot reboot
 | 2026-10-23 | 原厂 swap 路径反汇编 | 在构建内核里定位到 IOMobileFramebufferUserClient dispatch 表（`0xfffffff005f354c0`）：sel 3/4/5/6/8 的 handler 与 check counts，SwapEnd 期望 structureInputSize=1288。SwapEnd → slot 178（`0xfffffff00578f224`）→ IOCommandGate action（`0xfffffff005790894`）按 `structInput+152` 的 ID 在 **framebuffer+5496** 的链表里查找请求（请求 +788=ID、+2960=next），命中后置 +1355 并调用请求对象 vtable[32]。我们的驱动读的是 +5480（另一条队列），所以永远找不到请求 |
 | 2026-10-23 | active list 修复 | `kickOnce` 改为优先读 +5496（回退 +5480），dump 增加 `active=`；子模块 `8277751`、core `b65ccf2`、device `144838c`、CI run `39913325398` |
 | 2026-10-23 | active list 实机 | SwapEnd 返回后 `active=0`，但**进入原厂前** `active=fffffff8e22f1000`：请求确实挂在 +5496。self-kick 触发 `UKE: kick`，但 `swap accepted=0 reason=2 surface=0` —— 请求对象 +2624 的 surface 在 SwapEnd 入口还是空，原厂要到 SwapEnd 内部才解析/填充。结构体 1288 字节、前 0x20 是 4 个 32 位大数值（疑似 surface ID/port），+0x98 是 ID，+0xb0/+0x118 是 3200×2136 两组矩形 |
-| 2026-10-23 | 请求快照诊断 | 在 SwapEnd 前后打印请求对象的 vptr、vtable[4]（原厂 gate action 调用的 fn）、ID(+788)、started(+1355)、next(+2960)、surface(+2624)，用于判断原厂是否在 SwapEnd 内填充 surface 以及请求类；device `42032c1`、CI run `39920278411` |
+| 2026-10-23 | 请求快照诊断 | device `42032c1`、CI run `39920278411`。实机：`req-before` vptr=`fffffff005f36f60`、vtable[4]=`OSObject::retain`、id=1、started=0、surf0=0；`req-after` 读已释放请求导致 data abort（`pc 0xfffffff007987afc`，翻译错误）。说明请求对象在 SwapEnd 内处理完即释放，surface 在入口仍未填充，无法事后接管 |
+| 2026-10-23 | 参考 sheng（公开仓） | `UniXNU/UniXNU-sheng` 的 `OfflineLegacySwap.mm` 给出真实用户态序列：`IOMobileFramebufferSwapBegin` → `IOMobileFramebufferSwapSetLayer(display,layer,IOSurfaceRef,src,dst,0)` → `SwapEnd` → `SwapWaitWithTimeout`。sheng board 用 `sheng-fb-gpu=1`/`sheng-vsync=144`/`offline-mobile-graphics-client=1`，其合成走 GPU hand-off；builder 多绑 `_native_legacy_vsync_notify`（`0xfffffff005796720`）与 `_native_legacy_set_refresh_properties`（`0xfffffff00579ebb8`） |
+| 2026-10-23 | QEMU 对照发现 | QEMU board **不设置** `offline-legacy-default-surface`，也不做 default-surface 收养，CPU 路径靠原厂 SwapEnd 自己处理；我们在 uke 上加的收养可能改变了 compositor 的提交路径。已移除会读已释放请求的 req-after 诊断，下一版按 QEMU 参数（收养关闭、unit-scale=1）测试；device `436c038`、CI run `39923727598` |
 
 ---
 
