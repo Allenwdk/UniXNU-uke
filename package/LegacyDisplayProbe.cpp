@@ -220,6 +220,9 @@ extern "C" unsigned native_legacy_prepare_report(char *out,unsigned cap) {
         native_legacy_prepare_retried,native_legacy_prepare_max_attempts,(unsigned long long)(native_legacy_prepare_wait_us/1000));
 }
 void native_legacy_swap_validation_observed(bool accepted,unsigned reason,const void *request,const void *surface) {
+    if(native_legacy_swap_validation_calls<8)
+        printf("UKE: swap %u accepted=%u reason=%u surface=%p\n",
+            native_legacy_swap_validation_calls+1,(unsigned)accepted,reason,surface);
     if(accepted)native_legacy_swap_stage(0);
     if(accepted)native_legacy_swap_accepted_count=native_legacy_swap_accepted_count+1;
     else {native_legacy_swap_rejected_count=native_legacy_swap_rejected_count+1;recordRejectedSwap(reason,request,surface);}
@@ -252,6 +255,9 @@ static void native_legacy_mute_console(void) {
 }
 __attribute__((noinline)) void native_legacy_transfer_observed(IOReturn status,const void *request,uint64_t bytes) {
     native_legacy_transfer_calls=native_legacy_transfer_calls+1;
+    if(native_legacy_transfer_calls<=4)
+        printf("UKE: transfer %u status=%x bytes=%llu\n",
+            native_legacy_transfer_calls,(unsigned)status,(unsigned long long)bytes);
     if(status==kIOReturnSuccess){native_legacy_swap_stage(2);native_legacy_mute_console();}
     native_legacy_transfer_status=status;native_legacy_transfer_request=(uintptr_t)request;native_legacy_transfer_bytes=bytes;
     if(status!=kIOReturnSuccess && boot_progress_stage) {
@@ -274,6 +280,9 @@ __attribute__((noinline)) void native_legacy_retirement_observed(IOService *disp
     native_legacy_retired_current=current;native_legacy_retired_pending=pending;
     native_legacy_retired_generation=completed;native_legacy_presented_generation=presented;native_legacy_retired_frames=frames;
     native_legacy_retirement_calls=native_legacy_retirement_calls+1;
+    if(native_legacy_retirement_calls<=4)
+        printf("UKE: retire %u generation=%u presented=%u\n",
+            native_legacy_retirement_calls,(unsigned)completed,(unsigned)presented);
 }
 // The display object's properties as they are now (the registration copy above predates setDisplayRefreshProperties and the rest): for the
 // UFS log. Returns the bytes written (NUL-terminated).
