@@ -91,3 +91,24 @@ native_legacy_surface_rejected (uint64_t width, uint64_t height, uint32_t format
   (void)b;
   (void)c;
 }
+
+/* QEMU-only companions of the CPU display probe. The uke CPU baseline has no
+ * shared window, virtio input or QEMU Metal backend, so these no-ops resolve
+ * the QEMU LegacyDisplayProbe's optional late probes. */
+__attribute__((weak)) int
+native_qemu_metal_publish (void)
+{
+  return 0;
+}
+
+__attribute__((weak)) int
+native_shared_window_probe (void)
+{
+  return 0;
+}
+
+__attribute__((weak)) int
+native_virtio_input_probe (void)
+{
+  return 0;
+}

@@ -12,6 +12,10 @@ on:
         description: 'run id that holds the uke-data-seed artifact'
         required: true
         default: '39556176977'
+      gib:
+        description: 'APFS container size in GiB; it must fit the current userdata with the root image, log reserve and store bitmap'
+        required: true
+        default: '200'
 
 permissions:
   contents: read
@@ -49,21 +53,25 @@ jobs:
         run: |
           ls -l build/owner-data-fixture
           python3 -c "from pathlib import Path; import sys; sys.path.insert(0, 'drivers/DarwinBoot/Test'); import packed_ramdisk; packed_ramdisk.pack(Path('build/owner-data-fixture/owner-data-32.cdr'), Path('build/owner-data-fixture/owner-data-32.dbr'))"
-          # userdata is 241,617,055,744 B; the root image is 9,382,658,048 B.
-          # --gib 214 leaves the root image, the 1 GiB log reserve, a 4 MiB
-          # guard and one more GiB of margin inside the partition.
-          python3 scripts/seed-data-grow.py --gib 214 \
+          # userdata is 241,617,055,744 B (225 GiB); the root image is
+          # 9,382,658,048 B and the persistent-store header/bitmap is about
+          # 10.9 GiB.  The 214 GiB seed puts the store window past the
+          # partition (first=0x55414a + blocks=56100529 on the device);
+          # 200 GiB leaves the root image, the log reserve, the guard, the
+          # store bitmap and margin inside the partition.
+          GIB="${{ github.event.inputs.gib }}"
+          python3 scripts/seed-data-grow.py --gib "$GIB" \
             build/owner-data-fixture/owner-data-32.dbr \
-            build/owner-data-fixture/owner-data-214.dbr \
+            build/owner-data-fixture/owner-data-$GIB.dbr \
             | tee build/owner-data-fixture/grown.json
           ls -l build/owner-data-fixture
 
       - name: Upload the grown seed
         uses: actions/upload-artifact@v4
         with:
-          name: uke-data-seed-214
+          name: uke-data-seed-${{ github.event.inputs.gib }}
           path: |
-            UniXNU/build/owner-data-fixture/owner-data-214.dbr
+            UniXNU/build/owner-data-fixture/owner-data-${{ github.event.inputs.gib }}.dbr
             UniXNU/build/owner-data-fixture/grown.json
             UniXNU/build/owner-data-fixture/seed.json
           if-no-files-found: error

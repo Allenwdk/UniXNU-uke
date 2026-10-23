@@ -8,6 +8,10 @@
 #include <sys/fcntl.h>
 #include <sys/stat.h>
 #include <pexpert/pexpert.h>
+#include <kern/thread.h>
+#include <kern/clock.h>
+#include <kern/sched_prim.h>
+#include <mach/mach_time.h>
 
 static const char policy_head[] =
  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -62,9 +66,80 @@ static int append_job(const char **cursor) {
  *cursor=*e?e+1:e;return 0;
 }
 
+// The boot-log archive compiles against the exported headers only; the
+// scheduler entry point and priority below are private osfmk declarations.
+extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation,
+                                                  void *parameter, int priority,
+                                                  thread_t *new_thread);
+#define BASEPRI_PREEMPT 92
+
+// The device runs under Gunyah and the hypervisor keeps a virtual watchdog for
+// this VM. Android's gh_virt_wdt pets it from a timer; the UEFI pet only covers
+// the firmware handoff, and the CPU display renderer can take minutes, so keep
+// petting it from a kernel thread even when boot-progress is compiled out.
+static volatile unsigned uke_gunyah_wdt_pets;
+static volatile int uke_gunyah_wdt_last;
+static void uke_gunyah_wdt_pet_thread(void *arg, wait_result_t result) {
+ (void)arg;(void)result;
+ for (;;) {
+  register uint64_t x0 __asm("x0")=0x86000007;
+  register uint64_t x1 __asm("x1")=0;
+  register uint64_t x2 __asm("x2")=0;
+  register uint64_t x3 __asm("x3")=0;
+  register uint64_t x4 __asm("x4")=0;
+  register uint64_t x5 __asm("x5")=0;
+  register uint64_t x6 __asm("x6")=0;
+  register uint64_t x7 __asm("x7")=0;
+  __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1),"r"(x2),"r"(x3),"r"(x4),"r"(x5),"r"(x6),"r"(x7) : "memory");
+  uke_gunyah_wdt_last=(int)x0;++uke_gunyah_wdt_pets;
+  assert_wait_timeout((event_t)&uke_gunyah_wdt_pet_thread,THREAD_UNINT,1000,NSEC_PER_MSEC);
+  thread_block(THREAD_CONTINUE_NULL);
+ }
+}
+// Printing lives on its own thread: kprintf can block on the video console
+// once the display stack owns the panel, and that must never stop the pets.
+static void uke_gunyah_wdt_log_thread(void *arg, wait_result_t result) {
+ (void)arg;(void)result;
+ for (;;) {
+  uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+  printf("sheng bring-up Gunyah watchdog pets=%u last=%d t=%llus\n",
+   uke_gunyah_wdt_pets,uke_gunyah_wdt_last,(unsigned long long)(ns/1000000000ULL));
+  assert_wait_timeout((event_t)&uke_gunyah_wdt_log_thread,THREAD_UNINT,10000,NSEC_PER_MSEC);
+  thread_block(THREAD_CONTINUE_NULL);
+ }
+}
+static int uke_gunyah_wdt_started;
+static void uke_gunyah_wdt_start(void) {
+ thread_t thread;
+ if(uke_gunyah_wdt_started)return;
+ uke_gunyah_wdt_started=1;
+ // Raise the hypervisor bite time before petting: a kernel hang then shows as
+ // a long freeze instead of a reset 30 s later, which separates a hang from
+ // a power/PMIC reset. 0xffff is the cookie UEFI passes for the same call.
+ {
+  register uint64_t x0 __asm("x0")=0x86000008;
+  register uint64_t x1 __asm("x1")=0xffff;
+  register uint64_t x2 __asm("x2")=300000;
+  register uint64_t x3 __asm("x3")=0;
+  register uint64_t x4 __asm("x4")=0;
+  register uint64_t x5 __asm("x5")=0;
+  register uint64_t x6 __asm("x6")=0;
+  register uint64_t x7 __asm("x7")=0;
+  __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1) : "r"(x2),"r"(x3),"r"(x4),"r"(x5),"r"(x6),"r"(x7) : "memory");
+  printf("sheng bring-up Gunyah watchdog bite=300000 status=%d\n",(int)x0);
+ }
+ kern_return_t started=kernel_thread_start_priority(uke_gunyah_wdt_pet_thread,0,BASEPRI_PREEMPT,&thread);
+ if(started==KERN_SUCCESS){thread_deallocate(thread);printf("sheng bring-up Gunyah watchdog pet thread started\n");}
+ else printf("sheng bring-up Gunyah watchdog pet thread failed: %d\n",(int)started);
+ started=kernel_thread_start_priority(uke_gunyah_wdt_log_thread,0,BASEPRI_PREEMPT,&thread);
+ if(started==KERN_SUCCESS)thread_deallocate(thread);
+ else printf("sheng bring-up Gunyah watchdog log thread failed: %d\n",(int)started);
+}
+
 int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  proc_t p=process;
  int enabled=0,error=0,fd=-1;int32_t result=0;
+ uke_gunyah_wdt_start();
  PE_parse_boot_argn("sheng-disable-watchdogd",&enabled,sizeof(enabled));
  if(!PE_parse_boot_argn("sheng-disable-jobs",jobs,sizeof(jobs)))jobs[0]=0;jobs[sizeof(jobs)-1]=0;
  int lite=0;PE_parse_boot_argn("sheng-lite",&lite,sizeof(lite));if(lite!=1)lite=0;

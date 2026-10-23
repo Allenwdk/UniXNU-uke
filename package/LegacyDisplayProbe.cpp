@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Bounded offline original lifecycle instrument; no desktop claim.
+// LegacyDisplayProbe.cpp of UniXNU-sheng; the late probe starts sheng's key store and HID probes and this board's
+// VirtIO input, but no longer sheng's CPU frequency, GPU power and touch panel probes, which drive sheng hardware and
+// are not part of this board's archive.
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IODeviceTreeSupport.h>
@@ -188,6 +191,11 @@ void native_legacy_frame_colors_observed(const uint32_t *colors,const uint64_t *
 struct SwapEvent {uint64_t submitted,offered,done;uint32_t number;};
 static SwapEvent swapEvents[64];static uint32_t swapEventCount;
 extern "C" void native_legacy_swap_stage(unsigned stage) {
+    if(stage==3) {
+        static unsigned kicks;
+        if(++kicks<=4)printf("UKE: kick %u\n",kicks);
+        return;
+    }
     const uint64_t now=probeNowUs();
     uint32_t total=swapEventCount;
     if(stage==0) {
@@ -212,21 +220,14 @@ extern "C" unsigned native_legacy_swap_timeline(char *out,unsigned cap) {
     }
     return at;
 }
-// The display refresh tick (NativeLegacyDisplay, sheng-vsync): vsync messages sent, arms, idle stops, late ticks, starts, refresh
-// properties reported at that rate, and the rate.
-static volatile uint64_t vsyncEvents[6];
-static volatile unsigned vsyncHz;
-void native_legacy_vsync_observed(unsigned event,unsigned hz) {
-    if(event<6)vsyncEvents[event]=vsyncEvents[event]+1;
-    vsyncHz=hz;
-}
 extern "C" unsigned native_legacy_prepare_report(char *out,unsigned cap) {
-    return snprintf(out,cap,"prepare calls=%u failures=%u retried=%u max_attempts=%u waited_ms=%llu vsync hz=%u sent=%llu arms=%llu idle=%llu late=%llu start=%llu refresh=%llu",
-        native_legacy_prepare_calls,native_legacy_prepare_failures,native_legacy_prepare_retried,native_legacy_prepare_max_attempts,
-        (unsigned long long)(native_legacy_prepare_wait_us/1000),vsyncHz,(unsigned long long)vsyncEvents[1],(unsigned long long)vsyncEvents[0],
-        (unsigned long long)vsyncEvents[2],(unsigned long long)vsyncEvents[3],(unsigned long long)vsyncEvents[4],(unsigned long long)vsyncEvents[5]);
+    return snprintf(out,cap,"prepare calls=%u failures=%u retried=%u max_attempts=%u waited_ms=%llu",native_legacy_prepare_calls,native_legacy_prepare_failures,
+        native_legacy_prepare_retried,native_legacy_prepare_max_attempts,(unsigned long long)(native_legacy_prepare_wait_us/1000));
 }
 void native_legacy_swap_validation_observed(bool accepted,unsigned reason,const void *request,const void *surface) {
+    if(native_legacy_swap_validation_calls<8)
+        printf("UKE: swap %u accepted=%u reason=%u surface=%p\n",
+            native_legacy_swap_validation_calls+1,(unsigned)accepted,reason,surface);
     if(accepted)native_legacy_swap_stage(0);
     if(accepted)native_legacy_swap_accepted_count=native_legacy_swap_accepted_count+1;
     else {native_legacy_swap_rejected_count=native_legacy_swap_rejected_count+1;recordRejectedSwap(reason,request,surface);}
@@ -242,9 +243,27 @@ void native_legacy_copy_timing_observed(uint64_t ticks,uint64_t bytes) {
     native_legacy_copy_n=native_legacy_copy_n+1;native_legacy_copy_last=ticks;native_legacy_copy_sum=native_legacy_copy_sum+ticks;
     if(ticks>native_legacy_copy_max)native_legacy_copy_max=ticks;
 }
+// XNU's console switch keeps drawing text into the firmware frame buffer that
+// the display stack now presents over. Once launchd starts a daemon storm the
+// 3200x2136 scroll work can wedge the console and stop every later log line;
+// muting the screen console after the first frame keeps the msgbuf (and the
+// pram ring) alive. Panic text still reaches the pram dump.
+extern "C" int disableConsoleOutput;
+static int native_legacy_console_muted;
+static void native_legacy_mute_console(void) {
+    unsigned enabled=0;
+    PE_parse_boot_argn("offline-legacy-noconsole",&enabled,sizeof(enabled));
+    if(enabled!=1 || native_legacy_console_muted)return;
+    native_legacy_console_muted=1;
+    printf("UKE: screen console muted after the first frame\n");
+    disableConsoleOutput=1;
+}
 __attribute__((noinline)) void native_legacy_transfer_observed(IOReturn status,const void *request,uint64_t bytes) {
     native_legacy_transfer_calls=native_legacy_transfer_calls+1;
-    if(status==kIOReturnSuccess)native_legacy_swap_stage(2);
+    if(native_legacy_transfer_calls<=4)
+        printf("UKE: transfer %u status=%x bytes=%llu\n",
+            native_legacy_transfer_calls,(unsigned)status,(unsigned long long)bytes);
+    if(status==kIOReturnSuccess){native_legacy_swap_stage(2);native_legacy_mute_console();}
     native_legacy_transfer_status=status;native_legacy_transfer_request=(uintptr_t)request;native_legacy_transfer_bytes=bytes;
     if(status!=kIOReturnSuccess && boot_progress_stage) {
         char message[120];snprintf(message,sizeof(message),"DISPLAY COPY FAILED status=%08x prepare=%u tries=%u",
@@ -266,6 +285,9 @@ __attribute__((noinline)) void native_legacy_retirement_observed(IOService *disp
     native_legacy_retired_current=current;native_legacy_retired_pending=pending;
     native_legacy_retired_generation=completed;native_legacy_presented_generation=presented;native_legacy_retired_frames=frames;
     native_legacy_retirement_calls=native_legacy_retirement_calls+1;
+    if(native_legacy_retirement_calls<=4)
+        printf("UKE: retire %u generation=%u presented=%u\n",
+            native_legacy_retirement_calls,(unsigned)completed,(unsigned)presented);
 }
 // The display object's properties as they are now (the registration copy above predates setDisplayRefreshProperties and the rest): for the
 // UFS log. Returns the bytes written (NUL-terminated).
@@ -295,24 +317,11 @@ void native_legacy_registration_observed(IOService *display) {
 void native_legacy_client_enter(task_t task,uint32_t type) {
     native_legacy_client_calls=native_legacy_client_calls+1;native_legacy_client_task=(uintptr_t)task;
     native_legacy_client_type=type;native_legacy_client_pid=task?proc_pid((proc_t)get_bsdtask_info(task)):0;
-    unsigned clientPanic=0;
-    PE_parse_boot_argn("offline-legacy-client-panic",&clientPanic,sizeof(clientPanic));
-    if(clientPanic) {
-        unsigned char *fb=reinterpret_cast<unsigned char *>((uintptr_t)native_legacy_object);
-        void *surface=nullptr,*temp=nullptr;uint32_t sid=0;
-        if(fb) {
-            memcpy(&surface,fb+0x1618,sizeof(surface));
-            memcpy(&temp,fb+0x1620,sizeof(temp));
-            if(temp)memcpy(&sid,reinterpret_cast<unsigned char *>(temp)+0x10,sizeof(sid));
-        }
-        panic("UKE client: type=%u pid=%d task=%p surf=%p temp=%p sid=%u",
-            (unsigned)type,(int)native_legacy_client_pid,task,surface,temp,(unsigned)sid);
-    }
 }
 // Every framebuffer user client seen (object, pid), with what it does: the original client's vtable is copied and two entries (externalMethod, slot 168,
 // and registerNotificationPort(port,type,refCon), slot 175) are pointed at wrappers that count and forward to the original function. The original code
 // is not touched; only this object's vptr names the copy. XNU's ARM64 vptr points at slot 0 (the original code dispatches with ldr x8,[vptr,#slot*8]).
-enum {kSeenClients=8,kSelectors=96,kRegEvents=8,kVtableSlots=256};
+enum {kSeenClients=128,kSelectors=96,kRegEvents=8,kVtableSlots=256};
 struct ClientStat {
     uintptr_t object;int pid;uint32_t calls,fails;uint32_t selector_calls[kSelectors],selector_fails[kSelectors],selector_status[kSelectors];
     unsigned regs;struct {uint32_t type;uint64_t port;uint32_t ref,status;} reg[kRegEvents];
@@ -327,21 +336,79 @@ static ClientStat *statFor(IOUserClient *client) {
     for(unsigned i=0;i<seenClientCount;++i)if(seenClients[i].object==(uintptr_t)client)return &seenClients[i];
     return nullptr;
 }
+static void dumpSwapInput(const IOExternalMethodArguments *args) {
+    // What userland actually passes to SwapEnd: size, delivery form and the
+    // first 0x120 bytes. The record layout names the surfaces and the mask the
+    // own-present path would need.
+    if(!args)return;
+    printf("UKE: swap-in size=%u in=%u desc=%u scalar=%u/%u structOut=%u\n",
+        (unsigned)args->structureInputSize,args->structureInput?1u:0u,
+        args->structureInputDescriptor?1u:0u,
+        (unsigned)args->scalarInputCount,(unsigned)args->scalarOutputCount,
+        (unsigned)args->structureOutputSize);
+    const unsigned char *p=reinterpret_cast<const unsigned char *>(args->structureInput);
+    unsigned n=args->structureInputSize;
+    if(!p||!n)return;
+    if(n>0x120)n=0x120;
+    for(unsigned off=0;off<n;off+=32) {
+        char line[160];unsigned at=snprintf(line,sizeof(line),"UKE: swap+%03x",off);
+        for(unsigned k=0;k<32&&off+k+4<=n;k+=4) {
+            if(at+12>=sizeof(line))break;
+            uint32_t v;memcpy(&v,p+off+k,4);
+            at+=snprintf(line+at,sizeof(line)-at," %08x",v);
+        }
+        printf("%s\n",line);
+    }
+}
+static void dumpSwapQueue(const char *tag,unsigned nth,IOReturn status) {
+    // The original current/pending pointers, the active-list head the SwapEnd
+    // gate action walks (+5496) and the family state words, including the
+    // +5840 powered word.
+    const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
+    uint64_t current=0,head=0,active=0;uint32_t state[10]={};
+    if(object) {
+        memcpy(&current,object+5472,8);memcpy(&head,object+5480,8);memcpy(&active,object+5496,8);
+        for(unsigned k=0;k<10;++k)memcpy(&state[k],object+5808+4*k,4);
+    }
+    printf("UKE: %s %u status=%x current=%llx head=%llx active=%llx state=%x/%x/%x/%x/%x/%x/%x/%x/%x/%x\n",
+        tag,nth,(unsigned)status,(unsigned long long)current,(unsigned long long)head,
+        (unsigned long long)active,
+        state[0],state[1],state[2],state[3],state[4],state[5],state[6],state[7],state[8],state[9]);
+}
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
     ClientStat *stat=statFor(client);
-    // Selector 12 enters the original request_power_change transition and
-    // selector 6 is the wait that follows.  The panel is already powered by
-    // the firmware GOP frame buffer, so acknowledge both without the original
-    // implementation, which asks for the display rail and resets the tablet.
-    if(stat && (selector==6 || selector==12)) {
-        if(!stat->selector_calls[selector])printf("UKEMEM: client selector %u (suppressed)\n",(unsigned)selector);
+    unsigned calls=(stat && selector<kSelectors)?stat->selector_calls[selector]:0;
+    bool traced=stat && selector<kSelectors && calls<2;
+    if(traced)printf("UKEMEM: sel %u enter calls=%u\n",(unsigned)selector,calls+1);
+    // Selector 12 enters the original request_power_change transition, which
+    // has no platform driver behind it on this GOP-lit panel; acknowledge it.
+    // Selector 6 (SwapWait) is forwarded: with the powered word set it may be
+    // the call that submits the staged swap to the framebuffer queue.
+    if(stat && selector==12) {
         if(selector<kSelectors){++stat->selector_calls[selector];stat->selector_status[selector]=(uint32_t)kIOReturnSuccess;}
         ++stat->calls;
+        if(traced)printf("UKEMEM: sel %u exit 0 (suppressed)\n",(unsigned)selector);
         return kIOReturnSuccess;
     }
-    // First call of every other selector, before the original can reset.
-    if(stat && selector<16 && !stat->selector_calls[selector])printf("UKEMEM: client selector %u\n",(unsigned)selector);
+    if(stat && selector==5 && stat->selector_calls[5]<2) {
+        // The original SwapEnd gate action consumes the request from the
+        // +5496 list before returning, so dump and drive the queue first.
+        dumpSwapQueue("swap-before",stat->selector_calls[5]+1,kIOReturnSuccess);
+        void *display=reinterpret_cast<void *>((uintptr_t)native_legacy_object);
+        if(display) {
+            void **vptr=*reinterpret_cast<void ***>(display);
+            typedef void (*Kick)(void *);
+            if(vptr && vptr[290]) {
+                printf("UKE: self-kick\n");
+                reinterpret_cast<Kick>(vptr[290])(display);
+            }
+        }
+        dumpSwapInput(args);
+    }
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
+    if(traced)printf("UKEMEM: sel %u exit %x\n",(unsigned)selector,(unsigned)status);
+    if(stat && selector==5 && stat->selector_calls[5]<3) dumpSwapQueue("swap-end",stat->selector_calls[5]+1,status);
+    if(stat && selector==6 && stat->selector_calls[6]<3) dumpSwapQueue("swap-wait",stat->selector_calls[6]+1,status);
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
             const uint64_t *in=args->scalarInput;
@@ -369,7 +436,11 @@ static IOReturn wrappedRegister(IOUserClient *client,mach_port_t port,UInt32 typ
     return status;
 }
 static void interpose(IOUserClient *client,int pid) {
-    if(seenClientCount>=kSeenClients)return;
+    if(seenClientCount>=kSeenClients) {
+        static int logged;
+        if(!logged){logged=1;printf("UKEMEM: client table full (%u); power selectors are no longer suppressed\n",(unsigned)seenClientCount);}
+        return;
+    }
     ClientStat &stat=seenClients[seenClientCount];
     memset(&stat,0,sizeof stat);
     uintptr_t *vtable=*reinterpret_cast<uintptr_t **>(client);
@@ -417,6 +488,19 @@ void native_legacy_client_observed(IOReturn status,IOUserClient *client) {
     if(client && !status)interpose(client,native_legacy_client_pid);
     native_legacy_client_status=status;native_legacy_client_object=(uintptr_t)client;
     if(client)strlcpy(native_legacy_client_class,client->getMetaClass()->getClassName(),sizeof(native_legacy_client_class));
+    {
+        // Adoption state at the moment a client opens: the +0x1618 default
+        // surface and the +0x1620 temporary one the original slot299 created.
+        void *surface=nullptr,*temp=nullptr;uint32_t sid=0;
+        const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
+        if(object) {
+            memcpy(&surface,object+0x1618,sizeof(surface));
+            memcpy(&temp,object+0x1620,sizeof(temp));
+        }
+        if(temp)memcpy(&sid,reinterpret_cast<const unsigned char *>(temp)+0x10,sizeof(sid));
+        printf("UKE: display client status=%x pid=%d surface=%p temp=%p sid=%u\n",
+            (unsigned)status,native_legacy_client_pid,surface,temp,(unsigned)sid);
+    }
     native_legacy_client_checkpoint();
 }
 __attribute__((noinline)) bool native_legacy_gop_mapping_observed(IOService *object,IOMemoryMap *mapping,uint32_t width,uint32_t height) {
@@ -504,14 +588,19 @@ void native_legacy_display_probe(void) {
     native_legacy_display_checkpoint();
 }
 void native_legacy_display_late_probe(void);
-extern void native_hid_input_probe(void);
 extern void native_keystore_probe(void);
-extern void native_touch_probe(void);
+extern void native_hid_input_probe(void);
+extern void native_virtio_input_probe(void);
+extern void native_shared_window_probe(void);
+extern void native_qemu_metal_publish(void);
+// The GPU branch's board probes: sheng_gpu_power_probe is strong only with
+// CONFIG_XNU_NATIVE_ADRENO; the stub archive supplies a weak no-op otherwise.
 extern void sheng_cpufreq_probe(void);
 extern void sheng_gpu_power_probe(void);
-// Default framebuffer surface bring-up (uke, offline-legacy-default-surface=1).
-// The original Legacy class reads the platform enable byte at +0x1780 and, when
-// set, creates a temporary surface at +0x1620 in slot 299. Only the absent
+extern void native_touch_probe(void);
+// Default framebuffer surface bring-up (offline-legacy-default-surface=1).
+// The original Legacy class reads the platform enable byte at +0x1780 and,
+// when set, creates a temporary surface at +0x1620 in slot 299. Only the absent
 // platform driver ever installs the default surface at +0x1618, so adopt the
 // created surface there and let the original slot 174/242 produce the
 // IOSurfaceID and Mach port name.
@@ -547,38 +636,17 @@ static void native_legacy_default_surface_state(IOService *display,bool adopt) {
         IOLog("UKE: display surface adopted surface=%p sid=%u\n",temp,(unsigned)sid);
     }
 }
-// Diagnostic parking point for the bring-up: print the original Legacy state
-// on the panic screen so it survives the boot without a serial console.
-static void native_legacy_default_surface_panic(IOService *display,bool started) {
-    unsigned char *fb=reinterpret_cast<unsigned char *>(display);
-    if(!fb)panic("UKE display: no object");
-    void *root=nullptr,*region=nullptr,*temp=nullptr,*surface=nullptr;
-    uint32_t flag=0,width=0,height=0,format=0,planes=0,bpp=0,sid=0;
-    memcpy(&root,fb+0x1600,sizeof(root));
-    memcpy(&region,fb+0x17c0,sizeof(region));
-    memcpy(&temp,fb+0x1620,sizeof(temp));
-    memcpy(&surface,fb+0x1618,sizeof(surface));
-    flag=fb[0x1780];
-    memcpy(&width,fb+0x16b0,sizeof(width));
-    memcpy(&height,fb+0x16b4,sizeof(height));
-    memcpy(&format,fb+0x1700,sizeof(format));
-    memcpy(&planes,fb+0x1704,sizeof(planes));
-    memcpy(&bpp,fb+0x1708,sizeof(bpp));
-    if(temp)memcpy(&sid,reinterpret_cast<unsigned char *>(temp)+0x10,sizeof(sid));
-    panic("UKE display: st=%u root=%p reg=%p temp=%p surf=%p sid=%u flag=%u dims=%ux%u fmt=%x/%u/%u",
-        (unsigned)started,root,region,temp,surface,(unsigned)sid,(unsigned)flag,
-        (unsigned)width,(unsigned)height,(unsigned)format,(unsigned)planes,(unsigned)bpp);
-}
 void native_legacy_display_late_probe(void) {
-    unsigned defaultSurface=0,defaultProbe=0,defaultPanic=0;
+    unsigned defaultSurface=0;
     PE_parse_boot_argn("offline-legacy-default-surface",&defaultSurface,sizeof(defaultSurface));
-    PE_parse_boot_argn("offline-legacy-default-probe",&defaultProbe,sizeof(defaultProbe));
-    PE_parse_boot_argn("offline-legacy-default-panic",&defaultPanic,sizeof(defaultPanic));
     native_keystore_probe();
     sheng_cpufreq_probe();
     sheng_gpu_power_probe();
     native_touch_probe();
     native_hid_input_probe();
+    native_virtio_input_probe();
+    native_shared_window_probe();
+    native_qemu_metal_publish();
     IOService *display=pendingLegacyDisplay;if(!display)return;pendingLegacyDisplay=nullptr;
     native_legacy_surface_status=OSKextLoadKextWithIdentifier("com.apple.iokit.IOSurface");
     OSDictionary *matching=IOService::nameMatching("IOCoreSurfaceRoot");
@@ -654,8 +722,7 @@ void native_legacy_display_late_probe(void) {
                         }
                         native_legacy_stage=5;started=display->start(nub);native_legacy_start_result=started;
                     }
-                    if(defaultPanic)native_legacy_default_surface_panic(display,started);
-                    if(started && (defaultSurface || defaultProbe))native_legacy_default_surface_state(display,defaultSurface==1);
+                    if(started && defaultSurface)native_legacy_default_surface_state(display,defaultSurface==1);
                     if(started && phase==4) {
                         activeLegacyDisplay=display;activeGOPNub=nub;native_legacy_stage=10;
                         {
