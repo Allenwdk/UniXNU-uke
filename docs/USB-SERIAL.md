@@ -89,7 +89,14 @@ the probe result into the existing pram log ring.
 The default board command line still selects `native-usb-probe=1`; add
 `native-usb-serial=1` (for example with `--kernel-arg native-usb-serial=1`) to
 start the warm path. Both arguments together dump the probe first and then
-enumerate.
+enumerate. `native-usb-probe=2` additionally reads the DWC3 wrapper and
+QSCRATCH, which is the most a read-only boot can tell us.
+
+`native-usb-phy=1` programs the eUSB2 PHY register file and `native-usb-tcsr=1`
+touches the TCSR clock-ref word at `0x1f4b118`. Both are opt-in and off by
+default: the first probe boot died on the log line that read TCSR, and the
+stock DT assigns `0x1f4b000` to the ADSP as its `ipc_hwmutex` page even though
+the address also falls inside the `tcsrcc` window.
 
 The first version deliberately does **not** become the `kprintf` console and
 does **not** implement KDP. Those need early-boot or polled paths and are a

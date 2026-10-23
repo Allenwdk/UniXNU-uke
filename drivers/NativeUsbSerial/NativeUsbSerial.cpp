@@ -205,6 +205,7 @@ class NativeUsbSerial : public IOService {
 	volatile bool fLogPrimed = false;
 	volatile bool fDump = false;
 	bool fEnablePhy = false;
+	bool fEnableTcsr = false;
 	uint32_t fProbeLevel = 0;
 
 	uint8_t *fTxMem = nullptr;
@@ -377,8 +378,9 @@ NativeUsbSerial::dumpSmmu(void)
 void
 NativeUsbSerial::dumpProbe(void)
 {
-	IOLog("NativeUsbSerial: probing uke USB2 wrapper base=%08x level=%u phy=%u\n",
-	    static_cast<unsigned>(UKE_USB_WRAPPER_BASE), fProbeLevel, fEnablePhy ? 1U : 0U);
+	IOLog("NativeUsbSerial: probing uke USB2 wrapper base=%08x level=%u phy=%u tcsr=%u\n",
+	    static_cast<unsigned>(UKE_USB_WRAPPER_BASE), fProbeLevel, fEnablePhy ? 1U : 0U,
+	    fEnableTcsr ? 1U : 0U);
 	IOLog("NativeUsbSerial: GCC gdscr=%08x cfg=%08x master=%08x sleep=%08x utmi=%08x cfg_noc=%08x aggre=%08x\n",
 	    rd32(fGcc, 0x004), rd32(fGcc, 0x008), rd32(fGcc, 0x018),
 	    rd32(fGcc, 0x024), rd32(fGcc, 0x028), rd32(fGcc, 0x088),
@@ -391,7 +393,10 @@ NativeUsbSerial::dumpProbe(void)
 	const uint32_t phyBcr = rd32(fPhyBcr, 0x000);
 	IOLog("NativeUsbSerial: GCC qusb2phy-bcr=%08x\n", phyBcr);
 
-	if (fEnablePhy) {
+	// 0x1f4b000 is inside the tcsrcc window (0x1f40000 + 0xc0000) but the
+	// stock DT also hands that page to the ADSP as its ipc_hwmutex region, so
+	// an APPS read may not be legal. It is opt-in on its own argument.
+	if (fEnableTcsr) {
 		IOLog("NativeUsbSerial: probe: reading TCSR\n");
 		IOLog("NativeUsbSerial: GCC tcsr-usb2-clkref=%08x\n", rd32(fTcsr, 0x118));
 	}
@@ -480,10 +485,12 @@ NativeUsbSerial::warmInit(void)
 	// observed uke the TCSR read hangs unless its clock controller is up, and
 	// the PHY needs its own rails. The minimal path below only uses GCC and
 	// the DWC3 wrapper.
-	if (fEnablePhy) {
+	if (fEnableTcsr) {
 		IOLog("NativeUsbSerial: warm: tcsr\n");
 		wr32(fTcsr, 0x118, rd32(fTcsr, 0x118) | 1);
 		IODelay(100);
+	}
+	if (fEnablePhy) {
 		IOLog("NativeUsbSerial: warm: phy\n");
 		for (size_t i = 0; i < UKE_USB_PHY_INIT_COUNT; i++) {
 			const UkeUsbPhyWrite &write = kUkeUsbPhyInit19Mhz[i];
@@ -1367,12 +1374,15 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t serialMode = 0;
 	uint32_t dumpMode = 0;
 	uint32_t phyMode = 0;
+	uint32_t tcsrMode = 0;
 	PE_parse_boot_argn("native-usb-probe", &probeMode, sizeof(probeMode));
 	PE_parse_boot_argn("native-usb-serial", &serialMode, sizeof(serialMode));
 	PE_parse_boot_argn("native-usb-serial-dump", &dumpMode, sizeof(dumpMode));
 	PE_parse_boot_argn("native-usb-phy", &phyMode, sizeof(phyMode));
+	PE_parse_boot_argn("native-usb-tcsr", &tcsrMode, sizeof(tcsrMode));
 	fProbeLevel = probeMode;
 	fEnablePhy = phyMode != 0;
+	fEnableTcsr = tcsrMode != 0;
 	if (probeMode == 0 && serialMode == 0) {
 		IOService::stop(provider);
 		return false;

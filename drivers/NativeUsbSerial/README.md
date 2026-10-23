@@ -13,11 +13,19 @@ hardware-validated yet; the probe is the first hardware gate.
 
 | Argument | Meaning |
 | --- | --- |
-| `native-usb-probe=1` | Read-only dump; no enumeration |
+| `native-usb-probe=1` | Read-only dump: GCC/BCR/SMMU only |
+| `native-usb-probe=2` | Adds the DWC3 wrapper and QSCRATCH registers |
 | `native-usb-serial=1` | Warm handoff, CDC-ACM enumeration and msgbuf relay |
 | `native-usb-serial-log=1` | Reserved: msgbuf relay |
 | `native-usb-serial-dump=1` | Reserved: send the full msgbuf |
+| `native-usb-phy=1` | Program the eUSB2 PHY register file (opt-in) |
+| `native-usb-tcsr=1` | Touch the TCSR clock-ref word `0x1f4b118` (opt-in, see below) |
 | `native-usb-serial-cold=1` | Reserved: WCD939x/repeater cold init |
+
+`0x1f4b000` sits inside the `tcsrcc` window but the stock DT also assigns that
+page to the ADSP as its `ipc_hwmutex` region, and the first probe revision
+reset the tablet on the log line that read it. It is therefore its own
+opt-in argument and is never touched by the default probe or warm path.
 
 Without either `native-usb-probe` or `native-usb-serial`, `start()` returns
 false and no hardware is touched.
