@@ -207,6 +207,7 @@ class NativeUsbSerial : public IOService {
 	bool fEnablePhy = false;
 	bool fEnableTcsr = false;
 	bool fEnableQscratch = false;
+	bool fSoftReset = true;
 	uint32_t fProbeLevel = 0;
 	uint64_t fQscratchBase = UKE_USB_QSCRATCH_BASE;
 
@@ -553,24 +554,32 @@ NativeUsbSerial::warmInit(void)
 	    rd32(fWrapper, UKE_USB_DWC3_GSNPSID), rd32(fWrapper, UKE_USB_DWC3_GCTL),
 	    rd32(fWrapper, UKE_USB_DWC3_GSTS), rd32(fWrapper, UKE_USB_DWC3_DCTL),
 	    rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0)));
-	uint32_t dctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
-	wr32(fWrapper, UKE_USB_DWC3_DCTL, dctl | UKE_USB_DWC3_DCTL_CSFTRST);
-	bool resetDone = false;
-	for (unsigned i = 0; i < 1000; i++) {
-		if ((rd32(fWrapper, UKE_USB_DWC3_DCTL) & UKE_USB_DWC3_DCTL_CSFTRST) == 0) {
-			resetDone = true;
-			break;
+	// native-usb-softreset=0 keeps whatever ABL left in the core: a warm
+	// hand-off may not need the reset at all, and this separates "the reset
+	// never completes" from "the core is unusable".
+	if (fSoftReset) {
+		uint32_t dctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
+		wr32(fWrapper, UKE_USB_DWC3_DCTL, dctl | UKE_USB_DWC3_DCTL_CSFTRST);
+		bool resetDone = false;
+		for (unsigned i = 0; i < 1000; i++) {
+			if ((rd32(fWrapper, UKE_USB_DWC3_DCTL) & UKE_USB_DWC3_DCTL_CSFTRST) == 0) {
+				resetDone = true;
+				break;
+			}
+			IOSleep(1);
 		}
-		IOSleep(1);
+		if (!resetDone) {
+			IOLog("NativeUsbSerial: DWC3 soft reset did not complete (dctl=%08x gsnpsid=%08x gsts=%08x dsts=%08x)\n",
+			    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_GSNPSID),
+			    rd32(fWrapper, UKE_USB_DWC3_GSTS), rd32(fWrapper, UKE_USB_DWC3_DSTS));
+			return false;
+		}
+		IOLog("NativeUsbSerial: warm: dwc3-reset done dctl=%08x dsts=%08x\n",
+		    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
+	} else {
+		IOLog("NativeUsbSerial: warm: dwc3-reset skipped dsts=%08x\n",
+		    rd32(fWrapper, UKE_USB_DWC3_DSTS));
 	}
-	if (!resetDone) {
-		IOLog("NativeUsbSerial: DWC3 soft reset did not complete (dctl=%08x gsnpsid=%08x gsts=%08x dsts=%08x)\n",
-		    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_GSNPSID),
-		    rd32(fWrapper, UKE_USB_DWC3_GSTS), rd32(fWrapper, UKE_USB_DWC3_DSTS));
-		return false;
-	}
-	IOLog("NativeUsbSerial: warm: dwc3-reset done dctl=%08x dsts=%08x\n",
-	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
 
 	IOLog("NativeUsbSerial: warm: done\n");
 	return true;
@@ -1415,16 +1424,19 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t phyMode = 0;
 	uint32_t tcsrMode = 0;
 	uint32_t qscratchMode = 0;
+	uint32_t softResetMode = 1;
 	PE_parse_boot_argn("native-usb-probe", &probeMode, sizeof(probeMode));
 	PE_parse_boot_argn("native-usb-serial", &serialMode, sizeof(serialMode));
 	PE_parse_boot_argn("native-usb-serial-dump", &dumpMode, sizeof(dumpMode));
 	PE_parse_boot_argn("native-usb-phy", &phyMode, sizeof(phyMode));
 	PE_parse_boot_argn("native-usb-tcsr", &tcsrMode, sizeof(tcsrMode));
 	PE_parse_boot_argn("native-usb-qscratch", &qscratchMode, sizeof(qscratchMode));
+	PE_parse_boot_argn("native-usb-softreset", &softResetMode, sizeof(softResetMode));
 	fProbeLevel = probeMode;
 	fEnablePhy = phyMode != 0;
 	fEnableTcsr = tcsrMode != 0;
 	fEnableQscratch = qscratchMode != 0;
+	fSoftReset = softResetMode != 0;
 	// 1 = the transcribed 0x0b58800, 2 = core_base + 0xf8800 as the header
 	// comment describes. The first aborts; the second has not been tested.
 	fQscratchBase = (qscratchMode == 2) ?

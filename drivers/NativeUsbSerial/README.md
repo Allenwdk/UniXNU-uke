@@ -22,6 +22,7 @@ hardware-validated yet; the probe is the first hardware gate.
 | `native-usb-tcsr=1` | Touch the TCSR clock-ref word `0x1f4b118` (opt-in, see below) |
 | `native-usb-qscratch=1` | Read/write the transcribed QSCRATCH page `0x0b58800` (aborts) |
 | `native-usb-qscratch=2` | Same, but at `core_base + 0xf8800` = `0x0a6f8800` |
+| `native-usb-softreset=0` | Keep ABL's DWC3 state; skip `DCTL.CSFTRST` |
 | `native-usb-serial-cold=1` | Reserved: WCD939x/repeater cold init |
 
 `0x1f4b000` sits inside the `tcsrcc` window but the stock DT also assigns that
