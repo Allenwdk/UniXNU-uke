@@ -440,7 +440,9 @@ fastboot reboot
 | 2026-10-23 | active list 实机 | SwapEnd 返回后 `active=0`，但**进入原厂前** `active=fffffff8e22f1000`：请求确实挂在 +5496。self-kick 触发 `UKE: kick`，但 `swap accepted=0 reason=2 surface=0` —— 请求对象 +2624 的 surface 在 SwapEnd 入口还是空，原厂要到 SwapEnd 内部才解析/填充。结构体 1288 字节、前 0x20 是 4 个 32 位大数值（疑似 surface ID/port），+0x98 是 ID，+0xb0/+0x118 是 3200×2136 两组矩形 |
 | 2026-10-23 | 请求快照诊断 | device `42032c1`、CI run `39920278411`。实机：`req-before` vptr=`fffffff005f36f60`、vtable[4]=`OSObject::retain`、id=1、started=0、surf0=0；`req-after` 读已释放请求导致 data abort（`pc 0xfffffff007987afc`，翻译错误）。说明请求对象在 SwapEnd 内处理完即释放，surface 在入口仍未填充，无法事后接管 |
 | 2026-10-23 | 参考 sheng（公开仓） | `UniXNU/UniXNU-sheng` 的 `OfflineLegacySwap.mm` 给出真实用户态序列：`IOMobileFramebufferSwapBegin` → `IOMobileFramebufferSwapSetLayer(display,layer,IOSurfaceRef,src,dst,0)` → `SwapEnd` → `SwapWaitWithTimeout`。sheng board 用 `sheng-fb-gpu=1`/`sheng-vsync=144`/`offline-mobile-graphics-client=1`，其合成走 GPU hand-off；builder 多绑 `_native_legacy_vsync_notify`（`0xfffffff005796720`）与 `_native_legacy_set_refresh_properties`（`0xfffffff00579ebb8`） |
-| 2026-10-23 | QEMU 对照发现 | QEMU board **不设置** `offline-legacy-default-surface`，也不做 default-surface 收养，CPU 路径靠原厂 SwapEnd 自己处理；我们在 uke 上加的收养可能改变了 compositor 的提交路径。已移除会读已释放请求的 req-after 诊断，下一版按 QEMU 参数（收养关闭、unit-scale=1）测试；device `436c038`、CI run `39923727598` |
+| 2026-10-23 | QEMU 对照发现 | QEMU board **不设置** `offline-legacy-default-surface`，也不做 default-surface 收养，CPU 路径靠原厂 SwapEnd 自己处理；已移除会读已释放请求的 req-after 诊断；device `436c038`、CI run `39923727598` |
+| 2026-10-23 | QEMU 对照实机 | 关闭收养 + `unit-scale=1`：display client 能打开但 `surface=0 temp=0 sid=0`，**完全没有 sel 4/5 swap**，随后 liveactivitiesd 反复 `Too many corpses`。结论：uke 上 default-surface 收养是 compositor 开始 swap 的前提，QEMU 的路径不能直接照搬；收养不是“无 surface”的干扰项 |
+| 2026-10-23 | 渲染器结论（待确认） | 打开收养时 SwapEnd 有请求但 `surf0=0`，原厂在 SwapEnd 内处理并释放请求，Legacy 路径拿不到可接管的 surface；sheng 依赖 GPU hand-off（`sheng-fb-gpu=1`/`sheng-gpu-metal=1`），QEMU 的 GUI 依赖 QemuMetal/shared-window 加速器。iOS 17 的 render server 很可能需要 accelerator 才会产生真实 layer；纯 CPU 基线可能无法合成。建议回到 A732 GPU 阶段 4+ |
 
 ---
 
