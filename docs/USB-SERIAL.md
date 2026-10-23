@@ -126,6 +126,43 @@ driver implements it as three writes to `GENERAL_CFG`: set
 that at the corrected address, before `DCTL.CSFTRST`, because the core cannot
 finish its soft reset without the pipe clock.
 
+## Where the link stands
+
+`DCTL.CSFTRST` never self-clears on this board: not after picking the UTMI pipe
+clock, and not after stopping the running core (`RUN_STOP=0`,
+`DSTS.DEVCTRLHLT=1`) first. It is now off by default and the warm path keeps
+ABL's core state.
+
+A full GCC `USB30_PRIM_BCR` assert/deassert was tried as a substitute block
+reset. It re-gated the branch clocks, so the QSCRATCH page read back zero
+afterwards until they were re-enabled, and more importantly the host never saw
+a connection again. The assert is removed; only the release plus a branch-clock
+re-enable remain.
+
+With the PHY initialised (`native-usb-phy=1`) the host does log a device:
+
+```text
+usb 3-1: new full-speed USB device number 115 using xhci_hcd
+usb 3-1: device descriptor read/64, error -71
+```
+
+but the controller side reports
+
+```text
+serial: run     dctl=80f00000 dsts=00120000
+serial: run+1s  dctl=80f00000 dsts=00120000 devten=09000000f gevt=00000000
+```
+
+i.e. RUN_STOP is set and DEVTEN is written, yet `CONNECTSPD=0` and
+`GEVNTCOUNT=0`: no connection is latched and no event is generated, so
+`handleSetup()` never runs and the host times out on the first descriptor.
+The link is also **full speed** while `DCFG` asks for high speed, which is what
+a PHY without its 19.2 MHz reference looks like: `dwc3_qcom_select_utmi_clk()`
+only routes the clock, `TCSR_USB2_CLKREF_EN` (`0x1f4b118` bit 0) feeds it.
+`native-usb-tcsr=1` enables that bit write-only (the read of the same page
+hangs the tablet) and `native-usb-fs=1` advertises full speed instead of high
+speed, so one build can test both.
+
 ## Warm CDC-ACM + msgbuf (implemented, opt-in)
 
 1. Warm init: GDSC on, USB branch gates/resets, QSCRATCH UTMI pipe clock,
