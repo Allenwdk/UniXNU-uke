@@ -476,10 +476,15 @@ NativeUsbSerial::warmInit(void)
 	}
 	IOLog("NativeUsbSerial: warm: bcr\n");
 	wr32(fGcc, 0x000, rd32(fGcc, 0x000) & ~UKE_USB_GCC_RESET_ASSERT);
-	wr32(fPhyBcr, 0x000, 1);
-	IODelay(100);
-	wr32(fPhyBcr, 0x000, 0);
-	IODelay(100);
+	if (fEnablePhy) {
+		// Resetting the eUSB2 PHY wipes the register file ABL programmed, so
+		// the pulse only makes sense together with the reprogramming table
+		// below. The warm path leaves the PHY exactly as it was handed over.
+		wr32(fPhyBcr, 0x000, 1);
+		IODelay(100);
+		wr32(fPhyBcr, 0x000, 0);
+		IODelay(100);
+	}
 
 	// The TCSR clock-ref block and the PHY register file are opt-in: on the
 	// observed uke the TCSR read hangs unless its clock controller is up, and
@@ -506,11 +511,31 @@ NativeUsbSerial::warmInit(void)
 		}
 	}
 
-	IOLog("NativeUsbSerial: warm: dwc3-reset\n");
+	// The wrapper has to hand the core its pipe clock before DCTL.CSFTRST can
+	// self-clear: select the UTMI clock and un-gate it here, not after the
+	// reset. This is dwc3-qcom's dwc3_qcom_select_utmi_clk() ordering.
+	IOLog("NativeUsbSerial: warm: qscratch\n");
+	uint32_t general = rd32(fQscratch, 0x08);
+	general |= 1U;
+	general &= ~(1U << 8);
+	wr32(fQscratch, 0x08, general);
+	uint32_t hs = rd32(fQscratch, 0x10);
+	hs |= (1U << 20) | (1U << 28);
+	wr32(fQscratch, 0x10, hs);
+
+	// The uke DT carries snps,dis_u2_susphy_quirk: a suspended PHY stops the
+	// UTMI clock, so clear SUSPHY before touching the core.
+	uint32_t phycfg = rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0));
+	if ((phycfg & UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY) != 0) {
+		wr32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0), phycfg & ~UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY);
+	}
+
+	IOLog("NativeUsbSerial: warm: dwc3-reset gsnpsid=%08x gctl=%08x gsts=%08x dctl=%08x gusb2phycfg=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_GSNPSID), rd32(fWrapper, UKE_USB_DWC3_GCTL),
+	    rd32(fWrapper, UKE_USB_DWC3_GSTS), rd32(fWrapper, UKE_USB_DWC3_DCTL),
+	    rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0)));
 	uint32_t dctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
 	wr32(fWrapper, UKE_USB_DWC3_DCTL, dctl | UKE_USB_DWC3_DCTL_CSFTRST);
-	IODelay(10);
-	wr32(fWrapper, UKE_USB_DWC3_DCTL, rd32(fWrapper, UKE_USB_DWC3_DCTL) & ~UKE_USB_DWC3_DCTL_CSFTRST);
 	bool resetDone = false;
 	for (unsigned i = 0; i < 1000; i++) {
 		if ((rd32(fWrapper, UKE_USB_DWC3_DCTL) & UKE_USB_DWC3_DCTL_CSFTRST) == 0) {
@@ -520,18 +545,13 @@ NativeUsbSerial::warmInit(void)
 		IOSleep(1);
 	}
 	if (!resetDone) {
-		IOLog("NativeUsbSerial: DWC3 soft reset did not complete\n");
+		IOLog("NativeUsbSerial: DWC3 soft reset did not complete (dctl=%08x gsnpsid=%08x gsts=%08x dsts=%08x)\n",
+		    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_GSNPSID),
+		    rd32(fWrapper, UKE_USB_DWC3_GSTS), rd32(fWrapper, UKE_USB_DWC3_DSTS));
 		return false;
 	}
-
-	IOLog("NativeUsbSerial: warm: qscratch\n");
-	uint32_t general = rd32(fQscratch, 0x08);
-	general |= 1U;
-	general &= ~(1U << 8);
-	wr32(fQscratch, 0x08, general);
-	uint32_t hs = rd32(fQscratch, 0x10);
-	hs |= (1U << 20) | (1U << 28);
-	wr32(fQscratch, 0x10, hs);
+	IOLog("NativeUsbSerial: warm: dwc3-reset done dctl=%08x dsts=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_DCTL), rd32(fWrapper, UKE_USB_DWC3_DSTS));
 
 	IOLog("NativeUsbSerial: warm: done\n");
 	return true;
