@@ -42,6 +42,10 @@
 
 // GCTL.
 #define UKE_USB_DWC3_GCTL_DSBLCLKGTNG   (1U << 0)
+// GCTL.PrtCapDir is bits [13:12]; 2 selects device mode. Without it the core
+// keeps whatever ABL left (host or OTG) and never pulls D+ up as a device.
+#define UKE_USB_DWC3_GCTL_PRTCAP_MASK   (3U << 12)
+#define UKE_USB_DWC3_GCTL_PRTCAP_DEVICE (2U << 12)
 
 // GUSB2PHYCFG.
 #define UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY   (1U << 6)

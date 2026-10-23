@@ -744,8 +744,14 @@ NativeUsbSerial::eventInit(void)
 void
 NativeUsbSerial::deviceInit(void)
 {
-	wr32(fWrapper, UKE_USB_DWC3_GCTL,
-	    rd32(fWrapper, UKE_USB_DWC3_GCTL) | UKE_USB_DWC3_GCTL_DSBLCLKGTNG);
+	// Select device mode explicitly: dwc3_core_init() writes GCTL.PrtCapDir
+	// from dr_mode, and a core left in host or OTG mode never asserts the
+	// device pull-up and generates no device events.
+	uint32_t gctl = rd32(fWrapper, UKE_USB_DWC3_GCTL);
+	gctl &= ~UKE_USB_DWC3_GCTL_PRTCAP_MASK;
+	gctl |= UKE_USB_DWC3_GCTL_PRTCAP_DEVICE | UKE_USB_DWC3_GCTL_DSBLCLKGTNG;
+	wr32(fWrapper, UKE_USB_DWC3_GCTL, gctl);
+	IOLog("NativeUsbSerial: serial: gctl=%08x\n", rd32(fWrapper, UKE_USB_DWC3_GCTL));
 	wr32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0),
 	    rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0)) &
 	    ~(UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY | UKE_USB_DWC3_GUSB2PHYCFG_ENBLSLPM));
