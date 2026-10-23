@@ -127,16 +127,21 @@ evidence; the kernel is `be25aa09…` (run `39725958294`) unless noted.
 | --- | --- | --- |
 | 1 | `gcc=ok cc=ok sm=skip gp=skip io=0 pw00` | GCC and GPUCC read back; the SMMU and GPU windows are not readable yet because the CX rail is off. |
 | 3 | `gcc=ok cc=ok sm=ok gp=skip io=0 pw11` | CX GDSC and the SMMU vote clocks are on; the SMMU answers `SM 00290406 4c017e18 40000016 v0 R00000000` (ID0 `0x00290406` is the sheng MMU-500; ID1 `0x4c017e18` gives 24 context banks, 1 S2CR, 32 pages) with no fault. |
-| 4 | first attempt faulted inside `bzero` | With the reserved-pool `adopt` path, the device took an unaligned data abort at `_bzero+0x44` (`dc zva`): the default `IODeviceMemory` mapping of the pool is not cacheable. Fixed in NativeAdreno `59bcc5a` (write-combine map plus store zeroing); retest pending. |
+| 4 | **passes (2026-10-23, `m4b`)** | GMU SMMU context reaches `Ready`: `GMUCTX step 1..7 running`, then `B s7 st0 k0/0 i5511 p5w13r1e1 r4w2v1` and `T00010000c900f000 S00000167 C00000001 R00000005`. The board rows are `gcc=ok cc=ok sm=ok gp=skip io=0 pw11`, `ahb=80000003>80000003 mem=80000003 dvm=82000001`, `cx=0022f001>f822f000 gx=0022f001 sv=00000001`, `SM 00290406 4c017e18 40000016 v0 R00000000`. Kernel `b0fdff6f…`, payload `e04250fc…`, `vendor_boot_uke_gpu_m4b.img` `46409c67…`, `sheng-gpu-power=4`, `sheng-smp=0`. |
+| 4 | first attempt faulted inside `bzero` | With the reserved-pool `adopt` path, the device took an unaligned data abort at `_bzero+0x44` (`dc zva`): the default `IODeviceMemory` mapping of the pool is not cacheable. Fixed in NativeAdreno `59bcc5a` (write-combine map plus store zeroing). |
 | 4 (before adopt) | stopped in GMU context step 1 | The context allocator could not get its memory. See below. |
 
-Mode 3 is the real milestone so far: the CX rail powers, the SMMU is readable
-and no fault is reported. Mode 4 is the first step that needs real memory.
+Mode 3 was the first power milestone; mode 4 now completes the GMU's own SMMU
+context on the reserved pool (step 7 `Ready`, status 0), which is the stage-4
+gate. The next device steps are mode 5 (read-only GMU clocks and the AOP
+command DB) and mode 6 (GMU clock bring-up); mode 7 needs the gen71100 firmware
+in the CI cache.
 
-### Mode 4: the contiguous allocation
+### Mode 4: from the contiguous allocation to the reserved pool
 
-Mode 4 builds the GMU's own SMMU context. It stops at step 1 (`Allocate`) with
-`st=2bd` (`kIOReturnNoMemory`) and the XNU VM prints:
+The first mode-4 attempt (before the `adopt` path) asked the XNU VM for 16 MiB
+contiguous and stopped at step 1 (`Allocate`) with `st=2bd`
+(`kIOReturnNoMemory`) and the XNU VM printing:
 
 ```
 vm_page_find_contiguous(num=4092,low=16777215): found 0 pages ... scanned 47503 pages ...
