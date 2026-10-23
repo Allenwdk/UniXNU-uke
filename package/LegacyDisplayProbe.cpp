@@ -316,7 +316,7 @@ void native_legacy_client_enter(task_t task,uint32_t type) {
 // Every framebuffer user client seen (object, pid), with what it does: the original client's vtable is copied and two entries (externalMethod, slot 168,
 // and registerNotificationPort(port,type,refCon), slot 175) are pointed at wrappers that count and forward to the original function. The original code
 // is not touched; only this object's vptr names the copy. XNU's ARM64 vptr points at slot 0 (the original code dispatches with ldr x8,[vptr,#slot*8]).
-enum {kSeenClients=8,kSelectors=96,kRegEvents=8,kVtableSlots=256};
+enum {kSeenClients=128,kSelectors=96,kRegEvents=8,kVtableSlots=256};
 struct ClientStat {
     uintptr_t object;int pid;uint32_t calls,fails;uint32_t selector_calls[kSelectors],selector_fails[kSelectors],selector_status[kSelectors];
     unsigned regs;struct {uint32_t type;uint64_t port;uint32_t ref,status;} reg[kRegEvents];
@@ -375,7 +375,11 @@ static IOReturn wrappedRegister(IOUserClient *client,mach_port_t port,UInt32 typ
     return status;
 }
 static void interpose(IOUserClient *client,int pid) {
-    if(seenClientCount>=kSeenClients)return;
+    if(seenClientCount>=kSeenClients) {
+        static int logged;
+        if(!logged){logged=1;printf("UKEMEM: client table full (%u); power selectors are no longer suppressed\n",(unsigned)seenClientCount);}
+        return;
+    }
     ClientStat &stat=seenClients[seenClientCount];
     memset(&stat,0,sizeof stat);
     uintptr_t *vtable=*reinterpret_cast<uintptr_t **>(client);
