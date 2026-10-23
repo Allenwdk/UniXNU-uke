@@ -40,6 +40,10 @@ jobs:
     steps:
       - name: Check out the device repository
         uses: actions/checkout@v4
+        with:
+          # Same relative path build-kernel.yml restores: the cache version is
+          # derived from the paths, so a root-level save never matches.
+          path: UniXNU-uke
 
       - name: Decode the firmware secret
         env:
@@ -56,17 +60,18 @@ jobs:
           fi
           test -n "$payload" || {
             echo 'UKE_GPU_FIRMWARE_B64_* is not set'; exit 1; }
-          mkdir -p .cache/firmware/uke-gpu
+          mkdir -p UniXNU-uke/.cache/firmware/uke-gpu
           printf '%s' "$payload" | base64 -d > "$RUNNER_TEMP/uke-gpu-firmware.tar.gz"
-          tar -xzf "$RUNNER_TEMP/uke-gpu-firmware.tar.gz" -C .cache/firmware/uke-gpu
+          tar -xzf "$RUNNER_TEMP/uke-gpu-firmware.tar.gz" -C UniXNU-uke/.cache/firmware/uke-gpu
           rm -f "$RUNNER_TEMP/uke-gpu-firmware.tar.gz"
-          ls -l .cache/firmware/uke-gpu
+          ls -l UniXNU-uke/.cache/firmware/uke-gpu
 
       - name: Verify the recorded pins
+        working-directory: UniXNU-uke
         run: python3 scripts/check-uke-gpu.py --firmware-dir .cache/firmware/uke-gpu
 
       - name: Save the firmware cache
         uses: actions/cache/save@v4
         with:
-          path: .cache/firmware/uke-gpu
+          path: UniXNU-uke/.cache/firmware/uke-gpu
           key: uke-gpu-firmware-${{ inputs.key }}
