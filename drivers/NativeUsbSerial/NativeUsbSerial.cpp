@@ -741,13 +741,31 @@ NativeUsbSerial::eventInit(void)
 	cacheCivac(fEvents, 4096);
 	wr32(fWrapper, UKE_USB_DWC3_GEVNTADRLO, static_cast<uint32_t>(fEventsPhys));
 	wr32(fWrapper, UKE_USB_DWC3_GEVNTADRHI, static_cast<uint32_t>(fEventsPhys >> 32));
-	wr32(fWrapper, UKE_USB_DWC3_GEVNTSIZ, (1U << 31) | 4096);
+	// DWC3_GEVNTSIZ_INTMASK is bit 24 and the size field is the low 16 bits;
+	// bit 31 is reserved and reads back cleared.
+	wr32(fWrapper, UKE_USB_DWC3_GEVNTSIZ, (1U << 24) | 4096);
 	wr32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT, 0);
 }
 
 void
 NativeUsbSerial::deviceInit(void)
 {
+	// DCFG.DevSpd may only change while the core is stopped. ABL hands the
+	// controller over running and configured for SuperSpeed, so stop it and
+	// wait for DSTS.DEVCTRLHLT first: a speed write on a running core is
+	// ignored and leaves RUN_STOP no longer sticking.
+	uint32_t stop = rd32(fWrapper, UKE_USB_DWC3_DCTL);
+	if ((stop & UKE_USB_DWC3_DCTL_RUN_STOP) != 0) {
+		wr32(fWrapper, UKE_USB_DWC3_DCTL, stop & ~UKE_USB_DWC3_DCTL_RUN_STOP);
+		for (unsigned i = 0; i < 100; i++) {
+			if ((rd32(fWrapper, UKE_USB_DWC3_DSTS) & UKE_USB_DWC3_DSTS_DEVCTRLHLT) != 0) {
+				break;
+			}
+			IOSleep(1);
+		}
+	}
+	IOLog("NativeUsbSerial: serial: dcfg before=%08x dsts=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_DCFG), rd32(fWrapper, UKE_USB_DWC3_DSTS));
 	// Select device mode explicitly: dwc3_core_init() writes GCTL.PrtCapDir
 	// from dr_mode, and a core left in host or OTG mode never asserts the
 	// device pull-up and generates no device events.
