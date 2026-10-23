@@ -54,7 +54,7 @@ env:
 
 jobs:
   kernel:
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 240
     env:
       # The Linux-portability patch adds a hostcompat shim for non-Apple hosts;
@@ -207,7 +207,7 @@ jobs:
           retention-days: 14
 
   full:
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 240
     env:
       HOST_COMPAT_CFLAGS: ''
