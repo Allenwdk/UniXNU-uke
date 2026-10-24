@@ -24,6 +24,72 @@ port is the only external debug transport. The target is a standard CDC-ACM
 port (Linux `/dev/ttyACM0`, macOS `/dev/cu.usbmodem*`) carrying the kernel
 `msgbuf`, so the host can capture live logs with `tio`/`picocom`.
 
+## State by layer (2026-10-25, after usbbr16)
+
+| Layer | State | Evidence |
+| --- | --- | --- |
+| GCC power/clock tree | ✅ on | GDSCR `f822f800` (PWR_ON), all five branch CBCRs `00000001`, master RCG `0x00100105` = GPLL0/6 = 200 MHz left by ABL, TCSR clkref gate reads 1 through SCM |
+| DWC3 register file | ✅ alive | DCFG/DEVTEN/GCTL writes hold and read back |
+| `DCTL.CSFTRST` device reset | ❌ never releases | stuck `dctl=40000000` across every variant (alone, with RUN cleared in the same write, QSCRATCH retiming pre-set, manual clear retries) |
+| `GCTL.CORESOFTRESET` (bit 11) | ❌ never releases | usbbr16: 100 ms pulse, bit does not read back set, domain ends up MORE poisoned (RUN_STOP stops latching, `run dctl=00f00000`) |
+| Endpoint commands | ❌ stall | `DEPSTARTCFG` (cmd 9) completes; the first real command after it hangs with CmdAct (`DEP0 cmd=2 readback 00000402`), SETEPCONFIG-first and SETTRANSFRESOURCE-first both tried |
+| Event ring | ❌ silent | `gevt=00000000` forever; host never sees our device (only the ABL-era full-speed connect + `-71` ~1 s after each reboot) |
+| eUSB2 PHY register file (MMIO) | ✅ alive | the 38.4 MHz table writes and reads back (`common0=4b4b4b4b`, `ctrl2=c8c8c8c8`) |
+| PHY internal APB bridge | ❌ no echo | status stays 0, RDDATA stays 0 in every state produced (pure warm, after rails votes, after BCR + table) — the PHY digital core (PLL → UTMI clock) is down or unclocked |
+| PMIC rails L2B/L4B + ARC xo.lvl | ❓ unknown | TCS votes complete `idle=1`, but runtime reads are unusable (below), so "applied" vs "silently dropped" cannot be told apart yet |
+
+**Synthesis:** the handoff state is complete on the clock tree and the DWC3
+register file, but one clock into the core — almost certainly the PHY's
+UTMI clock — never arrives, so both reset variants wait for "all clocks
+synchronized" forever and the endpoint engine never runs. The only
+unverified link in the chain is whether the eUSB2 rails / xo.lvl votes
+actually apply.
+
+## Eliminated theories (do not revisit)
+
+| Theory | Killed by |
+| --- | --- |
+| 19.2 vs 38.4 MHz reference frequency | usbbr3 fixed the table (`9ae353a`); nothing unlocked |
+| TCSR clkref wrong address / gate off | real gate `0x1fb1118` reads 1 through SCM (usbbr9); writing it (CPU or SCM) changes nothing |
+| Master/core clock parked at 19.2 MHz | usbbr13: RCG already `0x00100105` (200 MHz) from ABL; our write is a no-op |
+| `GUSB2PHYCFG.SUSPHY` set | vendor defines SUSPHY = BIT(6); warm `usb2=0x2222000e` never had bit 6 set |
+| WCD939x repeater is a USB prerequisite | stock DT: no USB node references any repeater; `wcd939x_i2c@e` is referenced only by the sound card |
+| Reset write-encoding variants | alone / with RUN_STOP in the same write / QSCRATCH retiming pre-set / clear-and-retry / GCTL CORESOFTRESET — all fail identically |
+| APB echo false-negative from 4-bit WRDATA fields | usbbr12 switched to 0x5/0xa with the nibble split; still silent |
+
+## Operational gotchas
+
+- **Never enable `native-usb-softreset` or `native-usb-gctlreset`.** A
+  stuck reset poisons the device domain: GEVNTADR/DEPCMD/DALEPENA (and
+  after GCTL reset even RUN_STOP) writes are dropped, `ep0 done` becomes a
+  false instant success and every downstream signal is meaningless.
+- **Diagnostic payloads must pass `offline-legacy-noconsole=0`** — the
+  board's default `=1` mutes the panel after the first copied frame and
+  the `serial:` stage never reaches the screen.
+- **`fastboot set_active a` after every flash**: XNU never marks the boot
+  successful, so ABL's slot retries exhaust after a few flash/reboot
+  cycles and the device drops to fastboot ~5 s after `fastboot reboot`.
+- **`unixnu.toml` must stay under ~1024 B** or the loader silently drops
+  the whole args line.
+- **Panel reading**: photos are the only device-side channel (no UART);
+  consecutive photos capture different scrolling segments, so anchor photo
+  requests to a specific line (the `rails: end` tail line is the stable
+  anchor), and treat OCR'd hex on dense lines as unreliable — the driver
+  prints a consolidated tail line for exactly this reason.
+
+## Image lineage (2026-10-25 night, all `--base vendor_boot_uke_full.img`)
+
+| Image | sha256 | Args beyond the board set | What it proved |
+| --- | --- | --- | --- |
+| usbbr10 `1aa8a1be…` | kernel `ebf81196…` | `rails=1 phy=1 softreset=1` | rail votes complete `idle=1`; APB echo still dead; noconsole hides `serial:` |
+| usbbr11 `ce68ea35…` | | + `xo.lvl=3`, EUD_DETECT, `noconsole=0` | still no-echo; stuck CSFTRST poisons the domain (event adr=0) |
+| usbbr12 `4826bc96…` | kernel `969bb4f6…` | `softreset=0`, 4-bit echo, `rcg=1` | domain coherent (event adr latches); `DEP0 cmd=2` still stuck; RCG already 200 MHz |
+| usbbr13 `9d03406d…` | | + RPMH read-backs, tail line | reads all 0 — including rails; RCG before==after |
+| usbbr14 `c42f6552…` | | + cx.lvl/mx.lvl known-on reads | known-on reads ALSO 0 ⇒ runtime reads unusable, zeros prove nothing |
+| usbbr15 `3fffe7b3…` | | + polls counter | `p=0/0/0` ambiguous by design (first poll precedes first sleep; µs round trip) |
+| usbbr16 `fb11b4aa…` | | + `gctlreset=1` | GCTL CORESOFTRESET never completes either; poisons harder (RUN_STOP drops) |
+
+
 ## Hardware facts (as verified 2026-10-25)
 
 | Item | Value |
