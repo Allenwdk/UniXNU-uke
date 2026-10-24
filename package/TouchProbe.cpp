@@ -184,6 +184,7 @@ void busDelay(void *, unsigned ms) {IOSleep(ms);}
 
 void fail(unsigned step, int code) {
     if (!native_touch_error) {native_touch_step = step; native_touch_error = code ? code : -1;}
+    IOLog("UKE TCH: fail step %u code %d\n", step, code);
 }
 
 void rows(const Session &s);
@@ -510,10 +511,12 @@ static void touchThread(void *, wait_result_t) {
         rows(*s);
         if (stage < 2) break;
         if (!enable(*s)) break;
+        IOLog("UKE TCH: clocks+pins ok wr%08x fw%08x\n", s->vals[14], s->vals[15]);
         native_touch_stage_done = 2;
         rows(*s);
         if (stage < 3) break;
         if (!openBus(*s, hz) || !configureClock(*s, hz)) break;
+        IOLog("UKE TCH: geni+rcg ok rcg%08x %lluHz d%u\n", s->rcgCfg, (unsigned long long)s->rcgHz, s->div);
         s->tx = static_cast<uint8_t *>(IOMalloc(NVT_TRANSFER_LEN + 8));
         s->rx = static_cast<uint8_t *>(IOMalloc(NVT_READ_MAX + 2));
         s->frame = static_cast<uint8_t *>(IOMalloc(NVT_THP_FRAME_LEN));
@@ -567,6 +570,8 @@ static void touchThread(void *, wait_result_t) {
             if (forced < 4) break;
         }
         if (r) {fail(7, r); rows(*s); break;}
+        IOLog("UKE TCH: identify ok id%02x%02x%02x%02x%02x%02x mode%u\n",
+              s->chip.id[0], s->chip.id[1], s->chip.id[2], s->chip.id[3], s->chip.id[4], s->chip.id[5], s->modeUsed);
         native_touch_stage_done = 3;
         rows(*s);
         if (stage < 4) break;
@@ -581,6 +586,7 @@ static void touchThread(void *, wait_result_t) {
         s->chip.reset_retries = 60;   // vendor: 10 polls of 10 ms; longer here to tell "slow" from "never"
         r = nvt_download_firmware(&s->chip, &fw);
         if (r) {fail(9, r); rows(*s); break;}
+        IOLog("UKE TCH: firmware downloaded crc ok\n");
         mark(*s, 10);
         struct nvt_fw_info info;
         r = nvt_start_scanning(&s->chip, &info);
@@ -589,6 +595,7 @@ static void touchThread(void *, wait_result_t) {
         s->vals[20] = info.x_num;
         s->vals[21] = info.y_num;
         if (r && r != NVT_ERR_FW) {fail(10, r); rows(*s); break;}
+        IOLog("UKE TCH: scanning v%02x pid%04x %ux%u\n", s->vals[18], s->vals[19], s->vals[20], s->vals[21]);
         native_touch_stage_done = 4;
         rows(*s);
         s->core = static_cast<struct nvt_touch_core *>(IOMalloc(sizeof *s->core));
@@ -640,6 +647,7 @@ static void touchThread(void *, wait_result_t) {
                 for (unsigned q = 0; q < 24; ++q) s->head[q] = s->frame[q];
                 if (!nvt_frame_header_valid(s->frame)) {++s->bad; continue;}   // torn: the chip rewrote it while it was read
                 native_touch_valid = native_touch_valid + 1;
+                if (native_touch_valid == 1) IOLog("UKE TCH: first valid frame type%u\n", type);
                 int16_t *matrix = s->matrix;
                 nvt_frame_matrix(s->frame, matrix);
                 int mn = matrix[0], mx = matrix[0];
