@@ -1,11 +1,11 @@
 # USB serial debug channel (uke)
 
-Status: **the driver reaches the DWC3 endpoint commands in every reset
-variant and stops at the first real endpoint command; the eUSB2 PHY's
-digital domain (PLL + internal APB bridge) is unclocked in every state we
-can produce, and the reference-clock gate itself is provably already on.
-The remaining suspect is the PHY's rpmh power rails.** No `/dev/ttyACM0`
-has appeared yet.
+Status: **rails theory closed by cross-board evidence (K70/Ace 5 enumerate
+pure-warm; uke's two PHY supplies are `qcom,proxy-consumer-enable` rails ABL
+releases at handoff) and the fix is built: usbbr10 votes `ldob2`/`ldob4`
+back on through apps_rsc before the warm takeover.** Waiting for the flash
+verdict — `warm: apb echo (pure warm)` turning ECHO is the pass line. No
+`/dev/ttyACM0` has appeared yet.
 
 ## Why
 
@@ -38,6 +38,8 @@ port (Linux `/dev/ttyACM0`, macOS `/dev/cu.usbmodem*`) carrying the kernel
 | DWC3 IRQ | SPI 133 |
 | Repeater (line side) | WCD939x on GENI I2C `0xa80000` addr `0x0e`, reset GPIO 119 |
 | PHY rails | vdd = pmxr2230 L2B 0.88 V, vdda12 = L4B 1.2 V (rpmh resources) |
+| AOP command DB | `0x81c60000`/`0x20000` (`aop_cmd_db_region`), magic `db 30 03 0c`, VRM block slv=4; ARC slv=3, BCM slv=5 |
+| apps_rsc | `0x17a00000`, drv-2 at `0x17a20000` (`qcom,tcs-offset 0xd00`): ACTIVE x3 (TCS 0-2), SLEEP x2, WAKE x2, FAST x1; per-TCS/per-command offsets from `RSC_DRV_ID` (major >= 3: stride 672/cmd 24, TCS regs WAIT 0x20 CONTROL 0x24 STATUS 0x28 ENABLE 0x2C, CMD MSGID 0x34/ADDR 0x38/DATA 0x3C/STATUS 0x40/RESP 0x44); AMC = CONTROL BIT16/BIT24 |
 | SCM SIO | `smc #0` FAST\|SMC64\|SIP\|FNID(`SVC_IO 0x05<<8` \| `IO_READ 0x01`/`IO_WRITE 0x02`), arginfo `0x1`/`0x2` — **works from XNU** (`scmSmc()` in the driver) |
 
 Sources: stock uke DT + dtbo, the vendor kernel (`dwc3-msm-core.c`,
@@ -204,18 +206,46 @@ volume down).
 
 ## Next steps (ranked)
 
-1. **rpmh/AOP voting for the PHY rails** (L2B 0.88 V, L4B 1.2 V): the AOP
-   command DB sits in reserved memory `aop-cmd-db-region@81c60000`; the
-   senemos `0002-uke-rpmh-regulators.patch` sketches the Linux-side
-   picture. The GPU track's GX vote goes through the GMU HFI and is not
-   portable. This is the main path — it also un-blocks any future
-   peripheral whose regulator the handoff drops.
+1. **usbbr10 — flash and read the verdict line.** `native-usb-rails=1`
+   implements the rails vote: the driver walks the AOP command DB at
+   `0x81c60000` (magic `db 30 03 0c`, VRM block slv=4) for the
+   `ldob2`/`ldob4` entries, then sends ACTIVE_ONLY VRM votes (voltage in
+   mV, mode 4/HPM, enable **last**, completion requested) through an idle
+   ACTIVE TCS of apps_rsc drv-2 (`0x17a20000`, TCS block at `+0xd00`,
+   per-TCS/per-command offsets picked from `RSC_DRV_ID`), transcribed
+   from the vendor `cmd-db.c`/`rpmh-rsc.c`/`rpmh-regulator.c`. Boot
+   args: `native-usb-serial=1 native-usb-serial-dump=1 native-usb-rails=1
+   native-usb-phy=1 native-usb-softreset=1`, image
+   `vendor_boot_uke_usbbr10.img` (`1aa8a1be…`, kernel `ebf81196…`).
+   Read, in order: `rails: cmd-db version…`, the VRM entry list (the
+   real cmd-db resource names), `ldob2/ldob4 addr=…`, `drv2 id=…
+   num_tcs… ncpt…`, `rails: ldoXX vote idle=1 st=… resp=…`, then
+   `warm: apb echo (pure warm)` — **an ECHO there closes the case**: the
+   proxy rails were the missing piece. `native-usb-phy=1` then runs BCR
+   + the 38.4 MHz table on a powered PHY, and `native-usb-softreset=1`
+   retries CSFTRST, which should finally self-clear like the K70
+   reference. If `idle=0` or the vote stalls, the st/resp words
+   localize it (AOP refused vs TCS wedged).
+   Cross-board evidence that closed the rails theory: vermeer-lab's K70
+   (SM8550) and the Ace 5 (SM8650) CDC drivers enumerate on real
+   hardware with a pure warm takeover that never touches
+   PHY/clocks/rails/SMMU — `vermeer_usb_debug.c` only writes DWC device
+   registers plus the QSCRATCH VBUS-valid override (`0x10 |=
+   (1<<20)|(1<<28)`, `0x30 |= (1<<24)`) — so on those boards the handoff
+   leaves USB fully alive. uke's handoff keeps the GDSC and GCC branches
+   on but kills exactly the two PHY supplies its DT marks
+   `qcom,proxy-consumer-enable` (pmxr2230_l2 0.88 V `vdd`, pmxr2230_l4
+   1.2 V `vdda12`, rpmh nodes `qcom,resource-name = "ldob2"/"ldob4"`);
+   ABL's proxy votes are released at handoff by design.
 2. **A cheap rails-state probe**: SCM SIO reads into the SPMI arbiter can
    query the PMIC rails without new kernel infrastructure (decoding the
    arbiter protocol is the cost).
 3. **WCD939x repeater init** (GENI I2C `0xa80000` addr `0x0e`, GPIO 119):
    line-side only — required for enumeration once the PHY is clocked, but
    it does not gate the clock.
+4. **VBUS override before RUN** is already in the warm path
+   (`serial: qscratch hs/ss`); the K70 reference sets it right before RUN
+   too, so no change needed there.
 
 Historical note: the first revision's `0x1f4b118` "clkref" was an
 arithmetic slip (`0x1f40000 + 0xb1118` was mis-summed); that address is
