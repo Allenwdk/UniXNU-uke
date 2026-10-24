@@ -475,6 +475,8 @@ extern volatile uint32_t native_touch_edge_stats[4];      // [0] edge hook insta
 }
 // BootProgress's on-screen row, weak: the GPU defconfig builds without that archive and then this no-op wins.
 extern "C" __attribute__((weak)) void native_progress_touch_line(const char *) {}
+// Upstream NativeHidInput's button sink, weak no-op here: uke has no PMIC button source yet.
+extern "C" __attribute__((weak)) void native_buttons_set_sink(void (*)(void *, uint32_t), void *) {}
 extern "C" {
 extern volatile uint32_t native_hid_stage, native_hid_resource_found;   // HidInputProbe: where the HID gate stopped
 extern volatile int native_hid_load_status, native_hid_matching_load_status;
