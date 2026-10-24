@@ -27,6 +27,31 @@ static struct bp_exits exit_records,exit_snapshot;
 static unsigned exit_lock,exit_dropped;
 
 static struct bp_display display;
+// Touch on-screen heartbeat: the geometry of the last bound framebuffer, captured at bind time so the
+// bottom text row can keep drawing after the compositor takes the screen over (the progress page
+// itself yields then). Drawn straight to the frame, no cache, safe to call from any thread.
+static struct {uintptr_t frame;unsigned width,height,stride,scale;} touch_overlay;
+extern void native_progress_touch_line(const char *text) {
+  if (!touch_overlay.frame || 14*touch_overlay.scale >= touch_overlay.height) return;
+  const unsigned scale=touch_overlay.scale,cols=touch_overlay.width/(6*scale);
+  const unsigned y0=touch_overlay.height-14*scale;
+  for (unsigned x=0;x<cols;++x) {
+    unsigned c=text?(unsigned char)text[x]:0;
+    if (c && (c<32||c>126)) c='?';
+    if (!c) text=0;   // past the terminator: blank the rest of the row
+    const uint64_t glyph=c?font[c-32]:0;
+    for (unsigned y=0;y<14;++y) {
+      unsigned bits=y<6?(unsigned)(glyph>>(32+y*5)):y<12?(unsigned)(glyph>>((y-6)*5)):0;
+      for (unsigned dx=0;dx<6;++dx)
+        for (unsigned sy=0;sy<scale;++sy)
+          for (unsigned sx=0;sx<scale;++sx) {
+            uintptr_t at=touch_overlay.frame+(uintptr_t)(y0+y*scale+sy)*touch_overlay.stride+
+                         (x*6*scale+dx*scale+sx)*4;
+            *(volatile uint32_t *)at=dx<5&&((bits>>dx)&1)?0xff00ff66u:0xff000000u;
+          }
+    }
+  }
+}
 static struct bp_core state, render_snapshot;
 static unsigned render_busy;
 // boot-diag-resume=<seconds>: after the OS stops scanning out frames for that long, take the panel back for
@@ -520,6 +545,8 @@ void boot_progress_bind(uintptr_t base,unsigned w,unsigned h,unsigned rb,unsigne
       h >= 560 && h <= 4096 && rb >= w*4 && rb <= 65536 &&
       base <= UINTPTR_MAX-(uint64_t)h*rb) {
     display.frame=base;display.width=w;display.height=h;display.stride=rb;display.scale=w>=2160 && h>=1400?3:1;
+    touch_overlay.frame=base;touch_overlay.width=w;touch_overlay.height=h;touch_overlay.stride=rb;
+    touch_overlay.scale=display.scale;
     memset(display.previous,0xff,sizeof(display.previous));
     // Terminate the sentinels before strcmp.
     for(unsigned i=0;i<48;++i) display.previous[i][BP_COLS-1]=0;
