@@ -1,238 +1,224 @@
 # USB serial debug channel (uke)
 
-Status: **the warm CDC-ACM path now gets through GDSC, clocks and the GCC
-resets on hardware and stops at the DWC3 core soft reset; the ordering fix
-(`7a29ee1`) is built but not yet booted.** The read-only probe and the warm
-CDC-ACM/msgbuf path are built into the full kernel; no `/dev/ttyACM0` has
-appeared yet.
+Status: **the driver reaches the DWC3 endpoint commands in every reset
+variant and stops at the first real endpoint command; the eUSB2 PHY's
+digital domain (PLL + internal APB bridge) is unclocked in every state we
+can produce, and the reference-clock gate itself is provably already on.
+The remaining suspect is the PHY's rpmh power rails.** No `/dev/ttyACM0`
+has appeared yet.
 
 ## Why
 
-uke has no usable UART. The kernel console currently lands in the framebuffer,
-and a black screen or reset loses the last lines. The USB-C port is the only
-external debug transport. The target is a standard CDC-ACM port (Linux
-`/dev/ttyACM0`, macOS `/dev/cu.usbmodem*`) carrying the kernel `msgbuf`, so
-the host can capture live logs with `tio`/`picocom`.
+uke has no usable UART. The kernel console currently lands in the
+framebuffer, and a black screen or reset loses the last lines. The USB-C
+port is the only external debug transport. The target is a standard CDC-ACM
+port (Linux `/dev/ttyACM0`, macOS `/dev/cu.usbmodem*`) carrying the kernel
+`msgbuf`, so the host can capture live logs with `tio`/`picocom`.
 
-The first milestone is a read-only probe: it tells us whether ABL/UEFI leaves
-the DWC3, eUSB2 PHY, GCC/GDSC and apps-SMMU in a state we can take over. No
-register is written and no DMA is allocated until that is known.
-
-## Hardware facts
+## Hardware facts (as verified 2026-10-25)
 
 | Item | Value |
 | --- | --- |
-| DWC3 wrapper | `0xa600000`, size `0x100000` |
+| SoC | SM7675 = Qualcomm "Cliffs" (stock trees: `Xiaomi_Kernel_OpenSource-uke`, dtb dumps in `android_device_xiaomi_uke-kernel/dtbs`) |
+| DWC3 core | `0xa600000`, DWC_usb31 (`GSNPSID 0x33313130`); USB2-only board, no pipe3 |
 | QSCRATCH | `0xa6f8800` (wrapper + `0xf8800`), size `0x400` |
-| eUSB2 PHY | `0x88e3000`, size `0x154`; EUD at `0x88e2000`/`0xc278000` |
-| USB GDSC | `0x139004` / `0x139008` (GCC window `0x100000`) |
+| eUSB2 PHY wrapper | `0x88e3000`; the register file is **8-bit wide** — 32-bit reads come back byte-replicated |
+| EUD | enable `0x88e2000`, detect `0xc278000`; reads `0` (inactive) |
+| GCC base | `0x100000`; USB30 page mapped at `0x139000` |
+| USB GDSC | `0x139004` (reads `f822f800` in the warm state = on) |
 | USB30 reset | `0x139000` bit 0 (`GCC_USB30_PRIM_BCR`) |
 | eUSB2 PHY reset | `0x112000` bit 0 (`GCC_QUSB2PHY_PRIM_BCR`) |
-| USB clocks | master `0x139018`, sleep `0x139024`, UTMI `0x139028`, cfg-noc `0x139088`, aggre `0x13908c` (all bit 0) |
-| TCSR USB2 clock ref | `0x1f4b118` bit 0 |
-| apps-SMMU | `0x15000000`, DWC3 stream `0x40` |
+| USB branch gates | master `0x139018`, sleep `0x139024`, UTMI `0x139028`, cfg-noc `0x139088`, aggre `0x13908c` (enable = bit 0) |
+| USB RCGs | master src `0x3902c`, mock-utmi src `0x39044` + postdiv `0x3905c` (both `HW_CLK_CTRL_MODE`, parked at CXO = 19.2 MHz — the parked state is the correct rate) |
+| TCSR USB2 clkref | **`0x1fb1118`** (tcsrcc `0x1f40000` + `0xb1118`, `qcom,pineapple-tcsrcc`) — **reads `1` through SCM: the gate is on** |
+| TCSR reachability | every CPU-side access to the TCSR region **stalls the bus** (`0x1fb1118` write, `0x1fcb118`/`0x1f4b118` reads); only the ADSP `ipc_hwmutex` window (`0x1f4a000+0x2000`, per DT `hwmutex_mappings`) accepts writes |
+| eUSB2 reference clock | **38.4 MHz** (DT `xo_board` = 76.8 MHz, `RPMH_CXO_PAD_CLK` = ARC/2), **not** the 19.2 MHz mainline boards use |
+| PHY PLL constants | FSEL `4` (bits 6:4 of COMMON0), `PLL_FB_DIV_7_0 = 0xc8`, `DIV_11_8 = 0x0` (vendor `phy-msm-snps-eusb2.c` 38.4 MHz pair) |
+| SMMU | apps-SMMU `0x15000000`, DWC3 stream `0x40` (bypassed in software) |
 | DWC3 IRQ | SPI 133 |
-| eUSB2 ref clock | 19.2 MHz |
-| WCD939x (cold path) | I2C `0xa80000` addr `0x0e`, reset GPIO 119 |
-| PMIC repeater (cold path) | SPMI addr `0xfd00` |
+| Repeater (line side) | WCD939x on GENI I2C `0xa80000` addr `0x0e`, reset GPIO 119 |
+| PHY rails | vdd = pmxr2230 L2B 0.88 V, vdda12 = L4B 1.2 V (rpmh resources) |
+| SCM SIO | `smc #0` FAST\|SMC64\|SIP\|FNID(`SVC_IO 0x05<<8` \| `IO_READ 0x01`/`IO_WRITE 0x02`), arginfo `0x1`/`0x2` — **works from XNU** (`scmSmc()` in the driver) |
 
-Sources: stock uke DT, the uke-mainline `sm7675-uke-usb2.dtso` overlay
-(`GPL-2.0-only OR BSD-2-Clause`), and Linux `gcc-cliffs.c`, `tcsrcc-uke.c`,
-`gdsc-regulator-uke.c`, `phy-msm-snps-eusb2-uke.c`, `dwc3-qcom.c` (GPL-2.0).
-Only register facts are transcribed.
+Sources: stock uke DT + dtbo, the vendor kernel (`dwc3-msm-core.c`,
+`phy-msm-snps-eusb2.c`, `gcc-cliffs.c`, `tcsrcc-pineapple.c`,
+`clk-rcg2.c`), and the decompiled dtb dumps. Only register facts are
+transcribed.
 
-## Probe boot
+## Evidence chain (how the current picture was established)
 
-The board file currently adds `native-usb-probe=1`. The driver matches the
-ADT `usb` node (`compatible = "qcom,dwc-usb3-msm"`), maps the windows and
-prints one-line summaries through `IOLog`:
+1. **The endpoint commands never run.** `DEPSTARTCFG` (cmd 9) completes
+   silently; the first real command after it hangs with `CmdAct` stuck
+   (`DEP0 cmd=1` in the warm state, `cmd=2` in the vendor order), on the
+   ABL warm state and on a freshly BCR-reset core alike.
+2. **A stuck `CSFTRST` poisons the domain.** After it sticks (it never
+   self-clears here — the databook releases it only once "all clocks are
+   synchronized"), DEPCMD/DALEPENA/GEVNTADR writes stop latching and every
+   later command "completes" as a dropped write. usbbr2 proved this on a
+   fresh block; usbbr3+ removed the attempt.
+3. **The GCC block reset itself works.** After the vendor
+   `dwc3_msm_link_clk_reset` order (branch gates down, BCR pulse, gates up
+   iface-first) the GDSCR reads back with `PWR_ON`, `GSNPSID` survives and
+   the replayed registers hold.
+4. **The PHY wrapper register file is alive and holds our values** — the
+   byte-replicated reads decode to exactly the programmed state
+   (`COMMON0=0x4b`, `CFG_CTRL_2=0xc8`). But that only proves the config
+   bus is mapped.
+5. **The PHY's internal APB bridge is dead.** The write-read echo test
+   (vendor CV9 pattern `0x5=0xc0`, `0x10=0xa5` through `0x138/0x13c/0x130`)
+   returns silence, **both on the untouched ABL warm state and after the
+   BCR pulse + init table** — so our reset is not the culprit: the PHY's
+   clock domain (PLL + digital) never comes up.
+6. **The reference-clock gate is not the problem.** Through the SCM SIO
+   service TrustZone reads `0x1fb1118` as `1` (enabled) and the write
+   completes — yet the echo stays dead. The gate was on the whole time.
+7. **The TCSR region is unreachable from the CPU.** Every access outside
+   the ADSP hwmutex window stalls (no abort, no panic — a NoC route with
+   no answering target). The vendor DT's `tcsrcc@1f40000` window overlaps
+   `tcsr_mutex_block@1f40000` (0x20000) and an undecoded hole before the
+   real `tcsr: syscon@1fc0000` (0x30000); the stock kernel may never write
+   it either.
+8. **Remaining suspect: the PHY's rpmh rails.** XBL/ABL hold proxy votes
+   for L2B/L4B through their boot; the stock kernel's rpmh driver takes
+   over and the regulator framework re-votes immediately. Our XNU never
+   votes, so if the handoff drops the proxies the rails fall and every
+   analog block (PLL, APB bridge logic) dies while the NOC-backed wrapper
+   file stays readable. This also explains why the historical full-speed
+   connects were the **repeater's** line side, not the PHY's.
 
-- GCC GDSC and branch gates, BCRs and the TCSR clock-ref gate.
-- DWC3 `GHWPARAMS`, `GCTL/GSTS`, `DCFG/DCTL/DEVTEN/DSTS`, event ring.
-- QSCRATCH `GENERAL_CFG`/`HS_PHY_CTRL`.
-- eUSB2 PHY register snapshot and EUD state.
-- apps-SMMU IDR/SCR/GFSR, valid SMR/S2CR (USB stream `0x40` is marked), and
-  the top bypass bank state.
+Note: the senemos mainline port (`Project-UkeUEFI/uke-linux/senemos-uke-kernel`)
+documents a "clock handoff" design (`CLK_HOLD_STATE`) assuming ABL leaves
+the clocks on — but its own build report says `hardware_tested: false`, so
+it is a design assumption, not evidence.
 
-Because there is no serial console yet, read the lines on the framebuffer
-diagnostic page or take a photo after boot. A later revision can also write
-the probe result into the existing pram log ring.
+## Experiment ladder
 
-### Interpreting the probe
+All images flashed to both slots, base `vendor_boot_uke_full.img`,
+69,005,312 B.
 
-- `GCC gdscr` bit 1 set = hardware-controlled GDSC; the warm driver refuses
-  to touch it. `cfg` bit 16 set = powered up.
-- `DWC3 dcfg` speed bits 2:0 should be 0 (HS); `dsts` bit 22 clear = controller
-  not halted; `dctl` bit 31 = run/stop.
-- `GUSB2PHYCFG` bit 6/8 should be clear for the LPM/suspend quirks.
-- `SMMU ... (usb)` line means stream `0x40` already has a valid SMR. If it
-  points at a translated context, the bypass planner will refuse and print the
-  existing SMR/S2CR instead of overwriting it.
-- A zero/`0xffffffff` PHY snapshot usually means the PHY rail or reference
-  clock is off; that is the signal to add the cold-init path.
+| Tag | Kernel | Change | Result |
+| --- | --- | --- | --- |
+| usbdal1..4b | — | warm handoff, reset ladder, DALEPENA drop, DEP_BASE/GUSB2PHYCFG base fixes | `DEP0 cmd=1 timeout`; softreset variants all stick |
+| usbdal5..9 | `5a36792` | 19.2 MHz table era, DEPSTARTCFG-first, event machinery off | SETEPCONFIG hangs in the warm state |
+| usbbr1 | `05a3bb0` | `DSBLCLKGTNG` unconditional + `native-usb-bcr=1` block reset (vendor order, qscratch restore, PHY replay) | block reset works, SETEPCONFIG still hangs on the fresh core |
+| usbbr2 | `e74f760` | vendor command order, GRXTHRCFG bit26, MPS 512, post-BCR CSFTRST | CSFTRST **STUCK** on the fresh core, then the domain freezes (false `ep0 done`) |
+| usbbr3 | `9ae353a` | 38.4 MHz PLL table, CSFTRST removed | poison gone (GEVNTADR holds), hang moves to cmd=2 |
+| usbbr4 | (usbbr3+) | PHY state dump + APB probe v1 (bit0 poll) | table verified; `apb[00] TIMEOUT` |
+| usbbr5 | `ecd834c` | clkref write at the corrected 0x1fb1118 | **store stalls the machine** — reverted to opt-in |
+| usbbr6 | (usbbr5+) | APB probe v2 (bit3 poll, read RDDATA, 9 regs) | all reads `0000` — ambiguous (zero space) |
+| usbbr7 | (usbbr6+) | APB write-read **echo** + TCSR read probes + hwparams | echo `no-echo`; `tcsr read 0x1fcb118` **stalls** |
+| usbbr8 | (usbbr7+) | echo on the **pure warm** state, then after pulse+table | `no-echo` both — our reset is not the culprit |
+| usbbr9 | (usbbr8+) | SCM SIO read/write of the clkref + re-echo | SCM works; clkref already `1`; echo still `no-echo` |
 
-## First hardware result (2026-10-23)
+## What is already in the driver (pays off once the PHY is clocked)
 
-`native-usb-serial=1` on `uke-usb_defconfig` printed
+- `GCTL.DSBLCLKGTNG=1` (the stock DT's `snps,disable-clk-gating`).
+- `native-usb-bcr=1` block reset in the vendor `dwc3_msm_link_clk_reset`
+  order, with QSCRATCH UTMI routing restore, `GUSB2PHYCFG`/`GUSB3PIPECTL`
+  replay (suspend bits cleared) and a GSNPSID revive check.
+- Vendor command order: `DEPSTARTCFG(0)` → `SETTRANSFRESOURCE` for every
+  hardware endpoint (phys 0,1,3,5,6) → `SETEPCONFIG` pairs at MPS 512;
+  `GRXTHRCFG.PKTCNTSEL` (bit 26) cleared; all endpoint commands run with
+  `DEVTEN=0` (the vendor enables events last).
+- The 38.4 MHz eUSB2 init table (`kUkeUsbPhyInit38_4Mhz`), applied with
+  per-write readback, including the DT `param-override-seq <0x00 0x58>`.
+- The APB echo test and `scmSmc()` SCM SIO wrapper (`native-usb-scm=1`).
 
-```text
-NativeUsbSerial: start probe=0 serial=1
-NativeUsbSerial: warm: gdsc
-NativeUsbSerial: warm: clocks
-NativeUsbSerial: warm: bcr
-NativeUsbSerial: warm: dwc3-reset
-NativeUsbSerial: DWC3 soft reset did not complete
-NativeUsbSerial: warm init failed
-NativeUsbSerial: serial start failed
-```
+## Boot-arg reference
 
-so GDSC, the branch gates and the GCC resets are all fine, and the TCSR word
-was never touched. Two ordering bugs are the likely cause and are fixed in
-`7a29ee1`:
+Baked in `board.toml`: the UFS/sheng set + `native-usb-probe=0
+native-usb-serial=1 native-usb-serial-dump=1`. Per-image experiment args
+(passed with `--kernel-arg`): `native-usb-phy=1`, `native-usb-bcr=1`,
+`native-usb-scm=1`, `sheng-build-tag=<name>`. Opt-in and off by default:
+`native-usb-tcsr=1` (the clkref write — stalls, keep off),
+`native-usb-softreset=1` (the CSFTRST ladder), `native-usb-fs=1`,
+`native-usb-probe=1|2` (read-only dumps). Keep the final `unixnu.toml`
+under 1024 bytes — a longer args line is silently dropped by the loader.
 
-- the QSCRATCH UTMI pipe-clock select ran *after* `DCTL.CSFTRST`; the wrapper
-  has to hand the core its pipe clock first (`dwc3-qcom` order);
-- the eUSB2 PHY reset pulse ran without the reprogramming table, which wipes
-  what ABL left in the PHY register file. The pulse now only happens with
-  `native-usb-phy=1`.
+The USB payload also needs the UFS bring-up arguments the CPU baseline
+uses, or the kernel panics with `Failed to mount root device` before the
+driver is any use: `native-ufs-root=1 native-ufs-allow-unverified=1
+sheng-data-persist=2 sheng-log=1 sheng-smp=0`. `sheng-log=1` keeps the
+pram ramoops ring recording, which is the only way to read the log back
+when the serial path itself is what fails.
 
-`GUSB2PHYCFG.SUSPHY` is also cleared now, per the DT's
-`snps,dis_u2_susphy_quirk`.
-
-## Second hardware result: the reset is real, the QSCRATCH address was not
-
-With the register dump in place the same boot printed
-
-```text
-warm: dwc3-reset gsnpsid=33313130 gctl=00102000 gsts=7e000000 dctl=00f00000 gusb2phycfg=00102500
-DWC3 soft reset did not complete (dctl=40f00000 gsnpsid=33313130 gsts=7e000000 dsts=00400004)
-```
-
-`dctl` reads back `00f00000` and, after the write, `40f00000`: bit 30 stuck,
-which means the register file is live and writable and the core simply never
-finishes the reset. `dsts=0x00400004` reports `CONNECTSPD=4` (SuperSpeed) and
-`DEVCTRLHLT`, the state ABL left the controller in.
-
-Before that, both boots died at `warmInit+0x21c` with `esr=0x96000010`. DFSC
-`0x10` is a *synchronous external abort*, not a translation fault, so the
-mapping was valid and the physical page did not answer: the transcribed
-QSCRATCH address `0x0b58800` is simply not a register block. `dwc3-qcom.c`
-maps QSCRATCH at `core_base + 0xf8800` (`SDM845_QSCRATCH_BASE_OFFSET`,
-`0x400` bytes), so the page is `0x0a6f8800`, inside the wrapper window the DT
-describes. The uke overlay enables `qcom,select-utmi-as-pipe-clk`, and the
-driver implements it as three writes to `GENERAL_CFG`: set
-`PIPE_UTMI_CLK_DIS` (bit 8), then set `PIPE_UTMI_CLK_SEL` (bit 0) with
-`PIPE3_PHYSTATUS_SW` (bit 3), then clear bit 8. The warm path now does exactly
-that at the corrected address, before `DCTL.CSFTRST`, because the core cannot
-finish its soft reset without the pipe clock.
-
-## Where the link stands
-
-`DCTL.CSFTRST` never self-clears on this board: not after picking the UTMI pipe
-clock, and not after stopping the running core (`RUN_STOP=0`,
-`DSTS.DEVCTRLHLT=1`) first. It is now off by default and the warm path keeps
-ABL's core state.
-
-A full GCC `USB30_PRIM_BCR` assert/deassert was tried as a substitute block
-reset. It re-gated the branch clocks, so the QSCRATCH page read back zero
-afterwards until they were re-enabled, and more importantly the host never saw
-a connection again. The assert is removed; only the release plus a branch-clock
-re-enable remain.
-
-With the PHY initialised (`native-usb-phy=1`) the host does log a device:
-
-```text
-usb 3-1: new full-speed USB device number 115 using xhci_hcd
-usb 3-1: device descriptor read/64, error -71
-```
-
-but the controller side reports
-
-```text
-serial: run     dctl=80f00000 dsts=00120000
-serial: run+1s  dctl=80f00000 dsts=00120000 devten=09000000f gevt=00000000
-```
-
-i.e. RUN_STOP is set and DEVTEN is written, yet `CONNECTSPD=0` and
-`GEVNTCOUNT=0`: no connection is latched and no event is generated, so
-`handleSetup()` never runs and the host times out on the first descriptor.
-The link is also **full speed** while `DCFG` asks for high speed, which is what
-a PHY without its 19.2 MHz reference looks like: `dwc3_qcom_select_utmi_clk()`
-only routes the clock, `TCSR_USB2_CLKREF_EN` (`0x1f4b118` bit 0) feeds it.
-`native-usb-tcsr=1` enables that bit write-only (the read of the same page
-hangs the tablet) and `native-usb-fs=1` advertises full speed instead of high
-speed, so one build can test both.
-
-## Warm CDC-ACM + msgbuf (implemented, opt-in)
-
-1. Warm init: GDSC on, USB branch gates/resets, QSCRATCH UTMI pipe clock,
-   DWC3 soft reset, apps-SMMU
-   stream `0x40` bypass, physically-contiguous DMA.
-2. DWC3 device mode: event ring, EP0 control, EP1 notification, EP2 bulk IN,
-   EP3 bulk OUT; CDC-ACM descriptors from `UsbDescriptors.h`.
-3. A kernel thread snapshots `msgbuf` under `bsd_log_lock_safe()` and pushes
-   new bytes to EP2; `native-usb-serial-dump=1` sends the full ring.
-4. Host: `dmesg` shows `cdc_acm`, then
-
-   ```sh
-   tio -b 115200 /dev/ttyACM0
-   ```
-
-   The baud rate is nominal for CDC-ACM; the device ignores it.
-
-The default board command line still selects `native-usb-probe=1`; add
-`native-usb-serial=1` (for example with `--kernel-arg native-usb-serial=1`) to
-start the warm path. Both arguments together dump the probe first and then
-enumerate. `native-usb-probe=2` additionally reads the DWC3 wrapper and
-QSCRATCH, which is the most a read-only boot can tell us.
-
-`native-usb-phy=1` programs the eUSB2 PHY register file and `native-usb-tcsr=1`
-touches the TCSR clock-ref word at `0x1f4b118`. Both are opt-in and off by
-default: the first probe boot died on the log line that read TCSR, and the
-stock DT assigns `0x1f4b000` to the ADSP as its `ipc_hwmutex` page even though
-the address also falls inside the `tcsrcc` window.
-
-The USB payload also needs the UFS bring-up arguments the CPU baseline uses,
-or the kernel panics with `Failed to mount root device` before the driver is
-any use: `native-ufs-root=1 native-ufs-allow-unverified=1
-sheng-data-persist=2 sheng-log=1 sheng-smp=0`. `sheng-log=1` keeps the pram
-ramoops ring recording, which is the only way to read the log back when the
-serial path itself is what fails.
-
-The first version deliberately does **not** become the `kprintf` console and
-does **not** implement KDP. Those need early-boot or polled paths and are a
-separate step. USB3/QMP, host mode, Type-C/UCSI and suspend/wake are out of
-scope.
-
-## If warm handoff fails
-
-The mainline profile keeps the WCD939x USB2 route and the PMIC eUSB2 repeater
-configured through Linux drivers. If the probe shows those are not live, add
-the cold path:
-
-- GENI I2C at `0xa80000` (addr `0x0e`) and TLMM GPIO 119 for WCD939x;
-- SPMI writes to the PMIC repeater at `0xfd00` (device-mode
-  `qcom,param-override-seq`, then poll `RPTR_OK`).
-
-The uke-mainline patch series documents the exact register values; only facts
-are transcribed into XNU.
-
-## Build and tests
+## Build and flash (local Linux, minutes)
 
 ```sh
-python3 scripts/build-arm-driver.py NativeUsbSerial
-drivers/NativeUsbSerial/tests/run.sh
+cd /home/allenwdk/UniXNU/UniXNU-linux
+source scripts/linux-build-env.sh
+export UNIXNU_HOST_COMPAT_INCLUDE=$HOME/.local/xnu-linux/include/compat
+./unixnu defconfig uke-usb_defconfig -D ../UniXNU-uke-usbserial
+./unixnu build kernel  -D ../UniXNU-uke-usbserial
+# trust-bundle links live at the repo root (a defconfig run wipes
+# out/uke/tree/refer):
+ln -sfn ~/下载/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw refer
+ln -sfn /home/allenwdk/UniXNU/UniXNU-uke/.cache/firmware/target-volumes/static-trustcache.bin \
+        .cache/firmware/target-volumes/static-trustcache.bin
+python3 scripts/build-original-system-trust.py   # prints bundle 7416ca4f…
+./unixnu build payload -D ../UniXNU-uke-usbserial \
+    --kernel out/uke/kernel/kernel.macho \
+    --trust-cache out/uke/tree/build/original-static-system-trust/original-static-system.bundle \
+    --data-ramdisk ../uke-port/data/data-seed-200/owner-data-200.dbr \
+    --unique-chip-id 0x7252a8b07f8cb8f9 \
+    --kernel-arg native-usb-phy=1 --kernel-arg native-usb-bcr=1 \
+    --kernel-arg native-usb-scm=1 --kernel-arg sheng-build-tag=usbbrN
+python3 ../UniXNU-uke-usbserial/scripts/patch-vendor-boot.py \
+    --base ../uke-port/data/vendor_boot_uke_full.img \
+    --payload out/uke/payload/payload.img \
+    --output ../uke-port/data/vendor_boot_uke_usbbrN.img
+# verify before flashing (toml must stay < 1024 bytes):
+mtype -i out/uke/payload/payload.img ::/EFI/UniXNU/unixnu.toml | wc -c
+fastboot flash vendor_boot_a ../uke-port/data/vendor_boot_uke_usbbrN.img
+fastboot flash vendor_boot_b ../uke-port/data/vendor_boot_uke_usbbrN.img
 ```
 
-The archive is linked with `-Wl,-force_load` and the personality from
-`patches/xnu/zzzzzzzzz-native-usb-serial.patch`. The kernel is built in GitHub
-Actions; the local Linux host only runs the pure C++ tests.
+Images so far: usbdal1 `ecc5bed5…` … usbdal9, usbbr1 `f13d8b84…`,
+usbbr2 `c4a49381…`, usbbr3 `d2761e3c…`, usbbr4 `c6b8525c…`,
+usbbr5 `75fa3b47…`, usbbr6 `e69cd445…`, usbbr7 `dc6c8c09…`,
+usbbr8 `db4c4ecd…`, **usbbr9 `64328c88…` (current)**.
 
-CI run `39663424201` (`build-uke-kernel`, branch `uke-usbserial`) is green:
-`archive-10-build-arm-driver.log` reports
-`NativeUsbSerial: -Werror build and actual ARM64/iOS 17 object audit passed`,
-and the 52,146,176-byte kernel contains the `NativeUsbSerial` methods, the
-boot-arg strings and the `'IOClass' = NativeUsbSerial` personality. The
-downloaded artifact is at
-`/home/allenwdk/uke-port/ci/uke-kernel-full-usbserial/kernel.macho`
-(sha256 `2d31d5c03d22e76abc86d451a7f39f50e79a966b31091db26863744b0795c6f1`).
+## Reading a boot
+
+The panel carries the whole story; photograph after the boot settles.
+Key lines and what they mean:
+
+- `warm: apb echo (pure warm)` — the untouched-ABL bridge test;
+  `ECHO` = the PHY is clocked, `no-echo` = it is not.
+- `warm: scm read ret=… val=…` — TrustZone's view of the clkref word.
+- `warm: block reset done gdscr=… bcr=…` / `warm: replay … id=33313130` —
+  the block reset succeeded when GDSCR has `PWR_ON` and the id reads back.
+- `serial: ep0 done gevt=…` — the endpoint command engine ran (only
+  believable after a `GEVNTADR` readback that is non-zero).
+- `DEP%u cmd=%x timeout readback=…` — the engine is stuck again; the cmd
+  number says which command.
+- The host side (`journalctl -k` on the attached PC) is the line-side
+  truth: `new full-speed USB device` + `error -71` is the repeater pulling
+  D+ without a working PHY; `new high-speed USB device` + `cdc_acm` is the
+  goal.
+
+A `serial: end …` tail line carries the full register state to any photo
+after later boot output scrolls the earlier lines away. No panic
+auto-restart: after a hang, enter fastboot manually (long power press +
+volume down).
+
+## Next steps (ranked)
+
+1. **rpmh/AOP voting for the PHY rails** (L2B 0.88 V, L4B 1.2 V): the AOP
+   command DB sits in reserved memory `aop-cmd-db-region@81c60000`; the
+   senemos `0002-uke-rpmh-regulators.patch` sketches the Linux-side
+   picture. The GPU track's GX vote goes through the GMU HFI and is not
+   portable. This is the main path — it also un-blocks any future
+   peripheral whose regulator the handoff drops.
+2. **A cheap rails-state probe**: SCM SIO reads into the SPMI arbiter can
+   query the PMIC rails without new kernel infrastructure (decoding the
+   arbiter protocol is the cost).
+3. **WCD939x repeater init** (GENI I2C `0xa80000` addr `0x0e`, GPIO 119):
+   line-side only — required for enumeration once the PHY is clocked, but
+   it does not gate the clock.
+
+Historical note: the first revision's `0x1f4b118` "clkref" was an
+arithmetic slip (`0x1f40000 + 0xb1118` was mis-summed); that address is
+the ADSP `ipc_hwmutex` window — writes are harmless, reads hang the
+tablet. The eUSB2 table shipped with the 19.2 MHz PLL constants until
+usbbr3; the reference clock is 38.4 MHz on this board.
