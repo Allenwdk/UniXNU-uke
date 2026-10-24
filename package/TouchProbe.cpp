@@ -468,6 +468,11 @@ bool configureClock(Session &s, unsigned hz) {
 // (uke-live.dts pinctrl@f000000 interrupts = <0 0xd0 4>), INTID 240.
 extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
 extern "C" {volatile uint32_t native_touch_irq_stats[4];}   // [0] 0 not armed, 1 armed, 2 attach failed, [1] interrupts, [2] spurious, [3] attach status
+extern "C" {
+extern volatile uint32_t native_hid_input_events[8];      // [2] device start, [3] driver check, [6] touch reports
+extern volatile uint32_t native_hid_input_results[8];     // [3] 1 = IOHIDEventDriver attached, [6] last handleReport result
+extern volatile uint32_t native_touch_edge_stats[4];      // [0] edge hook installed, [1] contacts begun, [2] begun at an edge
+}
 static volatile uint32_t gTouchIrqEvents;
 static volatile uint32_t *gTouchPin;
 static void touchIrq(void *) {
@@ -603,7 +608,7 @@ static void touchThread(void *, wait_result_t) {
         nvt_touch_reset(s->core);
         mark(*s, 11);
         uint32_t lastCounter = 0xffffffffu;
-        unsigned tick = 0, rowTick = 0;
+        unsigned tick = 0, rowTick = 0, hbTick = 0;
         s->mn = 0; s->mx = 0;
         // Event driven (upstream sheng int-189): the controller pulses its interrupt line (GPIO 54, rising edge,
         // devicetree novatek,irq-gpio flags 0x2001) for every frame, the TLMM raises its summary interrupt, the
@@ -667,6 +672,12 @@ static void touchThread(void *, wait_result_t) {
                 if (irqArmed && gTouchIrqEvents == seen) break;   // no further pulse: the frame just read was the only one
             }
             if (!irqArmed) IOSleep(pollOnly ? 2 : 10);   // fallback / diagnosis only
+            if ((++hbTick & 127) == 0)   // heartbeat ~1.3 s in poll mode: driver, report and edge counters with the finger set
+                IOLog("UKE TCH: hb f%u ok%u c%u hid%u %d,%d drv%u rpt%u r%d edge%u %u/%u irq%u\n",
+                    native_touch_frames, native_touch_valid, native_touch_contacts, native_touch_hid_reports,
+                    native_touch_last_x, native_touch_last_y, native_hid_input_results[3], native_hid_input_events[6],
+                    (int)native_hid_input_results[6], native_touch_edge_stats[0], native_touch_edge_stats[1],
+                    native_touch_edge_stats[2], native_touch_irq_stats[1]);
         }
     } while (0);
     rows(*s);
