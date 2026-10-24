@@ -271,8 +271,15 @@ class NativeUsbSerial : public IOService {
 	void scmClkrefProbe(void);
 	bool railsVote(void);
 	bool tcsVoteActive(unsigned tcs, const uint32_t *addrs, const uint32_t *datas,
-	    unsigned count, const char *name);
+	    unsigned count, const char *name, bool read = false,
+	    uint32_t *respOut = nullptr);
+	uint32_t fRailXoLevel = 0;
+	uint32_t fRailL2Enable = 0;
+	uint32_t fRailL4Enable = 0;
+	uint32_t fRcgBefore = 0;
+	uint32_t fRcgAfter = 0;
 	void rcgTune(void);
+	void railsTail(void);
 	bool dmaAllocate(void);
 	bool smmuAttach(void);
 	void fifoConfig(void);
@@ -526,6 +533,7 @@ NativeUsbSerial::rcgTune(void)
 
 	const uint32_t div = 5; // 2h - 1 with h = 3: 1200 MHz / 6 = 200 MHz
 	const uint32_t src = 1; // gcc_parent_map_0: GPLL0_OUT_MAIN
+	fRcgBefore = masterCfg;
 	uint32_t want = (masterCfg & ~(0x1fU | (0x7U << 8))) | div | (src << 8);
 	wr32(fGcc, 0x30, want);
 	// ROOT_EN keeps the root running through the switch (the vendor
@@ -539,8 +547,9 @@ NativeUsbSerial::rcgTune(void)
 		}
 		IODelay(1000);
 	}
+	fRcgAfter = rd32(fGcc, 0x30);
 	IOLog("NativeUsbSerial: rcg: master cfg %08x -> %08x cmd=%08x updated=%u\n",
-	    masterCfg, rd32(fGcc, 0x30), rd32(fGcc, 0x2c), updated ? 1u : 0u);
+	    masterCfg, fRcgAfter, rd32(fGcc, 0x2c), updated ? 1u : 0u);
 }
 
 
@@ -1126,10 +1135,27 @@ NativeUsbSerial::railsVote(void)
 	}
 
 	// msm_eusb2_phy_power(true) finishes with mb() and EUD_DETECT set at the
-	// eud_detect_reg (0xc278000) — "to bring EUD out of reset" once the rails
-	// are on; power-down clears it again.
+	// eud_detect_reg (0xc278000 bit 0) — "to bring EUD out of reset" once the
+	// rails are on; power-down clears it again.
 	wr32(fEudDetect, 0, rd32(fEudDetect, 0) | 1U);
 	IOLog("NativeUsbSerial: rails: eud detect -> %08x\n", rd32(fEudDetect, 0));
+
+	// Read the aggregated state back through RPMH READ commands: the SET
+	// responses are always zero, so only these reads prove AOP executed the
+	// votes. xo.lvl returns the level (3 = on); the VRM enable registers
+	// return bit 0 set when the rail is enabled.
+	uint32_t dummy = 0;
+	const uint32_t l2EnableAddr = railAddr[0] + 4;
+	tcsVoteActive(static_cast<unsigned>(tcs), &l2EnableAddr, &dummy, 1,
+	    "ldob2 read", true, &fRailL2Enable);
+	const uint32_t l4EnableAddr = railAddr[1] + 4;
+	tcsVoteActive(static_cast<unsigned>(tcs), &l4EnableAddr, &dummy, 1,
+	    "ldob4 read", true, &fRailL4Enable);
+	const uint32_t xoAddr = refClkAddr[0];
+	tcsVoteActive(static_cast<unsigned>(tcs), &xoAddr, &dummy, 1,
+	    "xo.lvl read", true, &fRailXoLevel);
+	IOLog("NativeUsbSerial: rails: readback xo=%08x l2en=%08x l4en=%08x\n",
+	    fRailXoLevel, fRailL2Enable, fRailL4Enable);
 	IOLog("NativeUsbSerial: rails: vote sent (ldob2=880mV ldob4=1200mV enable hpm, xo.lvl=3)\n");
 	return true;
 }
@@ -1141,7 +1167,7 @@ NativeUsbSerial::railsVote(void)
 // interrupt on its side).
 bool
 NativeUsbSerial::tcsVoteActive(unsigned tcs, const uint32_t *addrs, const uint32_t *datas,
-    unsigned count, const char *name)
+    unsigned count, const char *name, bool read, uint32_t *respOut)
 {
 	if (count == 0 || count > 16) {
 		return false;
@@ -1150,8 +1176,13 @@ NativeUsbSerial::tcsVoteActive(unsigned tcs, const uint32_t *addrs, const uint32
 		return kUkeRscDrv2TcsOffset + fRscRegs.tcsStride * tcsId + reg;
 	};
 	for (unsigned j = 0; j < count; j++) {
-		const uint32_t msgid =
-		    kUkeCmdMsgidLen | kUkeCmdMsgidWrite | kUkeCmdMsgidRespReq;
+		// A READ (no WRITE bit) makes the accelerator return the current
+		// aggregated value in CMD_RESP_DATA — the only trustworthy answer
+		// to "did the vote actually land?".
+		uint32_t msgid = kUkeCmdMsgidLen | kUkeCmdMsgidRespReq;
+		if (!read) {
+			msgid |= kUkeCmdMsgidWrite;
+		}
 		wr32(fRsc, tcsRegOff(fRscRegs.cmdMsgid, tcs) + fRscRegs.cmdStride * j, msgid);
 		wr32(fRsc, tcsRegOff(fRscRegs.cmdAddr, tcs) + fRscRegs.cmdStride * j, addrs[j]);
 		wr32(fRsc, tcsRegOff(fRscRegs.cmdData, tcs) + fRscRegs.cmdStride * j, datas[j]);
@@ -1187,6 +1218,9 @@ NativeUsbSerial::tcsVoteActive(unsigned tcs, const uint32_t *addrs, const uint32
 	}
 	IOLog("NativeUsbSerial: rails: %s vote idle=%u st=%08x/%08x/%08x resp=%08x/%08x/%08x\n",
 	    name, idle ? 1u : 0u, status[0], status[1], status[2], resp[0], resp[1], resp[2]);
+	if (respOut != nullptr) {
+		*respOut = resp[0];
+	}
 
 	// Mirror tcs_tx_done(): give the TCS back and drop the IRQ line.
 	wr32(fRsc, tcsRegOff(fRscRegs.cmdEnable, tcs), 0);
@@ -2126,7 +2160,20 @@ NativeUsbSerial::serialStart(void)
 	    rd32(fWrapper, UKE_USB_DWC3_GEVNTSIZ), rd32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT),
 	    rd32(fWrapper, UKE_USB_DWC3_DALEPENA));
 	IOLog("NativeUsbSerial: warm USB2 device started\n");
+	railsTail();
 	return true;
+}
+
+// The one summary line that stays at the tail of the screen after everything
+// else scrolled away: the RPMH read-backs (the SET responses are always zero,
+// so only these prove AOP executed the votes) plus the RCG switch result.
+// xo=%08x should read 3 (the on level), l2en/l4en bit 0 set when enabled,
+// rcg before/after shows the master clock moving off the CXO park.
+void
+NativeUsbSerial::railsTail(void)
+{
+	IOLog("NativeUsbSerial: rails: end xo=%08x l2en=%08x l4en=%08x rcg %08x->%08x\n",
+	    fRailXoLevel, fRailL2Enable, fRailL4Enable, fRcgBefore, fRcgAfter);
 }
 
 void
@@ -2245,6 +2292,7 @@ NativeUsbSerial::start(IOService *provider)
 		fDump = dumpMode != 0;
 		if (!serialStart()) {
 			IOLog("NativeUsbSerial: serial start failed\n");
+			railsTail();
 			serialStop();
 			if (!fSerialStarted) {
 				releaseMaps();
