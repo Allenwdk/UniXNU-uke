@@ -473,7 +473,15 @@ extern volatile uint32_t native_hid_input_events[8];      // [2] device start, [
 extern volatile uint32_t native_hid_input_results[8];     // [3] 1 = IOHIDEventDriver attached, [6] last handleReport result
 extern volatile uint32_t native_touch_edge_stats[4];      // [0] edge hook installed, [1] contacts begun, [2] begun at an edge
 }
-extern "C" void native_progress_touch_line(const char *text);   // BootProgress: one always-visible row at the panel bottom
+// BootProgress's on-screen row, weak: the GPU defconfig builds without that archive and then this no-op wins.
+extern "C" __attribute__((weak)) void native_progress_touch_line(const char *) {}
+extern "C" {
+extern volatile uint32_t native_hid_stage, native_hid_resource_found;   // HidInputProbe: where the HID gate stopped
+extern volatile int native_hid_load_status, native_hid_matching_load_status;
+extern volatile int native_hid_input_meta_status;
+extern volatile uint32_t native_hid_class_sizes[5];                     // [4] must equal 208 for the device to be created
+extern volatile uint64_t native_hid_input_object;
+}
 static volatile uint32_t gTouchIrqEvents;
 static volatile uint32_t *gTouchPin;
 static void touchIrq(void *) {
@@ -674,7 +682,7 @@ static void touchThread(void *, wait_result_t) {
             }
             if (!irqArmed) IOSleep(pollOnly ? 2 : 10);   // fallback / diagnosis only
             if ((++hbTick & 127) == 0) {   // heartbeat ~1.3 s in poll mode: driver, report and edge counters with the finger set
-                char hb[120];
+                char hb[144];
                 snprintf(hb, sizeof hb, "f%u ok%u c%u hid%u %d,%d drv%u rpt%u r%d edge%u %u/%u irq%u",
                     native_touch_frames, native_touch_valid, native_touch_contacts, native_touch_hid_reports,
                     native_touch_last_x, native_touch_last_y, native_hid_input_results[3], native_hid_input_events[6],
@@ -682,6 +690,15 @@ static void touchThread(void *, wait_result_t) {
                     native_touch_edge_stats[2], native_touch_irq_stats[1]);
                 IOLog("UKE TCH: hb %s\n", hb);
                 native_progress_touch_line(hb);
+                if (hbTick == 127)   // once: the HID gate state (HidInputProbe)
+                    IOLog("UKE TCH: hid stage%u load%d match%d classes %u %u %u %u %u res%u meta%d obj%llx e%u,%u,%u,%u,%u,%u,%u,%u\n",
+                        native_hid_stage, native_hid_load_status, native_hid_matching_load_status,
+                        native_hid_class_sizes[0], native_hid_class_sizes[1], native_hid_class_sizes[2],
+                        native_hid_class_sizes[3], native_hid_class_sizes[4], native_hid_resource_found,
+                        native_hid_input_meta_status, (unsigned long long)native_hid_input_object,
+                        native_hid_input_events[0], native_hid_input_events[1], native_hid_input_events[2],
+                        native_hid_input_events[3], native_hid_input_events[4], native_hid_input_events[5],
+                        native_hid_input_events[6], native_hid_input_events[7]);
             }
         }
     } while (0);
