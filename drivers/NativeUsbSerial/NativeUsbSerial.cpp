@@ -769,12 +769,10 @@ NativeUsbSerial::deviceInit(void)
 	IOLog("NativeUsbSerial: serial: dcfg=%08x speed=%s gctl=%08x\n",
 	    rd32(fWrapper, UKE_USB_DWC3_DCFG), fForceFs ? "full" : "high",
 	    rd32(fWrapper, UKE_USB_DWC3_GCTL));
-	// The reference enables disconnect, USB reset, connect done and two link
-	// bits; GCTL, GUSB2PHYCFG and GUSB3PIPECTL are left exactly as ABL set
-	// them.
-	wr32(fWrapper, UKE_USB_DWC3_DEVTEN,
-	    UKE_USB_DWC3_DEVTEN_DISCONN | UKE_USB_DWC3_DEVTEN_USBRST |
-	    UKE_USB_DWC3_DEVTEN_CONNECTDONE | (1U << 9) | (1U << 11));
+	// DEVTEN stays 0 here (the halt cleared it): the reference configures
+	// endpoints with the event machinery off and only enables the events
+	// right before RUN. GCTL, GUSB2PHYCFG and GUSB3PIPECTL are left exactly
+	// as ABL set them.
 }
 
 bool
@@ -815,10 +813,7 @@ NativeUsbSerial::configEp(Endpoint &ep, uint8_t type, uint16_t mps, uint32_t fif
 	}
 	uint32_t p1 = UKE_USB_DWC3_DEPCFG_EP_NUMBER(ep.phys) |
 	    UKE_USB_DWC3_DEPCFG_XFER_COMPLETE_EN |
-	    UKE_USB_DWC3_DEPCFG_XFER_IN_PROGRESS_EN;
-	if (ep0) {
-		p1 |= UKE_USB_DWC3_DEPCFG_XFER_NOT_READY_EN;
-	}
+	    UKE_USB_DWC3_DEPCFG_XFER_NOT_READY_EN;
 	if (!depCommand(ep.phys, UKE_USB_DWC3_DEPCMD_SETEPCONFIG, p0, p1, 0, nullptr)) {
 		return false;
 	}
@@ -1497,6 +1492,11 @@ NativeUsbSerial::serialStart(void)
 	wr32(fQscratch, 0x30, ss | (1U << 24));
 	IOLog("NativeUsbSerial: serial: qscratch hs=%08x ss=%08x\n",
 	    rd32(fQscratch, 0x10), rd32(fQscratch, 0x30));
+	// Reference timing: the event machinery comes on only now, after every
+	// endpoint command has run with DEVTEN at 0.
+	wr32(fWrapper, UKE_USB_DWC3_DEVTEN,
+	    UKE_USB_DWC3_DEVTEN_DISCONN | UKE_USB_DWC3_DEVTEN_USBRST |
+	    UKE_USB_DWC3_DEVTEN_CONNECTDONE | (1U << 9) | (1U << 11));
 	uint32_t runDctl = rd32(fWrapper, UKE_USB_DWC3_DCTL);
 	wr32(fWrapper, UKE_USB_DWC3_DCTL, runDctl & ~UKE_USB_DWC3_DCTL_RUN_STOP);
 	IOSleep(200);
