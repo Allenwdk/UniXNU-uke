@@ -205,7 +205,7 @@ class NativeUsbSerial : public IOService {
 	volatile bool fLogPrimed = false;
 	volatile bool fDump = false;
 	bool fEnablePhy = false;
-	bool fEnableTcsr = true;
+	bool fEnableTcsr = false;
 	bool fEnableQscratch = false;
 	bool fSoftReset = true;
 	bool fBlockReset = false;
@@ -749,40 +749,38 @@ NativeUsbSerial::blockReset(void)
 	return true;
 }
 
-// Read a handful of eUSB2 tuner registers through the PHY's internal APB
-// bridge, following the vendor eusb2_phy_apb_reg_read() protocol: address to
-// APB_ADDRESS (0x138), APB_START_CMD (bit 1) to APB_ACCESS_CMD (0x130), poll
-// ACCESS_DONE (bit 0) in APB_ACCESS_STATUS (0x134), then read the 16-bit
-// value from APB_RDDATA_LSB/MSB (0x144/0x148). The bridge sits inside the
-// PHY's clock domain, so ACCESS_DONE never arriving means the reference
-// clock is not reaching the PLL.
+// Read a spread of eUSB2 tuner registers through the PHY's internal APB
+// bridge. usbbr4's probe required ACCESS_DONE (bit 0) in the status register
+// and timed out — but the vendor's own poll condition is the constant 1
+// (read once, assume done), so this generation's status register may never
+// set bit 0 at all; status 0 under the ACCESS_IN_PROGRESS (bit 3) semantics
+// means "not busy = done". Poll bit 3 instead, then read the 16-bit value
+// from APB_RDDATA_LSB/MSB (0x144/0x148) regardless: non-zero, varying data
+// proves the bridge (and the PHY's clock domain) is alive, all-zero reads
+// point at an unclocked PHY.
 void
 NativeUsbSerial::phyApbProbe(void)
 {
-	static const uint8_t kApbRegs[] = { 0x00, 0x05, 0x10, 0x30, 0x60 };
+	static const uint8_t kApbRegs[] = {
+		0x00, 0x05, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x80
+	};
 
 	for (uint8_t reg : kApbRegs) {
 		wr32(fPhy, 0x138, reg);
 		wr32(fPhy, 0x130, 1U << 1);
-		uint32_t status = 0xffffffffU;
-		bool done = false;
-		for (unsigned i = 0; i < 1000; i++) {
-			status = rd32(fPhy, 0x134);
-			if ((status & 1U) != 0) {
-				done = true;
-				break;
-			}
+		IODelay(20);
+		uint32_t status = rd32(fPhy, 0x134);
+		bool busy = (status & (1U << 3)) != 0;
+		for (unsigned i = 0; busy && i < 100; i++) {
 			IODelay(10);
-		}
-		if (!done) {
-			IOLog("NativeUsbSerial: warm: phy apb[%02x] TIMEOUT status=%08x\n",
-			    reg, status);
-			return;
+			status = rd32(fPhy, 0x134);
+			busy = (status & (1U << 3)) != 0;
 		}
 		uint32_t lsb = rd32(fPhy, 0x144) & 0xffU;
 		uint32_t msb = rd32(fPhy, 0x148) & 0xffU;
 		wr32(fPhy, 0x130, 0);
-		IOLog("NativeUsbSerial: warm: phy apb[%02x]=%02x%02x\n", reg, msb, lsb);
+		IOLog("NativeUsbSerial: warm: phy apb[%02x]=%02x%02x status=%08x%s\n",
+		    reg, msb, lsb, status, busy ? " BUSY" : "");
 	}
 }
 
@@ -1754,9 +1752,13 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t serialMode = 0;
 	uint32_t dumpMode = 0;
 	uint32_t phyMode = 0;
-	// The USB2 reference-clock gate is required for any PHY operation; only
-	// pass native-usb-tcsr=0 to reproduce the unclocked-PHY state.
-	uint32_t tcsrMode = 1;
+	// The TCSR clkref write is opt-in and OFF: at the corrected address
+	// (0x1fb1118, tcsrcc + 0xb1118) the store stalls the whole machine
+	// (usbbr5), and at the old 0x1f4b118 it landed in the ADSP ipc_hwmutex
+	// window and did nothing. The reference clock is expected to arrive
+	// held on by the firmware (the CLK_HOLD_STATE model of the uke clock
+	// handoff), so the driver leaves TCSR alone unless asked.
+	uint32_t tcsrMode = 0;
 	uint32_t qscratchMode = 2;
 	// A stuck CSFTRST wedges the whole device domain on this core (usbdal6:
 	// the event ring stops latching its address after a stuck attempt), and
