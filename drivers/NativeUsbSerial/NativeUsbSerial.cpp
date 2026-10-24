@@ -208,6 +208,7 @@ class NativeUsbSerial : public IOService {
 	bool fEnableTcsr = false;
 	bool fEnableQscratch = false;
 	bool fSoftReset = true;
+	bool fBlockReset = false;
 	bool fForceFs = false;
 	uint32_t fProbeLevel = 0;
 	uint64_t fQscratchBase = UKE_USB_QSCRATCH_BASE;
@@ -233,6 +234,7 @@ class NativeUsbSerial : public IOService {
 	bool serialStart(void);
 	void serialStop(void);
 	bool warmInit(void);
+	bool blockReset(void);
 	bool dmaAllocate(void);
 	bool smmuAttach(void);
 	void fifoConfig(void);
@@ -390,9 +392,9 @@ NativeUsbSerial::dumpSmmu(void)
 void
 NativeUsbSerial::dumpProbe(void)
 {
-	IOLog("NativeUsbSerial: probing uke USB2 wrapper base=%08x level=%u phy=%u tcsr=%u\n",
+	IOLog("NativeUsbSerial: probing uke USB2 wrapper base=%08x level=%u phy=%u tcsr=%u bcr=%u\n",
 	    static_cast<unsigned>(UKE_USB_WRAPPER_BASE), fProbeLevel, fEnablePhy ? 1U : 0U,
-	    fEnableTcsr ? 1U : 0U);
+	    fEnableTcsr ? 1U : 0U, fBlockReset ? 1U : 0U);
 	IOLog("NativeUsbSerial: GCC gdscr=%08x cfg=%08x master=%08x sleep=%08x utmi=%08x cfg_noc=%08x aggre=%08x\n",
 	    rd32(fGcc, 0x004), rd32(fGcc, 0x008), rd32(fGcc, 0x018),
 	    rd32(fGcc, 0x024), rd32(fGcc, 0x028), rd32(fGcc, 0x088),
@@ -541,6 +543,17 @@ NativeUsbSerial::warmInit(void)
 		IOLog("NativeUsbSerial: warm: gctl now=%08x\n", rd32(fWrapper, UKE_USB_DWC3_GCTL));
 	}
 
+	// The stock uke DT asks for snps,disable-clk-gating: with the core
+	// halted and gating enabled, the first endpoint command after the halt
+	// completed but the next one hung with CmdAct stuck (usbdal4b/5), which
+	// is what the core's own clock gating does to an idle device domain.
+	gctl = rd32(fWrapper, UKE_USB_DWC3_GCTL);
+	if ((gctl & UKE_USB_DWC3_GCTL_DSBLCLKGTNG) == 0) {
+		wr32(fWrapper, UKE_USB_DWC3_GCTL, gctl | UKE_USB_DWC3_GCTL_DSBLCLKGTNG);
+		IOLog("NativeUsbSerial: warm: gctl %08x -> %08x (disable clk gating)\n",
+		    gctl, rd32(fWrapper, UKE_USB_DWC3_GCTL));
+	}
+
 	// Stop whatever ABL left running: the core reset below only self-clears
 	// once the controller is halted.
 	IOLog("NativeUsbSerial: warm: stop dctl=%08x dsts=%08x\n",
@@ -561,7 +574,11 @@ NativeUsbSerial::warmInit(void)
 		    rd32(fWrapper, UKE_USB_DWC3_DSTS));
 		return false;
 	}
-	if (fSoftReset) {
+	if (fBlockReset) {
+		if (!blockReset()) {
+			return false;
+		}
+	} else if (fSoftReset) {
 		// The device domain's functional logic (event ring, endpoint
 		// command engine, the reset sequencer itself) needs its clocks;
 		// a stuck CSFTRST with every register downstream reading back 0
@@ -638,6 +655,75 @@ NativeUsbSerial::warmInit(void)
 	}
 
 	IOLog("NativeUsbSerial: warm: done\n");
+	return true;
+}
+
+// Full block reset through GCC_USB30_PRIM_BCR, mirroring the vendor glue's
+// dwc3_msm_link_clk_reset(): the branch clocks go down first, the reset
+// pulses, then the clocks come back in the glue's order (iface before core,
+// which has an FSM dependency). This is the only path that clears whatever
+// endpoint state ABL's fastboot left behind — CSFTRST never self-clears here
+// and SETEPCONFIG hangs on top of the warm state even after DALEPENA is
+// dropped. The core comes back empty, so the glue routing, port mode and the
+// two PHY control registers are all replayed from the captured ABL values.
+bool
+NativeUsbSerial::blockReset(void)
+{
+	static const uint32_t kDown[] = { 0x028, 0x024, 0x018, 0x008 };
+	static const uint32_t kUp[] = { 0x088, 0x008, 0x018, 0x024, 0x028, 0x08c };
+	const uint32_t usb2cfg = rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0));
+	const uint32_t usb3pip = rd32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0));
+	uint32_t gdscr;
+
+	IOLog("NativeUsbSerial: warm: block reset usb2=%08x usb3=%08x\n", usb2cfg, usb3pip);
+	for (uint32_t offset : kDown) {
+		wr32(fGcc, offset, rd32(fGcc, offset) & ~UKE_USB_GCC_BRANCH_ENABLE);
+	}
+	IODelay(100);
+	wr32(fGcc, 0x000, rd32(fGcc, 0x000) | UKE_USB_GCC_RESET_ASSERT);
+	IODelay(100);
+	wr32(fGcc, 0x000, rd32(fGcc, 0x000) & ~UKE_USB_GCC_RESET_ASSERT);
+	IODelay(10);
+	for (uint32_t offset : kUp) {
+		wr32(fGcc, offset, rd32(fGcc, offset) | UKE_USB_GCC_BRANCH_ENABLE);
+		IODelay(10);
+	}
+	IODelay(1000);
+	gdscr = rd32(fGcc, 0x004);
+	IOLog("NativeUsbSerial: warm: block reset done gdscr=%08x bcr=%08x\n",
+	    gdscr, rd32(fGcc, 0x000));
+
+	// The glue page and the core registers reset with the block: put the
+	// UTMI-as-pipe routing back, re-select device mode with clock gating
+	// disabled, and replay the PHY control registers without the suspend
+	// bits so the device domain keeps its functional clock.
+	uint32_t general = rd32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG);
+	wr32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG,
+	    (general & ~UKE_USB_QSCRATCH_PIPE_UTMI_CLK_DIS) |
+	    UKE_USB_QSCRATCH_PIPE_UTMI_CLK_SEL |
+	    UKE_USB_QSCRATCH_PIPE3_PHYSTATUS_SW);
+	IOLog("NativeUsbSerial: warm: general=%08x -> %08x\n",
+	    general, rd32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG));
+
+	uint32_t gctl = rd32(fWrapper, UKE_USB_DWC3_GCTL);
+	wr32(fWrapper, UKE_USB_DWC3_GCTL,
+	    (gctl & ~UKE_USB_DWC3_GCTL_PRTCAP_MASK) | UKE_USB_DWC3_GCTL_PRTCAP_DEVICE |
+	    UKE_USB_DWC3_GCTL_DSBLCLKGTNG);
+	IOLog("NativeUsbSerial: warm: gctl -> %08x\n", rd32(fWrapper, UKE_USB_DWC3_GCTL));
+
+	wr32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0), usb2cfg &
+	    ~(UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY | (1U << 31)));
+	wr32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0), usb3pip &
+	    ~UKE_USB_DWC3_GUSB3PIPECTL_SUSPHY);
+	IODelay(100);
+	uint32_t id = rd32(fWrapper, UKE_USB_DWC3_GSNPSID);
+	IOLog("NativeUsbSerial: warm: replay usb2=%08x usb3=%08x id=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0)),
+	    rd32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0)), id);
+	if ((id & 0xffff0000U) != 0x33310000U) {
+		IOLog("NativeUsbSerial: core did not come back after the block reset\n");
+		return false;
+	}
 	return true;
 }
 
@@ -1596,6 +1682,8 @@ NativeUsbSerial::start(IOService *provider)
 	PE_parse_boot_argn("native-usb-tcsr", &tcsrMode, sizeof(tcsrMode));
 	PE_parse_boot_argn("native-usb-qscratch", &qscratchMode, sizeof(qscratchMode));
 	PE_parse_boot_argn("native-usb-softreset", &softResetMode, sizeof(softResetMode));
+	uint32_t blockResetMode = 0;
+	PE_parse_boot_argn("native-usb-bcr", &blockResetMode, sizeof(blockResetMode));
 	uint32_t fsMode = 0;
 	PE_parse_boot_argn("native-usb-fs", &fsMode, sizeof(fsMode));
 	fProbeLevel = probeMode;
@@ -1603,6 +1691,7 @@ NativeUsbSerial::start(IOService *provider)
 	fEnableTcsr = tcsrMode != 0;
 	fEnableQscratch = qscratchMode != 0;
 	fSoftReset = softResetMode != 0;
+	fBlockReset = blockResetMode != 0;
 	fForceFs = fsMode != 0;
 	// 2 (the default) is core_base + 0xf8800, the address dwc3-qcom maps.
 	// 1 keeps the first revision's transcribed 0x0b58800, which aborts, so a
