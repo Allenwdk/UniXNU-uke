@@ -130,4 +130,8 @@ constexpr UkeArcClock kUkeUsbPhyRefClocks[] = {
 	{ "xo.lvl", 3 },
 };
 
+// ARC resources that are guaranteed on while the CPU cluster runs; reading
+// them validates the RPMH READ path itself before trusting any 0.
+constexpr const char *const kUkeArcProbeNames[] = { "cx.lvl", "mx.lvl" };
+
 #endif // UKE_USB_RPMH_H

@@ -276,6 +276,9 @@ class NativeUsbSerial : public IOService {
 	uint32_t fRailXoLevel = 0;
 	uint32_t fRailL2Enable = 0;
 	uint32_t fRailL4Enable = 0;
+	uint32_t fRailL2Voltage = 0;
+	uint32_t fRailCxLevel = 0;
+	uint32_t fRailMxLevel = 0;
 	uint32_t fRcgBefore = 0;
 	uint32_t fRcgAfter = 0;
 	void rcgTune(void);
@@ -1142,20 +1145,51 @@ NativeUsbSerial::railsVote(void)
 
 	// Read the aggregated state back through RPMH READ commands: the SET
 	// responses are always zero, so only these reads prove AOP executed the
-	// votes. xo.lvl returns the level (3 = on); the VRM enable registers
-	// return bit 0 set when the rail is enabled.
+	// votes. Known-on ARC resources (cx.lvl / mx.lvl power the CPU cluster)
+	// validate the READ path itself; a zero from them means the reads are
+	// broken, not that the CPU rail is off.
 	uint32_t dummy = 0;
+	if (arc != nullptr) {
+		const volatile UkeCmdDbEntry *arcEntries =
+		    reinterpret_cast<const volatile UkeCmdDbEntry *>(dataBase + arc->headerOffset);
+		for (unsigned p = 0; p < sizeof(kUkeArcProbeNames) / sizeof(kUkeArcProbeNames[0]); p++) {
+			collapseId(kUkeArcProbeNames[p], wanted);
+			for (unsigned j = 0; j < arc->count && j < 64; j++) {
+				char id[9];
+				for (unsigned k = 0; k < 8; k++) {
+					id[k] = static_cast<char>(arcEntries[j].id[k]);
+				}
+				id[8] = '\0';
+				collapseId(id, collapsed);
+				if (strcmp(collapsed, wanted) == 0) {
+					uint32_t addr = arcEntries[j].addr;
+					uint32_t level = 0;
+					tcsVoteActive(static_cast<unsigned>(tcs), &addr, &dummy, 1,
+					    kUkeArcProbeNames[p], true, &level);
+					if (p == 0) {
+						fRailCxLevel = level;
+					} else {
+						fRailMxLevel = level;
+					}
+					break;
+				}
+			}
+		}
+	}
 	const uint32_t l2EnableAddr = railAddr[0] + 4;
 	tcsVoteActive(static_cast<unsigned>(tcs), &l2EnableAddr, &dummy, 1,
 	    "ldob2 read", true, &fRailL2Enable);
+	const uint32_t l2VoltageAddr = railAddr[0];
+	tcsVoteActive(static_cast<unsigned>(tcs), &l2VoltageAddr, &dummy, 1,
+	    "ldob2 volt read", true, &fRailL2Voltage);
 	const uint32_t l4EnableAddr = railAddr[1] + 4;
 	tcsVoteActive(static_cast<unsigned>(tcs), &l4EnableAddr, &dummy, 1,
 	    "ldob4 read", true, &fRailL4Enable);
 	const uint32_t xoAddr = refClkAddr[0];
 	tcsVoteActive(static_cast<unsigned>(tcs), &xoAddr, &dummy, 1,
 	    "xo.lvl read", true, &fRailXoLevel);
-	IOLog("NativeUsbSerial: rails: readback xo=%08x l2en=%08x l4en=%08x\n",
-	    fRailXoLevel, fRailL2Enable, fRailL4Enable);
+	IOLog("NativeUsbSerial: rails: readback cx=%08x mx=%08x xo=%08x l2v=%08x l2en=%08x l4en=%08x\n",
+	    fRailCxLevel, fRailMxLevel, fRailXoLevel, fRailL2Voltage, fRailL2Enable, fRailL4Enable);
 	IOLog("NativeUsbSerial: rails: vote sent (ldob2=880mV ldob4=1200mV enable hpm, xo.lvl=3)\n");
 	return true;
 }
@@ -1195,15 +1229,21 @@ NativeUsbSerial::tcsVoteActive(unsigned tcs, const uint32_t *addrs, const uint32
 	wr32(fRsc, tcsRegOff(fRscRegs.cmdEnable, tcs), enable);
 
 	// __tcs_set_trigger(true): clear trigger, clear mode enable, then enable
-	// and trigger, each waiting to stick before the next.
+	// and trigger, each waiting to stick before the next. A dropped CONTROL
+	// write means the trigger never fires and the TCS sits idle while every
+	// later "completion" reads as an instant no-op — so verify each write.
 	uint32_t control = rd32(fRsc, tcsRegOff(fRscRegs.control, tcs));
 	wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), control & ~kUkeTcsAmcTrigger);
-	wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), control & ~(kUkeTcsAmcTrigger | kUkeTcsAmcEnable));
+	uint32_t controlHeld = rd32(fRsc, tcsRegOff(fRscRegs.control, tcs));
+	wr32(fRsc, tcsRegOff(fRscRegs.control, tcs),
+	    control & ~(kUkeTcsAmcTrigger | kUkeTcsAmcEnable));
 	wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), kUkeTcsAmcEnable);
 	wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), kUkeTcsAmcEnable | kUkeTcsAmcTrigger);
 
 	bool idle = false;
+	unsigned polls = 0;
 	for (unsigned i = 0; i < 500; i++) {
+		polls = i;
 		if (rd32(fRsc, tcsRegOff(fRscRegs.status, tcs)) != 0) {
 			idle = true;
 			break;
@@ -1216,8 +1256,9 @@ NativeUsbSerial::tcsVoteActive(unsigned tcs, const uint32_t *addrs, const uint32
 		status[j] = rd32(fRsc, tcsRegOff(fRscRegs.cmdStatus, tcs) + fRscRegs.cmdStride * j);
 		resp[j] = rd32(fRsc, tcsRegOff(fRscRegs.cmdRespData, tcs) + fRscRegs.cmdStride * j);
 	}
-	IOLog("NativeUsbSerial: rails: %s vote idle=%u st=%08x/%08x/%08x resp=%08x/%08x/%08x\n",
-	    name, idle ? 1u : 0u, status[0], status[1], status[2], resp[0], resp[1], resp[2]);
+	IOLog("NativeUsbSerial: rails: %s vote idle=%u polls=%u ctl=%08x st=%08x/%08x/%08x resp=%08x/%08x/%08x\n",
+	    name, idle ? 1u : 0u, polls, controlHeld,
+	    status[0], status[1], status[2], resp[0], resp[1], resp[2]);
 	if (respOut != nullptr) {
 		*respOut = resp[0];
 	}
@@ -2172,8 +2213,9 @@ NativeUsbSerial::serialStart(void)
 void
 NativeUsbSerial::railsTail(void)
 {
-	IOLog("NativeUsbSerial: rails: end xo=%08x l2en=%08x l4en=%08x rcg %08x->%08x\n",
-	    fRailXoLevel, fRailL2Enable, fRailL4Enable, fRcgBefore, fRcgAfter);
+	IOLog("NativeUsbSerial: rails: end cx=%08x mx=%08x xo=%08x l2v=%08x l2en=%08x l4en=%08x rcg %08x->%08x\n",
+	    fRailCxLevel, fRailMxLevel, fRailXoLevel, fRailL2Voltage, fRailL2Enable,
+	    fRailL4Enable, fRcgBefore, fRcgAfter);
 }
 
 void
