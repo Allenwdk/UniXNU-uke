@@ -59,24 +59,27 @@ static void smmu_tests(void) {
 
 int main(void) {
     smmu_tests();
-    // TLMM address of gpio44 control and the configured value for qup1_se4 at 6 mA.
-    CHECK(tb_tlmm_ctl(44)==0x2c000 && tb_tlmm_io(25)==0x19004);
-    CHECK(tb_pin_cfg(TB_FUNC_QUP1_SE4,TB_DRIVE_6MA)==0x84);
-    // Frequency table entries from ftbl_gcc_qupv3_wrap1_s0_clk_src: 100 MHz = GPLL0 main (src 1), hid div 6 -> field 11.
-    CHECK(tb_dfs_level_hz((1u<<8)|11,0,0)==100000000ULL);
-    // 75 MHz = GPLL0 even (src 6) / 4 -> field 7.
-    CHECK(tb_dfs_level_hz((6u<<8)|7,0,0)==75000000ULL);
-    // 19.2 MHz TCXO, bypass.
-    CHECK(tb_dfs_level_hz(0,0,0)==19200000ULL);
-    // 48 MHz = even, M/N 4/25: mode dual edge (2), hid 1 field 0 -> N register stores ~(n-m) = ~21.
-    CHECK(tb_dfs_level_hz((6u<<8)|(2u<<12)|0,4,(~21u)&0xffff)==48000000ULL);
-    uint64_t lv[TB_DFS_LEVELS]={19200000ULL,100000000ULL,75000000ULL,0,0,0,0,0};
-    struct tb_clock_choice c;
-    CHECK(!tb_choose_clock(lv,TB_DFS_LEVELS,1,19200000,&c) && c.level==0 && c.div==1 && c.actual_hz==19200000ULL);
-    CHECK(!tb_choose_clock(lv,TB_DFS_LEVELS,1,9600000,&c) && c.actual_hz==9600000ULL);   // 19.2/2 or 100/11 -> 9.09; picks 9.6
-    CHECK(!tb_choose_clock(lv,TB_DFS_LEVELS,1,15000000,&c) && c.actual_hz<=15000000ULL && c.actual_hz>=14285714ULL);   // 100/7
-    CHECK(!tb_choose_clock(lv,TB_DFS_LEVELS,2,19200000,&c) && c.actual_hz<=19200000ULL);
-    uint64_t none[TB_DFS_LEVELS]={0};
-    CHECK(tb_choose_clock(none,TB_DFS_LEVELS,1,9600000,&c)<0);
-    puts("PASS: TouchBoard address, pin and DFS clock helpers; SMMU bypass planning against a register fixture");return 0;
+    // TLMM address of gpio16 control (MISO), gpio54 io (the irq pin) and the configured value for the qup0_se4 lanes at 6 mA.
+    CHECK(tb_tlmm_ctl(16)==0x10000 && tb_tlmm_io(54)==0x36004);
+    CHECK(tb_pin_cfg(TB_FUNC_QUP0_SE4,TB_DRIVE_6MA)==0x84);
+    CHECK(tb_pin_cfg(0,0)==0);   // gpio function, 2 mA: nothing set
+    // The wrap0 S4 RCG (gcc-cliffs.c ftbl_gcc_qupv3_wrap0_s0_clk_src): the probe's TCXO entry F(19200000, P_BI_TCXO, 1, 0, 0)
+    // encodes as src 0 with hid field 1 (÷1).
+    CHECK(tb_rcg_cfg(TB_RCG_SRC_TCXO,1,0)==1u);
+    CHECK(tb_rcg_hz(1u,0,0)==TB_SCLK_HZ);
+    // 100 MHz = GPLL0 main (src 1) / 6 -> hid field 2*6-1 = 11; 120 MHz = main / 5 -> field 9.
+    CHECK(tb_rcg_cfg(TB_RCG_SRC_GPLL0,6,0)==((1u<<8)|11u));
+    CHECK(tb_rcg_hz((1u<<8)|11u,0,0)==100000000ULL);
+    CHECK(tb_rcg_hz((1u<<8)|9u,0,0)==120000000ULL);
+    // 75 MHz = GPLL0 even (src 6) / 4 -> field 7; 19.2 MHz TCXO with hid field 0 is also the plain bypass.
+    CHECK(tb_rcg_hz((6u<<8)|7u,0,0)==75000000ULL);
+    CHECK(tb_rcg_hz(0,0,0)==19200000ULL);
+    // 48 MHz = even, M/N 4/25, dual-edge mode (2), hid ÷1: the N register stores ~(n-m) = ~21.
+    CHECK(tb_rcg_hz((6u<<8)|(2u<<12)|1u,4,(~21u)&0xffff)==48000000ULL);
+    // M/N encode round trip: 38.4 MHz from even 300 MHz is m=16 n=125, N register = ~(125-16).
+    CHECK(tb_rcg_n(125,16)==((~(125u-16u))&0xffffu));
+    CHECK(tb_rcg_hz((6u<<8)|(2u<<12)|1u,16,tb_rcg_n(125,16))==38400000ULL);
+    // The touch interrupt is the TLMM summary: SPI 208 -> INTID 240.
+    CHECK(TB_TLMM_INTID==240u && TB_GPIO_IRQ==54u && TB_GPIO_SPI_CS==19u);
+    puts("PASS: TouchBoard address, pin and RCG clock helpers; SMMU bypass planning against a register fixture");return 0;
 }
