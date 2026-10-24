@@ -234,6 +234,7 @@ class NativeUsbSerial : public IOService {
 	bool fEnableTcsr = false;
 	bool fEnableScm = false;
 	bool fEnableRails = false;
+	bool fEnableRcg = false;
 	bool fEnableQscratch = false;
 	bool fSoftReset = true;
 	bool fBlockReset = false;
@@ -271,6 +272,7 @@ class NativeUsbSerial : public IOService {
 	bool railsVote(void);
 	bool tcsVoteActive(unsigned tcs, const uint32_t *addrs, const uint32_t *datas,
 	    unsigned count, const char *name);
+	void rcgTune(void);
 	bool dmaAllocate(void);
 	bool smmuAttach(void);
 	void fifoConfig(void);
@@ -499,6 +501,48 @@ NativeUsbSerial::smmuWrite(void *context, unsigned offset, uint32_t value)
 	NativeUsbSerial *self = static_cast<NativeUsbSerial *>(context);
 	wr32(self->fSmmu, offset, value);
 }
+
+// The vendor clock framework configures gcc_usb30_prim_master_clk_src to
+// 200 MHz = GPLL0 (1200 MHz) / 6 — freq_tbl F(200000000, P_GCC_GPLL0_OUT_MAIN,
+// 3, 0, 0) with the { 2h - 1 } pre-div encoding means div field 5, and
+// gcc_parent_map_0 gives GPLL0_OUT_MAIN src index 1. enable_safe_config parks
+// the RCG at CXO (19.2 MHz) when the clock is off, and the ABL shutdown may
+// well leave it parked: a DWC31 core running at 19.2 MHz is a plausible reason
+// the device-domain engines (the CSFTRST sequencer, the DEPCMD FSM) never
+// complete. Reparent + redivide the master RCG only; mock_utmi (19.2 MHz
+// expected by the glue) and the postdiv are logged untouched.
+void
+NativeUsbSerial::rcgTune(void)
+{
+	// Same GCC page as the GDSC: master cmd_rcgr at 0x13902c (fGcc+0x2c),
+	// CFG at +0x4; mock_utmi cmd_rcgr 0x139044, postdiv 0x13905c.
+	const uint32_t masterCmd = rd32(fGcc, 0x2c);
+	uint32_t masterCfg = rd32(fGcc, 0x30);
+	const uint32_t mockCmd = rd32(fGcc, 0x44);
+	const uint32_t mockCfg = rd32(fGcc, 0x48);
+	const uint32_t postdiv = rd32(fGcc, 0x5c);
+	IOLog("NativeUsbSerial: rcg: master cmd=%08x cfg=%08x mock cmd=%08x cfg=%08x postdiv=%08x\n",
+	    masterCmd, masterCfg, mockCmd, mockCfg, postdiv);
+
+	const uint32_t div = 5; // 2h - 1 with h = 3: 1200 MHz / 6 = 200 MHz
+	const uint32_t src = 1; // gcc_parent_map_0: GPLL0_OUT_MAIN
+	uint32_t want = (masterCfg & ~(0x1fU | (0x7U << 8))) | div | (src << 8);
+	wr32(fGcc, 0x30, want);
+	// ROOT_EN keeps the root running through the switch (the vendor
+	// force-enable path), UPDATE self-clears once CFG is live.
+	wr32(fGcc, 0x2c, masterCmd | 0x3U);
+	bool updated = false;
+	for (unsigned i = 0; i < 20; i++) {
+		if ((rd32(fGcc, 0x2c) & 1U) == 0) {
+			updated = true;
+			break;
+		}
+		IODelay(1000);
+	}
+	IOLog("NativeUsbSerial: rcg: master cfg %08x -> %08x cmd=%08x updated=%u\n",
+	    masterCfg, rd32(fGcc, 0x30), rd32(fGcc, 0x2c), updated ? 1u : 0u);
+}
+
 
 bool
 NativeUsbSerial::warmInit(void)
@@ -800,24 +844,29 @@ NativeUsbSerial::blockReset(void)
 
 // The usbbr6 read sweep cannot distinguish a dead bridge from a healthy one
 // over an untouched tuner space (the init table programs everything through
-// MMIO, so the APB registers legitimately read zero). Write the vendor CV9
-// pattern through the bridge and read it back: an echo means the bridge and
-// the PHY's clock domain are alive and the hunt moves back to the command
-// engine; silence means the PHY is unclocked.
+// MMIO, so the APB registers legitimately read zero). Write a 4-bit-safe
+// value through the bridge and read it back: the vendor's APB write path
+// splits the value across WRDATA_LSB/MSB with 4-bit fields, so larger test
+// values could be truncated to zero by a working bridge and false-negative.
+// An echo means the bridge and the PHY's clock domain are alive and the hunt
+// moves back to the command engine; silence means the PHY is unclocked.
 void
 NativeUsbSerial::phyApbEchoTest(void)
 {
-	phyApbWrite(0x05, 0xc0);
-	phyApbWrite(0x10, 0xa5);
-	phyApbRead(0x05, 0xc0);
-	phyApbRead(0x10, 0xa5);
+	phyApbWrite(0x05, 0x5);
+	phyApbWrite(0x10, 0xa);
+	phyApbRead(0x05, 0x5);
+	phyApbRead(0x10, 0xa);
 }
 
 void
 NativeUsbSerial::phyApbWrite(uint8_t reg, uint8_t value)
 {
 	wr32(fPhy, 0x138, reg);
-	wr32(fPhy, 0x13c, value);
+	// Vendor field split: WRDATA_LSB carries the low nibble, WRDATA_MSB the
+	// high one (their >>8 masking only ever worked for 4-bit values).
+	wr32(fPhy, 0x13c, value & 0xfU);
+	wr32(fPhy, 0x140, (value >> 4) & 0xfU);
 	wr32(fPhy, 0x130, (1U << 1) | 1U);
 	IODelay(20);
 	uint32_t status = rd32(fPhy, 0x134);
@@ -1912,6 +1961,11 @@ NativeUsbSerial::serialStart(void)
 		}
 	}
 
+	if (fEnableRcg) {
+		IOLog("NativeUsbSerial: serial: rcg\n");
+		rcgTune();
+	}
+
 	if (!warmInit()) {
 		IOLog("NativeUsbSerial: warm init failed\n");
 		return false;
@@ -2138,6 +2192,8 @@ NativeUsbSerial::start(IOService *provider)
 	PE_parse_boot_argn("native-usb-scm", &scmMode, sizeof(scmMode));
 	uint32_t railsMode = 0;
 	PE_parse_boot_argn("native-usb-rails", &railsMode, sizeof(railsMode));
+	uint32_t rcgMode = 0;
+	PE_parse_boot_argn("native-usb-rcg", &rcgMode, sizeof(rcgMode));
 	uint32_t qscratchMode = 2;
 	// A stuck CSFTRST wedges the whole device domain on this core (usbdal6:
 	// the event ring stops latching its address after a stuck attempt), and
@@ -2160,6 +2216,7 @@ NativeUsbSerial::start(IOService *provider)
 	fEnableTcsr = tcsrMode != 0;
 	fEnableScm = scmMode != 0;
 	fEnableRails = railsMode != 0;
+	fEnableRcg = rcgMode != 0;
 	fEnableQscratch = qscratchMode != 0;
 	fSoftReset = softResetMode != 0;
 	fBlockReset = blockResetMode != 0;
