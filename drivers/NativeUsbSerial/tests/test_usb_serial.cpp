@@ -121,16 +121,16 @@ static void testPhyTable()
 	bool sawPll = false;
 	bool sawDiv = false;
 	for (size_t i = 0; i < UKE_USB_PHY_INIT_COUNT; i++) {
-		const UkeUsbPhyWrite &w = kUkeUsbPhyInit19Mhz[i];
+		const UkeUsbPhyWrite &w = kUkeUsbPhyInit38_4Mhz[i];
 		assert(w.offset < UKE_USB_PHY_SIZE);
 		assert(w.mask != 0);
 		if (w.offset == UKE_USB_PHY_CFG_CTRL_1 && w.value == 0 && w.mask == 0xff) {
 			sawOverride = true;
 		}
-		if (w.offset == UKE_USB_PHY_CFG_CTRL_2 && w.value == 0x90 && w.mask == 0xff) {
+		if (w.offset == UKE_USB_PHY_CFG_CTRL_2 && w.value == 0xc8 && w.mask == 0xff) {
 			sawPll = true;
 		}
-		if (w.offset == UKE_USB_PHY_CFG_CTRL_3 && w.value == 0x01 && w.mask == 0xff) {
+		if (w.offset == UKE_USB_PHY_CFG_CTRL_3 && w.value == 0x00 && w.mask == 0xff) {
 			sawDiv = true;
 		}
 	}

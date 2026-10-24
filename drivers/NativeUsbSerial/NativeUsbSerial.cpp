@@ -345,9 +345,9 @@ NativeUsbSerial::dumpPhy(void)
 	IOLog("NativeUsbSerial: PHY init-table entries=%u eud-enable=%08x eud-detect=%08x\n",
 	    static_cast<unsigned>(UKE_USB_PHY_INIT_COUNT),
 	    rd32(fEudEnable, 0), rd32(fEudDetect, 0));
-	IOLog("NativeUsbSerial: PHY 19.2MHz table: ctrl2=%02x ctrl3=%02x override=%02x\n",
-	    kUkeUsbPhyInit19Mhz[7].value, kUkeUsbPhyInit19Mhz[8].value,
-	    kUkeUsbPhyInit19Mhz[16].value);
+	IOLog("NativeUsbSerial: PHY 38.4MHz table: ctrl2=%02x ctrl3=%02x override=%02x\n",
+	    kUkeUsbPhyInit38_4Mhz[7].value, kUkeUsbPhyInit38_4Mhz[8].value,
+	    kUkeUsbPhyInit38_4Mhz[16].value);
 }
 
 void
@@ -513,7 +513,7 @@ NativeUsbSerial::warmInit(void)
 		IOLog("NativeUsbSerial: warm: general=%08x -> %08x\n",
 		    general, rd32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG));
 		for (size_t i = 0; i < UKE_USB_PHY_INIT_COUNT; i++) {
-			const UkeUsbPhyWrite &write = kUkeUsbPhyInit19Mhz[i];
+			const UkeUsbPhyWrite &write = kUkeUsbPhyInit38_4Mhz[i];
 			uint32_t before = rd32(fPhy, write.offset);
 			uint32_t value = (before & ~write.mask) | (write.value & write.mask);
 			wr32(fPhy, write.offset, value);
@@ -694,12 +694,13 @@ NativeUsbSerial::blockReset(void)
 	    gdscr, rd32(fGcc, 0x000));
 
 	// The glue page and the core registers reset with the block: put the
-	// UTMI-as-pipe routing back, replay the PHY control registers without
-	// the suspend bits, and only then take the vendor's dwc3_core_soft_reset
-	// step: after a power-on reset the device domain needs one DCTL.CSFTRST,
-	// and DWC_usb31 1.90a+ clears that bit only once all its clocks are
-	// synchronized, which the programming guide says can take just over
-	// 50 ms — poll 10 x 30 ms before declaring it stuck.
+	// UTMI-as-pipe routing back and replay the PHY control registers without
+	// the suspend bits. No DCTL.CSFTRST here: usbbr2 proved it never
+	// self-clears on this core while the device domain lacks its functional
+	// clock, and a stuck CSFTRST then freezes the whole domain (DEPCMD,
+	// DALEPENA and GEVNTADR writes all stop latching, so every later command
+	// "completes" as a dropped write). With the corrected 38.4 MHz PLL table
+	// the domain should come up without any soft reset at all.
 	uint32_t general = rd32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG);
 	wr32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG,
 	    (general & ~UKE_USB_QSCRATCH_PIPE_UTMI_CLK_DIS) |
@@ -713,21 +714,6 @@ NativeUsbSerial::blockReset(void)
 	wr32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0), usb3pip &
 	    ~UKE_USB_DWC3_GUSB3PIPECTL_SUSPHY);
 	IODelay(100);
-	wr32(fWrapper, UKE_USB_DWC3_DCTL, UKE_USB_DWC3_DCTL_CSFTRST);
-	bool softResetDone = false;
-	for (unsigned i = 0; i < 10; i++) {
-		IOSleep(30);
-		if ((rd32(fWrapper, UKE_USB_DWC3_DCTL) & UKE_USB_DWC3_DCTL_CSFTRST) == 0) {
-			softResetDone = true;
-			break;
-		}
-	}
-	if (!softResetDone) {
-		wr32(fWrapper, UKE_USB_DWC3_DCTL,
-		    rd32(fWrapper, UKE_USB_DWC3_DCTL) & ~UKE_USB_DWC3_DCTL_CSFTRST);
-	}
-	IOLog("NativeUsbSerial: warm: block reset csfrst dctl=%08x (%s)\n",
-	    rd32(fWrapper, UKE_USB_DWC3_DCTL), softResetDone ? "cleared" : "STUCK");
 
 	uint32_t gctl = rd32(fWrapper, UKE_USB_DWC3_GCTL);
 	wr32(fWrapper, UKE_USB_DWC3_GCTL,
