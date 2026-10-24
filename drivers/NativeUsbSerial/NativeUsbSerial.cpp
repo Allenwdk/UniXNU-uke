@@ -746,9 +746,9 @@ NativeUsbSerial::eventInit(void)
 	cacheCivac(fEvents, 4096);
 	wr32(fWrapper, UKE_USB_DWC3_GEVNTADRLO, static_cast<uint32_t>(fEventsPhys));
 	wr32(fWrapper, UKE_USB_DWC3_GEVNTADRHI, static_cast<uint32_t>(fEventsPhys >> 32));
-	// DWC3_GEVNTSIZ_INTMASK is bit 24 and the size field is the low 16 bits;
-	// bit 31 is reserved and reads back cleared.
-	wr32(fWrapper, UKE_USB_DWC3_GEVNTSIZ, (1U << 24) | 4096);
+	// DWC3_GEVNTSIZ_INTMASK is bit 31 (Linux core.h) and the size field is
+	// the low 16 bits; the earlier revision wrote bit 24, a reserved field.
+	wr32(fWrapper, UKE_USB_DWC3_GEVNTSIZ, (1U << 31) | 4096);
 	wr32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT, 0);
 }
 
@@ -799,7 +799,9 @@ NativeUsbSerial::depCommand(uint8_t phys, uint32_t cmd, uint32_t p0, uint32_t p1
 		}
 		IOSleep(1);
 	}
-	IOLog("NativeUsbSerial: DEP%u cmd=%x timeout\n", phys, cmd);
+	IOLog("NativeUsbSerial: DEP%u cmd=%x timeout readback=%08x gevt=%08x\n",
+	    phys, cmd, rd32(fWrapper, UKE_USB_DWC3_DEPCMD(phys)),
+	    rd32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT));
 	return false;
 }
 
@@ -1420,6 +1422,13 @@ NativeUsbSerial::serialStart(void)
 	deviceInit();
 
 	IOLog("NativeUsbSerial: serial: ep0\n");
+	// ABL's fastboot left its endpoints enabled; Set Endpoint Config with
+	// ACTION_INIT only runs on a disabled endpoint, which is why it hung on
+	// top of the warm state (DEPSTARTCFG needs no endpoint state and ran).
+	// Drop every enable first and log what ABL had.
+	uint32_t dalepena0 = rd32(fWrapper, UKE_USB_DWC3_DALEPENA);
+	wr32(fWrapper, UKE_USB_DWC3_DALEPENA, 0);
+	IOLog("NativeUsbSerial: serial: dalepena %08x -> 00000000\n", dalepena0);
 	// Linux's canonical order: Start New Configuration first on EP0, which
 	// resets the whole transfer-resource allocation, and only then the
 	// Set Endpoint Config / Set Transfer Resource pairs per direction.
@@ -1432,6 +1441,8 @@ NativeUsbSerial::serialStart(void)
 		IOLog("NativeUsbSerial: EP0 configuration failed\n");
 		return false;
 	}
+	IOLog("NativeUsbSerial: serial: ep0 done gevt=%08x\n",
+	    rd32(fWrapper, UKE_USB_DWC3_GEVNTCOUNT));
 	// DALEPENA bit 0 must be set or the controller ignores endpoint 0
 	// entirely: the reference driver writes 3 (EP0 + EP1) at this point.
 	wr32(fWrapper, UKE_USB_DWC3_DALEPENA, rd32(fWrapper, UKE_USB_DWC3_DALEPENA) | 1U);
