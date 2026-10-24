@@ -29,6 +29,7 @@
 #include "UkeUsbDwc3.h"
 #include "UkeUsbLog.h"
 #include "UkeUsbPhy.h"
+#include "UkeUsbRpmh.h"
 #include "UsbDescriptors.h"
 #include "UsbRing.h"
 #include "SmmuBypass.h"
@@ -148,6 +149,8 @@ class NativeUsbSerial : public IOService {
 	OSSharedPtr<IOMemoryMap> fPhyBcrMap;
 	OSSharedPtr<IOMemoryMap> fTcsrMap;
 	OSSharedPtr<IOMemoryMap> fSmmuMap;
+	OSSharedPtr<IOMemoryMap> fCmdDbMap;
+	OSSharedPtr<IOMemoryMap> fRscMap;
 
 	uintptr_t fWrapper = 0;
 	uintptr_t fQscratch = 0;
@@ -158,6 +161,8 @@ class NativeUsbSerial : public IOService {
 	uintptr_t fPhyBcr = 0;
 	uintptr_t fTcsr = 0;
 	uintptr_t fSmmu = 0;
+	uintptr_t fCmdDb = 0;
+	uintptr_t fRsc = 0;
 
 	// DMA layout. One physically contiguous, 4 KiB-aligned allocation.
 	enum {
@@ -228,12 +233,14 @@ class NativeUsbSerial : public IOService {
 	bool fEnablePhy = false;
 	bool fEnableTcsr = false;
 	bool fEnableScm = false;
+	bool fEnableRails = false;
 	bool fEnableQscratch = false;
 	bool fSoftReset = true;
 	bool fBlockReset = false;
 	bool fForceFs = false;
 	uint32_t fProbeLevel = 0;
 	uint64_t fQscratchBase = UKE_USB_QSCRATCH_BASE;
+	UkeRscRegs fRscRegs = kUkeRscRegsV30;
 
 	uint8_t *fTxMem = nullptr;
 	UkeUsbByteRing fTxRing;
@@ -261,6 +268,7 @@ class NativeUsbSerial : public IOService {
 	void phyApbWrite(uint8_t reg, uint8_t value);
 	void phyApbRead(uint8_t reg, uint8_t expected);
 	void scmClkrefProbe(void);
+	bool railsVote(void);
 	bool dmaAllocate(void);
 	bool smmuAttach(void);
 	void fifoConfig(void);
@@ -313,8 +321,10 @@ NativeUsbSerial::releaseMaps(void)
 	fPhyBcrMap.reset();
 	fTcsrMap.reset();
 	fSmmuMap.reset();
+	fCmdDbMap.reset();
+	fRscMap.reset();
 	fWrapper = fQscratch = fPhy = fEudEnable = fEudDetect = 0;
-	fGcc = fPhyBcr = fTcsr = fSmmu = 0;
+	fGcc = fPhyBcr = fTcsr = fSmmu = fCmdDb = fRsc = 0;
 }
 
 bool
@@ -862,6 +872,197 @@ NativeUsbSerial::scmClkrefProbe(void)
 	IOLog("NativeUsbSerial: warm: scm read ret=%llx val=%llx\n", ret0, ret1);
 	IOLog("NativeUsbSerial: warm: apb echo (after scm clkref)\n");
 	phyApbEchoTest();
+}
+
+
+// The eUSB2 PHY's PMIC rails are proxy-consumer regulators (pmxr2230 L2B
+// 0.88 V "vdd", L4B 1.2 V "vdda12"); ABL's proxy votes are released at the
+// kernel handoff and nothing in XNU re-votes them, which is the only state
+// difference left against the working pure-warm takeover on SM8550/SM8650
+// (vermeer-lab K70, Ace 5). Vote them back on with ACTIVE_ONLY VRM commands
+// through apps_rsc drv-2, transcribed from the vendor rpmh stack: cmd-db
+// (0x81c60000) supplies the VRM register addresses, the TCS carries the
+// message, and AOP aggregates the vote. Voltage/mode first, enable last,
+// every command with the completion response requested.
+bool
+NativeUsbSerial::railsVote(void)
+{
+	fCmdDb = mapPhys(kUkeCmdDbBase, kUkeCmdDbSize, fCmdDbMap);
+	fRsc = mapPhys(kUkeRscDrv2Base, kUkeRscDrv2Size, fRscMap);
+	if (!fCmdDb || !fRsc) {
+		IOLog("NativeUsbSerial: rails: map failed cmddb=%p rsc=%p\n",
+		    reinterpret_cast<void *>(fCmdDb), reinterpret_cast<void *>(fRsc));
+		return false;
+	}
+
+	const volatile UkeCmdDbHeader *db =
+	    reinterpret_cast<const volatile UkeCmdDbHeader *>(fCmdDb);
+	if (db->magic[0] != kUkeCmdDbMagic[0] || db->magic[1] != kUkeCmdDbMagic[1] ||
+	    db->magic[2] != kUkeCmdDbMagic[2] || db->magic[3] != kUkeCmdDbMagic[3]) {
+		IOLog("NativeUsbSerial: rails: cmd-db magic mismatch %02x%02x%02x%02x\n",
+		    db->magic[0], db->magic[1], db->magic[2], db->magic[3]);
+		return false;
+	}
+	IOLog("NativeUsbSerial: rails: cmd-db version=%08x standalone=%u\n",
+	    db->version, db->reserved & (1u << kUkeCmdDbStandaloneBit) ? 1u : 0u);
+	if ((db->reserved & (1u << kUkeCmdDbStandaloneBit)) != 0) {
+		IOLog("NativeUsbSerial: rails: cmd-db is standalone; votes are not serviced\n");
+		return false;
+	}
+
+	const volatile UkeCmdDbRscHdr *vrm = nullptr;
+	for (unsigned i = 0; i < kUkeCmdDbMaxSlv; i++) {
+		const uint16_t slv = db->header[i].slvId;
+		if (slv == 0) {
+			break;
+		}
+		IOLog("NativeUsbSerial: rails: cmdb block[%u] slv=%u cnt=%u\n",
+		    i, slv, db->header[i].count);
+		if (slv == kUkeCmdDbHwVrm) {
+			vrm = &db->header[i];
+		}
+	}
+	if (vrm == nullptr) {
+		IOLog("NativeUsbSerial: rails: no VRM block in cmd-db\n");
+		return false;
+	}
+
+	const uintptr_t dataBase = fCmdDb + offsetof(UkeCmdDbHeader, data);
+	const volatile UkeCmdDbEntry *entries =
+	    reinterpret_cast<const volatile UkeCmdDbEntry *>(dataBase + vrm->headerOffset);
+	uint32_t railAddr[kUkeUsbPhyRailCount] = {};
+	for (unsigned j = 0; j < vrm->count && j < 64; j++) {
+		char id[9];
+		for (unsigned k = 0; k < 8; k++) {
+			id[k] = static_cast<char>(entries[j].id[k]);
+		}
+		id[8] = '\0';
+		if (j < 12) {
+			IOLog("NativeUsbSerial: rails: vrm[%u] %-8s addr=%05x len=%u\n",
+			    j, id, entries[j].addr, entries[j].len);
+		}
+		// The DT resource-name is "ldob2"/"ldob4"; accept separator spellings
+		// ("ldo.b2", "ldo_b2") by comparing only the alphanumeric bytes.
+		char collapsed[9];
+		unsigned n = 0;
+		for (unsigned k = 0; k < 8 && id[k] != '\0'; k++) {
+			if ((id[k] >= '0' && id[k] <= '9') || (id[k] >= 'a' && id[k] <= 'z')) {
+				collapsed[n++] = id[k];
+			}
+		}
+		collapsed[n] = '\0';
+		for (unsigned r = 0; r < kUkeUsbPhyRailCount; r++) {
+			if (railAddr[r] == 0 && strcmp(collapsed, kUkeUsbPhyRails[r].resource) == 0) {
+				railAddr[r] = entries[j].addr;
+			}
+		}
+	}
+	bool haveAll = true;
+	for (unsigned r = 0; r < kUkeUsbPhyRailCount; r++) {
+		IOLog("NativeUsbSerial: rails: %s addr=%05x\n",
+		    kUkeUsbPhyRails[r].resource, railAddr[r]);
+		if (railAddr[r] == 0) {
+			haveAll = false;
+		}
+	}
+	if (!haveAll) {
+		IOLog("NativeUsbSerial: rails: rail(s) missing from cmd-db; no vote sent\n");
+		return false;
+	}
+
+	const uint32_t drvId = rd32(fRsc, kUkeRscDrvId);
+	const unsigned major = (drvId >> 16) & 0xff;
+	const unsigned minor = (drvId >> 8) & 0xff;
+	fRscRegs = major >= 3 ? kUkeRscRegsV30 : kUkeRscRegsV27;
+	const uint32_t prntChld = rd32(fRsc, fRscRegs.prntChldConfig);
+	const unsigned numTcs =
+	    (prntChld >> (kUkeDrvNumTcsShift * 2)) & kUkeDrvNumTcsMask;
+	const unsigned ncpt = (prntChld >> kUkeDrvNcptShift) & kUkeDrvNcptMask;
+	IOLog("NativeUsbSerial: rails: drv2 id=%08x v%u.%u num_tcs=%u ncpt=%u\n",
+	    drvId, major, minor, numTcs, ncpt);
+	if (ncpt == 0 || ncpt > 16) {
+		IOLog("NativeUsbSerial: rails: implausible ncpt; no vote sent\n");
+		return false;
+	}
+
+	// Offsets inside the drv-2 window; the TCS block starts at +0xd00.
+	const uint32_t tcsBase = kUkeRscDrv2TcsOffset;
+	auto tcsRegOff = [this](uint32_t reg, int tcs) -> uint32_t {
+		return kUkeRscDrv2TcsOffset + fRscRegs.tcsStride * static_cast<uint32_t>(tcs) + reg;
+	};
+	int tcs = -1;
+	for (unsigned t = kUkeRscActiveTcsFirst;
+	    t < kUkeRscActiveTcsFirst + kUkeRscActiveTcsCount && t < numTcs; t++) {
+		if (rd32(fRsc, tcsRegOff(fRscRegs.status, t)) != 0) {
+			tcs = static_cast<int>(t);
+			break;
+		}
+	}
+	if (tcs < 0) {
+		IOLog("NativeUsbSerial: rails: no idle ACTIVE TCS; no vote sent\n");
+		return false;
+	}
+	IOLog("NativeUsbSerial: rails: using ACTIVE tcs %u\n", static_cast<unsigned>(tcs));
+
+	for (unsigned r = 0; r < kUkeUsbPhyRailCount; r++) {
+		struct {
+			uint32_t addr;
+			uint32_t data;
+		} cmds[3] = {
+			{ railAddr[r] + 0, kUkeUsbPhyRails[r].millivolts }, // VOLTAGE (mV)
+			{ railAddr[r] + 8, kUkeUsbPhyRails[r].mode },       // MODE (HPM)
+			{ railAddr[r] + 4, 1 },                             // ENABLE, last
+		};
+		for (unsigned j = 0; j < 3; j++) {
+			const uint32_t msgid =
+			    kUkeCmdMsgidLen | kUkeCmdMsgidWrite | kUkeCmdMsgidRespReq;
+			wr32(fRsc, tcsRegOff(fRscRegs.cmdMsgid, tcs) + fRscRegs.cmdStride * j, msgid);
+			wr32(fRsc, tcsRegOff(fRscRegs.cmdAddr, tcs) + fRscRegs.cmdStride * j, cmds[j].addr);
+			wr32(fRsc, tcsRegOff(fRscRegs.cmdData, tcs) + fRscRegs.cmdStride * j, cmds[j].data);
+		}
+		wr32(fRsc, tcsRegOff(fRscRegs.cmdWaitForCmpl, tcs), 0x7);
+		wr32(fRsc, tcsRegOff(fRscRegs.cmdEnable, tcs), 0x7);
+
+		// __tcs_set_trigger(true): clear trigger, clear mode enable, then
+		// enable and trigger, each waiting to stick before the next.
+		uint32_t control = rd32(fRsc, tcsRegOff(fRscRegs.control, tcs));
+		wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), control & ~kUkeTcsAmcTrigger);
+		control &= ~kUkeTcsAmcTrigger;
+		wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), control & ~kUkeTcsAmcEnable);
+		wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), kUkeTcsAmcEnable);
+		wr32(fRsc, tcsRegOff(fRscRegs.control, tcs),
+		    kUkeTcsAmcEnable | kUkeTcsAmcTrigger);
+
+		bool idle = false;
+		for (unsigned i = 0; i < 500; i++) {
+			if (rd32(fRsc, tcsRegOff(fRscRegs.status, tcs)) != 0) {
+				idle = true;
+				break;
+			}
+			IOSleep(1);
+		}
+		uint32_t status[3] = {};
+		uint32_t resp[3] = {};
+		for (unsigned j = 0; j < 3; j++) {
+			status[j] = rd32(fRsc, tcsRegOff(fRscRegs.cmdStatus, tcs) + fRscRegs.cmdStride * j);
+			resp[j] = rd32(fRsc, tcsRegOff(fRscRegs.cmdRespData, tcs) + fRscRegs.cmdStride * j);
+		}
+		IOLog("NativeUsbSerial: rails: %s vote idle=%u st=%08x/%08x/%08x resp=%08x/%08x/%08x\n",
+		    kUkeUsbPhyRails[r].resource, idle ? 1u : 0u,
+		    status[0], status[1], status[2], resp[0], resp[1], resp[2]);
+
+		// Mirror tcs_tx_done(): give the TCS back and drop the IRQ line.
+		wr32(fRsc, tcsRegOff(fRscRegs.cmdEnable, tcs), 0);
+		wr32(fRsc, tcsRegOff(fRscRegs.cmdWaitForCmpl, tcs), 0);
+		wr32(fRsc, tcsBase + fRscRegs.irqClear, 1u << tcs);
+		if (!idle) {
+			IOLog("NativeUsbSerial: rails: TCS did not return to idle; stopping votes\n");
+			return false;
+		}
+		IOSleep(2);
+	}
+	IOLog("NativeUsbSerial: rails: vote sent (ldob2=880mV ldob4=1200mV enable hpm)\n");
+	return true;
 }
 
 
@@ -1618,6 +1819,15 @@ NativeUsbSerial::serialStart(void)
 	bzero(fLineCoding, sizeof(fLineCoding));
 	fDescriptors.build();
 
+	if (fEnableRails) {
+		IOLog("NativeUsbSerial: serial: rails\n");
+		if (!railsVote()) {
+			// Not fatal: the pure-warm APB echo below still measures the PHY
+			// state and the rest of bring-up reports what works.
+			IOLog("NativeUsbSerial: rails vote failed; continuing without it\n");
+		}
+	}
+
 	if (!warmInit()) {
 		IOLog("NativeUsbSerial: warm init failed\n");
 		return false;
@@ -1842,6 +2052,8 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t tcsrMode = 0;
 	uint32_t scmMode = 0;
 	PE_parse_boot_argn("native-usb-scm", &scmMode, sizeof(scmMode));
+	uint32_t railsMode = 0;
+	PE_parse_boot_argn("native-usb-rails", &railsMode, sizeof(railsMode));
 	uint32_t qscratchMode = 2;
 	// A stuck CSFTRST wedges the whole device domain on this core (usbdal6:
 	// the event ring stops latching its address after a stuck attempt), and
@@ -1863,6 +2075,7 @@ NativeUsbSerial::start(IOService *provider)
 	fEnablePhy = phyMode != 0;
 	fEnableTcsr = tcsrMode != 0;
 	fEnableScm = scmMode != 0;
+	fEnableRails = railsMode != 0;
 	fEnableQscratch = qscratchMode != 0;
 	fSoftReset = softResetMode != 0;
 	fBlockReset = blockResetMode != 0;

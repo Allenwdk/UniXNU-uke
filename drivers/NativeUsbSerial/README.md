@@ -19,7 +19,9 @@ hardware-validated yet; the probe is the first hardware gate.
 | `native-usb-serial-log=1` | Reserved: msgbuf relay |
 | `native-usb-serial-dump=1` | Reserved: send the full msgbuf |
 | `native-usb-phy=1` | Program the eUSB2 PHY register file (opt-in) |
-| `native-usb-tcsr=1` | Write `TCSR_USB2_CLKREF_EN` (`0x1f4b118` bit 0, write-only) |
+| `native-usb-rails=1` | Vote the eUSB2 PMIC rails back on: cmd-db (0x81c60000) supplies the VRM addresses for `ldob2`/`ldob4` (pmxr2230 L2B 0.88 V vdd, L4B 1.2 V vdda12, both `qcom,proxy-consumer-enable` so ABL's votes die at handoff) and ACTIVE_ONLY VRM commands go out through apps_rsc drv-2 (0x17a20000, tcs +0xd00): voltage then mode then enable-last, each with completion requested |
+| `native-usb-scm=1` | Read/write the TCSR clkref through the SCM SIO service (EL3 MMIO) |
+| `native-usb-tcsr=1` | Write `TCSR_USB2_CLKREF_EN` (`0x1fb1118` bit 0, write-only; the store stalls the machine — see usbbr5) |
 | `native-usb-fs=1` | Advertise full speed instead of high speed in `DCFG` |
 | `native-usb-qscratch=0` | Skip the UTMI pipe-clock select |
 | `native-usb-qscratch=2` | Default: `core_base + 0xf8800` = `0x0a6f8800` |
