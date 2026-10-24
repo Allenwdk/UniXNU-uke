@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FW = ROOT / '.cache/firmware/novatek/novatek_nt36532_n81a_fw_csot.bin'
+FW = ROOT / '.cache/firmware/novatek/novatek_nt36532_o82_fw_csot.bin'
 CASES = [
     ('geni-spi', ['drivers/NativeGeniSpi/Test/geni-spi.c', 'drivers/NativeGeniSpi/GeniSpi.c'], []),
     ('nvt-protocol', ['drivers/NativeNovatekTouch/Test/nvt-protocol.c', 'drivers/NativeNovatekTouch/NvtProtocol.c'],
