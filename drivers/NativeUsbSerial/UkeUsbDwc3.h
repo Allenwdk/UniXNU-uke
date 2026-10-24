@@ -13,6 +13,7 @@
 #include "UkeUsbBoard.h"
 
 // Global registers.
+#define UKE_USB_DWC3_GRXTHRCFG       0xc10cU
 #define UKE_USB_DWC3_GCTL            0xc110U
 #define UKE_USB_DWC3_GSTS            0xc118U
 #define UKE_USB_DWC3_GSNPSID         0xc120U

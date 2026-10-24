@@ -694,9 +694,12 @@ NativeUsbSerial::blockReset(void)
 	    gdscr, rd32(fGcc, 0x000));
 
 	// The glue page and the core registers reset with the block: put the
-	// UTMI-as-pipe routing back, re-select device mode with clock gating
-	// disabled, and replay the PHY control registers without the suspend
-	// bits so the device domain keeps its functional clock.
+	// UTMI-as-pipe routing back, replay the PHY control registers without
+	// the suspend bits, and only then take the vendor's dwc3_core_soft_reset
+	// step: after a power-on reset the device domain needs one DCTL.CSFTRST,
+	// and DWC_usb31 1.90a+ clears that bit only once all its clocks are
+	// synchronized, which the programming guide says can take just over
+	// 50 ms — poll 10 x 30 ms before declaring it stuck.
 	uint32_t general = rd32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG);
 	wr32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG,
 	    (general & ~UKE_USB_QSCRATCH_PIPE_UTMI_CLK_DIS) |
@@ -705,16 +708,33 @@ NativeUsbSerial::blockReset(void)
 	IOLog("NativeUsbSerial: warm: general=%08x -> %08x\n",
 	    general, rd32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG));
 
+	wr32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0), usb2cfg &
+	    ~(UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY | (1U << 31)));
+	wr32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0), usb3pip &
+	    ~UKE_USB_DWC3_GUSB3PIPECTL_SUSPHY);
+	IODelay(100);
+	wr32(fWrapper, UKE_USB_DWC3_DCTL, UKE_USB_DWC3_DCTL_CSFTRST);
+	bool softResetDone = false;
+	for (unsigned i = 0; i < 10; i++) {
+		IOSleep(30);
+		if ((rd32(fWrapper, UKE_USB_DWC3_DCTL) & UKE_USB_DWC3_DCTL_CSFTRST) == 0) {
+			softResetDone = true;
+			break;
+		}
+	}
+	if (!softResetDone) {
+		wr32(fWrapper, UKE_USB_DWC3_DCTL,
+		    rd32(fWrapper, UKE_USB_DWC3_DCTL) & ~UKE_USB_DWC3_DCTL_CSFTRST);
+	}
+	IOLog("NativeUsbSerial: warm: block reset csfrst dctl=%08x (%s)\n",
+	    rd32(fWrapper, UKE_USB_DWC3_DCTL), softResetDone ? "cleared" : "STUCK");
+
 	uint32_t gctl = rd32(fWrapper, UKE_USB_DWC3_GCTL);
 	wr32(fWrapper, UKE_USB_DWC3_GCTL,
 	    (gctl & ~UKE_USB_DWC3_GCTL_PRTCAP_MASK) | UKE_USB_DWC3_GCTL_PRTCAP_DEVICE |
 	    UKE_USB_DWC3_GCTL_DSBLCLKGTNG);
 	IOLog("NativeUsbSerial: warm: gctl -> %08x\n", rd32(fWrapper, UKE_USB_DWC3_GCTL));
 
-	wr32(fWrapper, UKE_USB_DWC3_GUSB2PHYCFG(0), usb2cfg &
-	    ~(UKE_USB_DWC3_GUSB2PHYCFG_SUSPHY | (1U << 31)));
-	wr32(fWrapper, UKE_USB_DWC3_GUSB3PIPECTL(0), usb3pip &
-	    ~UKE_USB_DWC3_GUSB3PIPECTL_SUSPHY);
 	IODelay(100);
 	uint32_t id = rd32(fWrapper, UKE_USB_DWC3_GSNPSID);
 	IOLog("NativeUsbSerial: warm: replay usb2=%08x usb3=%08x id=%08x\n",
@@ -855,10 +875,15 @@ NativeUsbSerial::deviceInit(void)
 	IOLog("NativeUsbSerial: serial: dcfg=%08x speed=%s gctl=%08x\n",
 	    rd32(fWrapper, UKE_USB_DWC3_DCFG), fForceFs ? "full" : "high",
 	    rd32(fWrapper, UKE_USB_DWC3_GCTL));
-	// DEVTEN stays 0 here (the halt cleared it): the reference configures
-	// endpoints with the event machinery off and only enables the events
-	// right before RUN. GCTL, GUSB2PHYCFG and GUSB3PIPECTL are left exactly
-	// as ABL set them.
+	// Vendor __dwc3_gadget_start: clear GRXTHRCFG.PKTCNTSEL (bit 26 on
+	// DWC_usb31) so the core computes the ACK NUMP itself instead of using
+	// the programmed packet count.
+	wr32(fWrapper, UKE_USB_DWC3_GRXTHRCFG,
+	    rd32(fWrapper, UKE_USB_DWC3_GRXTHRCFG) & ~(1U << 26));
+	// DEVTEN stays 0 here (the halt cleared it): the vendor reference also
+	// configures endpoints with the event machinery off and only enables the
+	// events right before RUN. GCTL, GUSB2PHYCFG and GUSB3PIPECTL are left
+	// exactly as ABL set them.
 }
 
 bool
@@ -903,11 +928,6 @@ NativeUsbSerial::configEp(Endpoint &ep, uint8_t type, uint16_t mps, uint32_t fif
 	if (!depCommand(ep.phys, UKE_USB_DWC3_DEPCMD_SETEPCONFIG, p0, p1, 0, nullptr)) {
 		return false;
 	}
-	uint32_t result = 0;
-	if (!depCommand(ep.phys, UKE_USB_DWC3_DEPCMD_SETTRANSFRESOURCE, 1, 0, 0, &result)) {
-		return false;
-	}
-	ep.resource = UKE_USB_DWC3_DEPCMD_GET_RSC_IDX(result);
 	ep.enabled = true;
 	return true;
 }
@@ -1510,15 +1530,42 @@ NativeUsbSerial::serialStart(void)
 	uint32_t dalepena0 = rd32(fWrapper, UKE_USB_DWC3_DALEPENA);
 	wr32(fWrapper, UKE_USB_DWC3_DALEPENA, 0);
 	IOLog("NativeUsbSerial: serial: dalepena %08x -> 00000000\n", dalepena0);
-	// Linux's canonical order: Start New Configuration first on EP0, which
-	// resets the whole transfer-resource allocation, and only then the
-	// Set Endpoint Config / Set Transfer Resource pairs per direction.
+	// Linux's canonical order (dwc3_gadget_start_config + ep0 enable):
+	// Start New Configuration on ep0-out first, then Set Transfer Resource
+	// for every hardware endpoint, and only then the Set Endpoint Config
+	// pairs. usbbr1 showed SETEPCONFIG as the first post-DEPSTARTCFG
+	// command hanging, and the vendor never issues that order.
 	if (!depCommand(0, UKE_USB_DWC3_DEPCMD_DEPSTARTCFG, 0, 0, 0, nullptr)) {
 		IOLog("NativeUsbSerial: EP0 start-config failed\n");
 		return false;
 	}
-	if (!configEp(fEp0Out, UKE_USB_DWC3_EP_TYPE_CONTROL, 64, 0, false, true) ||
-	    !configEp(fEp0In, UKE_USB_DWC3_EP_TYPE_CONTROL, 64, 0, true, true)) {
+	uint32_t rsc = 0;
+	if (!depCommand(0, UKE_USB_DWC3_DEPCMD_SETTRANSFRESOURCE, 1, 0, 0, &rsc)) {
+		IOLog("NativeUsbSerial: EP0-out transfer resource failed\n");
+		return false;
+	}
+	fEp0Out.resource = UKE_USB_DWC3_DEPCMD_GET_RSC_IDX(rsc);
+	fEp0Out.enabled = true;
+	if (!depCommand(1, UKE_USB_DWC3_DEPCMD_SETTRANSFRESOURCE, 1, 0, 0, &rsc)) {
+		IOLog("NativeUsbSerial: EP0-in transfer resource failed\n");
+		return false;
+	}
+	fEp0In.resource = UKE_USB_DWC3_DEPCMD_GET_RSC_IDX(rsc);
+	fEp0In.enabled = true;
+	// The same resource assignment covers the data endpoints: their later
+	// Set Endpoint Config (configureData) only configures, matching the
+	// vendor loop over every hardware endpoint right after Start New
+	// Configuration.
+	Endpoint *const dataEps[] = { &fEp1In, &fEp2In, &fEp3Out };
+	for (Endpoint *ep : dataEps) {
+		uint32_t value = 0;
+		if (!depCommand(ep->phys, UKE_USB_DWC3_DEPCMD_SETTRANSFRESOURCE, 1, 0, 0, &value)) {
+			return false;
+		}
+		ep->resource = UKE_USB_DWC3_DEPCMD_GET_RSC_IDX(value);
+	}
+	if (!configEp(fEp0Out, UKE_USB_DWC3_EP_TYPE_CONTROL, 512, 0, false, true) ||
+	    !configEp(fEp0In, UKE_USB_DWC3_EP_TYPE_CONTROL, 512, 0, true, true)) {
 		IOLog("NativeUsbSerial: EP0 configuration failed\n");
 		return false;
 	}
