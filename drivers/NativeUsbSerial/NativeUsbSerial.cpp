@@ -279,6 +279,13 @@ class NativeUsbSerial : public IOService {
 	uint32_t fRailL2Voltage = 0;
 	uint32_t fRailCxLevel = 0;
 	uint32_t fRailMxLevel = 0;
+	uint32_t fPollsFirstVote = 0;
+	uint32_t fPollsXoRead = 0;
+	uint32_t fPollsCxRead = 0;
+	uint32_t fControlHeld = 0;
+	uint32_t fTcsUsed = 0;
+	uint32_t fDrvIdRead = 0;
+	uint32_t fNcptRead = 0;
 	uint32_t fRcgBefore = 0;
 	uint32_t fRcgAfter = 0;
 	void rcgTune(void);
@@ -1089,6 +1096,8 @@ NativeUsbSerial::railsVote(void)
 	const unsigned ncpt = (prntChld >> kUkeDrvNcptShift) & kUkeDrvNcptMask;
 	IOLog("NativeUsbSerial: rails: drv2 id=%08x v%u.%u num_tcs=%u ncpt=%u\n",
 	    drvId, major, minor, numTcs, ncpt);
+	fDrvIdRead = drvId;
+	fNcptRead = ncpt;
 	if (ncpt == 0 || ncpt > 16) {
 		IOLog("NativeUsbSerial: rails: implausible ncpt; no vote sent\n");
 		return false;
@@ -1111,6 +1120,7 @@ NativeUsbSerial::railsVote(void)
 		return false;
 	}
 	IOLog("NativeUsbSerial: rails: using ACTIVE tcs %u\n", static_cast<unsigned>(tcs));
+	fTcsUsed = static_cast<uint32_t>(tcs);
 
 	for (unsigned r = 0; r < kUkeUsbPhyRailCount; r++) {
 		// Voltage then mode, enable last (rpmh_regulator_reorder_cmds).
@@ -1249,6 +1259,16 @@ NativeUsbSerial::tcsVoteActive(unsigned tcs, const uint32_t *addrs, const uint32
 			break;
 		}
 		IOSleep(1);
+	}
+	// 0 polls = the TCS never left idle: the trigger did not fire and every
+	// completion (and every read-back) was an instant no-op.
+	if (strcmp(name, "ldob2") == 0) {
+		fPollsFirstVote = polls;
+		fControlHeld = controlHeld;
+	} else if (strcmp(name, "xo.lvl read") == 0) {
+		fPollsXoRead = polls;
+	} else if (strcmp(name, "cx.lvl") == 0) {
+		fPollsCxRead = polls;
 	}
 	uint32_t status[4] = {};
 	uint32_t resp[4] = {};
@@ -2213,9 +2233,14 @@ NativeUsbSerial::serialStart(void)
 void
 NativeUsbSerial::railsTail(void)
 {
-	IOLog("NativeUsbSerial: rails: end cx=%08x mx=%08x xo=%08x l2v=%08x l2en=%08x l4en=%08x rcg %08x->%08x\n",
-	    fRailCxLevel, fRailMxLevel, fRailXoLevel, fRailL2Voltage, fRailL2Enable,
-	    fRailL4Enable, fRcgBefore, fRcgAfter);
+	// p=<polls of the ldob2 vote>/<xo read>/<cx read>: 0/0/0 means no TCS
+	// transaction ever left idle (trigger dead, everything a no-op); nonzero
+	// polls mean real transactions. cx/mx read through a path the AOP may not
+	// service, so they only validate the READ encoding, never the rails.
+	IOLog("NativeUsbSerial: rails: end p=%u/%u/%u ctl=%08x tcs=%u drv=%08x ncpt=%u cx=%08x mx=%08x xo=%08x l2v=%08x l2en=%08x l4en=%08x rcg %08x->%08x\n",
+	    fPollsFirstVote, fPollsXoRead, fPollsCxRead, fControlHeld, fTcsUsed,
+	    fDrvIdRead, fNcptRead, fRailCxLevel, fRailMxLevel, fRailXoLevel,
+	    fRailL2Voltage, fRailL2Enable, fRailL4Enable, fRcgBefore, fRcgAfter);
 }
 
 void
