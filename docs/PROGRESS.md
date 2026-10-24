@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-10-24
 >
-> **当前一句话状态：** **GPU 阶段 4 的 9 级探针全部在真机通过**（GMU SMMU context、时钟、command DB、cold start + HFI、GX、GPU SMMU context/CP ring、zap/irq、kernel 侧 Metal accelerator publish `s5/0 r1`），内核 `d7fce63b`/`f5beb87e` 系列稳定；mobile graphics client 已在持续提交 swap（`sel 4/5`，1200 字节记录），但 **Legacy 路径拿不到 surface（`surface=0`）所以屏幕还没有内容**。另一个硬限制：XNU 的 VM 大小等于 DarwinBoot 的 `owned_memory_size` window（当前 256/320 MiB，`boot_args.memSize`），不是 ADT 的 `dram-size`；6 GiB window 因 UEFI 只映射 4 GiB 以下而 `Out of Resources`，所以 desktop 会在几分钟后 jetsam OOM。**下一里程碑：UEFI 高区映射（根治内存）+ own-present（把 swap 记录里的 surface 呈现出来）。**
+> **当前一句话状态：** **内存墙已拆 + 画面首次上屏**（2026-10-24）。UEFI 静态映射 0x8C0000000-0xB0000000 高区 DRAM（FD `e3ffdcbc…`）配合 `owned_memory_size=0x130000000`，XNU VM 实测 ~4.5 GiB、t=538s+ 无 jetsam；反汇编原厂 SwapEnd 链后打通呈现：合成器把整帧渲进 overlay surface（记录 layer 6、ID 如 41，原厂 4 层循环翻译不到），`presentBase` 在 sel 5 返回后用原厂 IOSurfaceRoot lookup（`0xfffffff0057a28c0`）解析该 ID 并拷贝到 GOP —— `gpu-framepresent2`（内核 `ea95a0dd…`）**首次在面板上显示系统 UI**（白底 + home indicator + "swipe up to upgrade"）。v3（内核 `f2598af9…`、vendor_boot `a4128390…`、归档 `releases/2026-10-24-gpu-framepresent-v3/`）去掉空事务时回落纯黑默认 surface 的路径（v2 几秒后黑屏的原因），上机判定中。**下一里程碑：触摸输入（"swipe up" 需要它）、异步/GPU 呈现提帧率（当前 CPU 拷贝 150-300ms/帧）、防自动变暗。**
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -101,6 +101,23 @@
 - **本地 Linux 工具链**：独立 worktree（core `linux-host` + device 5a110b2/`gpu-m7-local`）可完整编 `uke-gpu-userland_defconfig`；修了 `out/` 预建、`UNIXNU_HOST_COMPAT_INCLUDE`、`compression_tool` shim 三个环境缺口，增量重编约 3-4 分钟。
 
 **分支/CI 恢复**：并行的 Linux 移植提交（device `5a110b2` 的 `patches/xnu/linux-*`）会破坏 macOS CI（hostcompat / Xcode 16.4 warning），已 revert（`24ab7fd`）并在 `linux-host`/`linux-werror` 保留；CI 回到 `macos-latest`；固件改走三个 40 KB secret chunk + path 对齐的 Actions cache（`f61f3c3`）。
+
+### 3.1.3 内存墙拆除 + 画面上屏（2026-10-24 深夜）
+
+**内存**：照 sheng 的方式在 `ukePkg/Library/MemoryMapLib` 静态声明高区 DRAM（`0x8C0000000+0xC0000000` 与 `0x980000000+0x180000000`，相邻，RunEnd 合并成 9 GiB run；uefi-uke `1e2d12d`），board.toml `owned_memory_size=0x130000000`/`dram_base=0x8C0000000`/`dram_size=0x240000000`（device `a562371`）。实机：`UKE MEM` ~111 万 4K 页（≈4.5 GiB），free ~645 MiB，t=538s+ 无 jetsam（320 MiB 窗口时代 ~500s 必死）。FD `e3ffdcbc…`，boot.img `f197abc8…`。
+
+**原厂 SwapEnd 链反汇编**（合并内核 = payload 里的 `kernel.macho`，`__PRELINK_TEXT` @ `0xfffffff00427c000`、`__PLK_TEXT_EXEC` fileoff `0x190A000`；地址在这个构建里固定）：
+- sel 5 的实现 `0x577722c` 先检查 `structureInputSize == 1288`，不等则 abort（vtable[217]）返回 `0xe00002bc`——swap_submit 根本不跑。GPU 合成器发 1200 字节记录（CPU 渲染器是 1288）。
+- `swap_submit`（vtable[178]，`0x578f224`）：gate 动作按 `record+0x98` 的 ID 在 `fb+5496` 链表找 request；掩码从 record 拷贝（`+0x14c`→request+792 updated、`+0x150`|→796 disabled、`+0x154`→800）；**层循环只跑 layer<4**，surface ID 在 `record+0x9c+4*layer`，等于默认 surface ID 时直接用 `fb+0x1618`，否则 `fb+0x1600`（IOSurfaceRoot）的 lookup（`0x57a28c0(root, id, task)`，task 来自 `0x57a2e84`）→ 存 `request+0xa40+8*layer`。
+- 实机记录：updated=`0x56`（layers 1,2,4,6）、disabled=`0xff000000`；layers 1/2/4 的 ID=0，**layer 6 的 ID=41 才是整帧**——原厂循环够不到，request 的 surface 槽全空 → `accepted=0 reason=2 surface=0`。
+
+**呈现方案**（NativeMobileDisplay `33fe049` + device `ad87339`）：`wrappedExternal` 在 sel 5 前把 <1288 的记录补零到 1288（`offline-legacy-swap-pad`，默认开）、捕获记录里第一个有 ID 的 enabled 层；原始调用成功返回后 `presentBase(frameSurfaceId)` 用**原厂 lookup stub**（绑定 `0xfffffff0057a28c0`/`0xfffffff0057a2e84`，字节校验）解析 overlay surface，校验几何后同步拷贝到 GOP（合成器自己的线程上，surface 不会被并发释放）。`offline-legacy-noconsole=1` 防止控制台重绘盖掉画面。默认 surface（`fb+0x1618`）实测纯黑（`nonblack=0`）——v2 曾回落到它导致首帧后几秒黑屏，v3 起空事务不再呈现、保留上一帧。
+
+**实机结果**：`gpu-framepresent2`（内核 `ea95a0dd…`）**首次在面板显示系统 UI**——白底、home indicator、"swipe up to upgrade"。v3（内核 `f2598af9…`，vendor_boot `a4128390…`，`releases/2026-10-24-gpu-framepresent-v3/`）修复空事务刷黑，判定中。当前帧率 3-7 fps（3200×2136 CPU 拷贝 150-300ms/帧）。
+
+**流程教训**（并行会话踩坑）：共享 `UniXNU-linux/out` 的并行构建（USB 串口测试）会把 defconfig/软链/kernel.macho 换掉，产出错误内核的 payload——两版废镜像由此而来（设备上表现为无任何 UKE 行 + SpringBoard corpse 循环）。**规矩：本地镜像刷机前必须 `mcopy -i <vendor_boot>@@4096` 抽出内核，grep 标记字符串并核对尺寸（GPU 轨 52,133,888 B / USB 配置 51,478,528 B）；重建前先重跑 `defconfig` 复位软链；每轮镜像归档到 `uke-port/releases/<date>-<tag>/`。**
+
+
 
 ### 3.2 UEFI 固件（uefi-uke）
 
