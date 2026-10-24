@@ -20,6 +20,14 @@
 // page sits inside it.
 #define UKE_USB_QSCRATCH_BASE       (UKE_USB_WRAPPER_BASE + 0xf8800ULL)
 #define UKE_USB_QSCRATCH_SIZE       0x00000400ULL
+// GENERAL_CFG (0x08) routes the clock the device domain runs on. ABL leaves
+// PIPE_UTMI_CLK_SEL (bit 0: feed the pipe-clock input from the UTMI clock —
+// this board has no PIPE3) and PIPE3_PHYSTATUS_SW (bit 3) set; the PHY BCR
+// pulse resets the glue and drops both, which starves the command engine.
+#define UKE_USB_QSCRATCH_GENERAL_CFG       0x08U
+#define UKE_USB_QSCRATCH_PIPE_UTMI_CLK_SEL  (1U << 0)
+#define UKE_USB_QSCRATCH_PIPE3_PHYSTATUS_SW (1U << 3)
+#define UKE_USB_QSCRATCH_PIPE_UTMI_CLK_DIS  (1U << 8)
 // The value the first revision transcribed. It is outside the wrapper window
 // and raises a synchronous external abort; kept only to reproduce that.
 #define UKE_USB_QSCRATCH_BASE_BAD   0x0b58800ULL

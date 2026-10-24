@@ -499,6 +499,17 @@ NativeUsbSerial::warmInit(void)
 		IODelay(100);
 		wr32(fPhyBcr, 0x000, 0);
 		IODelay(100);
+		// The BCR pulse resets the glue's clock routing too: ABL left
+		// GENERAL_CFG with UTMI-as-pipe and the PIPE3 status override, and
+		// without those bits the core's pipe-clock input has no source and
+		// the endpoint command engine never runs (usbdal5's DEP0 timeout).
+		uint32_t general = rd32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG);
+		wr32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG,
+		    (general & ~UKE_USB_QSCRATCH_PIPE_UTMI_CLK_DIS) |
+		    UKE_USB_QSCRATCH_PIPE_UTMI_CLK_SEL |
+		    UKE_USB_QSCRATCH_PIPE3_PHYSTATUS_SW);
+		IOLog("NativeUsbSerial: warm: general=%08x -> %08x\n",
+		    general, rd32(fQscratch, UKE_USB_QSCRATCH_GENERAL_CFG));
 		for (size_t i = 0; i < UKE_USB_PHY_INIT_COUNT; i++) {
 			const UkeUsbPhyWrite &write = kUkeUsbPhyInit19Mhz[i];
 			uint32_t before = rd32(fPhy, write.offset);
@@ -1562,7 +1573,11 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t phyMode = 0;
 	uint32_t tcsrMode = 0;
 	uint32_t qscratchMode = 2;
-	uint32_t softResetMode = 1;
+	// A stuck CSFTRST wedges the whole device domain on this core (usbdal6:
+	// the event ring stops latching its address after a stuck attempt), and
+	// it never completes with or without the domain clock, so the default is
+	// to take over ABL's halted warm state without a reset. =1 re-enables it.
+	uint32_t softResetMode = 0;
 	PE_parse_boot_argn("native-usb-probe", &probeMode, sizeof(probeMode));
 	PE_parse_boot_argn("native-usb-serial", &serialMode, sizeof(serialMode));
 	PE_parse_boot_argn("native-usb-serial-dump", &dumpMode, sizeof(dumpMode));
