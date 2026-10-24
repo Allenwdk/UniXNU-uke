@@ -235,6 +235,7 @@ class NativeUsbSerial : public IOService {
 	void serialStop(void);
 	bool warmInit(void);
 	bool blockReset(void);
+	void phyApbProbe(void);
 	bool dmaAllocate(void);
 	bool smmuAttach(void);
 	void fifoConfig(void);
@@ -524,6 +525,17 @@ NativeUsbSerial::warmInit(void)
 				return false;
 			}
 		}
+		// Every wrapper write held, but that only proves the PHY's config
+		// register file is mapped. Dump the final state and probe the
+		// internal APB bridge (tuner space, vendor eusb2_phy_apb_reg_read
+		// protocol): it runs on the PHY's own clock domain, so a timeout
+		// there means the reference clock never reached the PLL even
+		// though the table applied cleanly.
+		IOLog("NativeUsbSerial: warm: phy state common0=%08x ctrl2=%08x ctrl3=%08x cfg0=%08x fsel=%08x utmi0=%08x eud=%08x\n",
+		    rd32(fPhy, 0x054), rd32(fPhy, 0x05c), rd32(fPhy, 0x060),
+		    rd32(fPhy, 0x094), rd32(fPhy, 0x0b8), rd32(fPhy, 0x03c),
+		    rd32(fEudEnable, 0));
+		phyApbProbe();
 	}
 
 	// Core identity and port mode. The reference refuses cores other than
@@ -731,6 +743,43 @@ NativeUsbSerial::blockReset(void)
 		return false;
 	}
 	return true;
+}
+
+// Read a handful of eUSB2 tuner registers through the PHY's internal APB
+// bridge, following the vendor eusb2_phy_apb_reg_read() protocol: address to
+// APB_ADDRESS (0x138), APB_START_CMD (bit 1) to APB_ACCESS_CMD (0x130), poll
+// ACCESS_DONE (bit 0) in APB_ACCESS_STATUS (0x134), then read the 16-bit
+// value from APB_RDDATA_LSB/MSB (0x144/0x148). The bridge sits inside the
+// PHY's clock domain, so ACCESS_DONE never arriving means the reference
+// clock is not reaching the PLL.
+void
+NativeUsbSerial::phyApbProbe(void)
+{
+	static const uint8_t kApbRegs[] = { 0x00, 0x05, 0x10, 0x30, 0x60 };
+
+	for (uint8_t reg : kApbRegs) {
+		wr32(fPhy, 0x138, reg);
+		wr32(fPhy, 0x130, 1U << 1);
+		uint32_t status = 0xffffffffU;
+		bool done = false;
+		for (unsigned i = 0; i < 1000; i++) {
+			status = rd32(fPhy, 0x134);
+			if ((status & 1U) != 0) {
+				done = true;
+				break;
+			}
+			IODelay(10);
+		}
+		if (!done) {
+			IOLog("NativeUsbSerial: warm: phy apb[%02x] TIMEOUT status=%08x\n",
+			    reg, status);
+			return;
+		}
+		uint32_t lsb = rd32(fPhy, 0x144) & 0xffU;
+		uint32_t msb = rd32(fPhy, 0x148) & 0xffU;
+		wr32(fPhy, 0x130, 0);
+		IOLog("NativeUsbSerial: warm: phy apb[%02x]=%02x%02x\n", reg, msb, lsb);
+	}
 }
 
 bool
