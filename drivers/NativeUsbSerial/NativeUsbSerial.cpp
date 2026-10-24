@@ -235,6 +235,7 @@ class NativeUsbSerial : public IOService {
 	bool fEnableScm = false;
 	bool fEnableRails = false;
 	bool fEnableRcg = false;
+	bool fEnableGctlReset = false;
 	bool fEnableQscratch = false;
 	bool fSoftReset = true;
 	bool fBlockReset = false;
@@ -701,6 +702,26 @@ NativeUsbSerial::warmInit(void)
 		IOLog("NativeUsbSerial: controller halt timeout dsts=%08x\n",
 		    rd32(fWrapper, UKE_USB_DWC3_DSTS));
 		return false;
+	}
+	if (fEnableGctlReset) {
+		// dwc3_gctl_core_soft_reset(): the DRD-role-switch reset on this
+		// silicon — assert GCTL.CORESOFTRESET (bit 11), give the core logic
+		// 100 ms, deassert. Unlike DCTL.CSFTRST it is not specified to wait
+		// for "all clocks synchronized", and it has never been tried here.
+		uint32_t gctlReset = rd32(fWrapper, UKE_USB_DWC3_GCTL);
+		wr32(fWrapper, UKE_USB_DWC3_GCTL, gctlReset | (1U << 11));
+		IOSleep(100);
+		wr32(fWrapper, UKE_USB_DWC3_GCTL, gctlReset & ~(1U << 11));
+		IOSleep(10);
+		uint32_t gctlAfter = rd32(fWrapper, UKE_USB_DWC3_GCTL);
+		// The pulse may drop PrtCapDir and the clock-gating disable; put the
+		// device-mode + ungated configuration back exactly as before.
+		uint32_t gctlWant = (gctlAfter & ~UKE_USB_DWC3_GCTL_PRTCAP_MASK) |
+		    UKE_USB_DWC3_GCTL_PRTCAP_DEVICE | UKE_USB_DWC3_GCTL_DSBLCLKGTNG;
+		wr32(fWrapper, UKE_USB_DWC3_GCTL, gctlWant);
+		IOLog("NativeUsbSerial: warm: gctl-reset %08x -> %08x -> %08x id=%08x\n",
+		    gctlReset, gctlAfter, rd32(fWrapper, UKE_USB_DWC3_GCTL),
+		    rd32(fWrapper, UKE_USB_DWC3_GSNPSID));
 	}
 	if (fBlockReset) {
 		if (!blockReset()) {
@@ -2308,6 +2329,8 @@ NativeUsbSerial::start(IOService *provider)
 	PE_parse_boot_argn("native-usb-rails", &railsMode, sizeof(railsMode));
 	uint32_t rcgMode = 0;
 	PE_parse_boot_argn("native-usb-rcg", &rcgMode, sizeof(rcgMode));
+	uint32_t gctlResetMode = 0;
+	PE_parse_boot_argn("native-usb-gctlreset", &gctlResetMode, sizeof(gctlResetMode));
 	uint32_t qscratchMode = 2;
 	// A stuck CSFTRST wedges the whole device domain on this core (usbdal6:
 	// the event ring stops latching its address after a stuck attempt), and
@@ -2331,6 +2354,7 @@ NativeUsbSerial::start(IOService *provider)
 	fEnableScm = scmMode != 0;
 	fEnableRails = railsMode != 0;
 	fEnableRcg = rcgMode != 0;
+	fEnableGctlReset = gctlResetMode != 0;
 	fEnableQscratch = qscratchMode != 0;
 	fSoftReset = softResetMode != 0;
 	fBlockReset = blockResetMode != 0;
