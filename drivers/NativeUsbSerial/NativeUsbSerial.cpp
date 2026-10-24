@@ -269,6 +269,8 @@ class NativeUsbSerial : public IOService {
 	void phyApbRead(uint8_t reg, uint8_t expected);
 	void scmClkrefProbe(void);
 	bool railsVote(void);
+	bool tcsVoteActive(unsigned tcs, const uint32_t *addrs, const uint32_t *datas,
+	    unsigned count, const char *name);
 	bool dmaAllocate(void);
 	bool smmuAttach(void);
 	void fifoConfig(void);
@@ -911,6 +913,7 @@ NativeUsbSerial::railsVote(void)
 	}
 
 	const volatile UkeCmdDbRscHdr *vrm = nullptr;
+	const volatile UkeCmdDbRscHdr *arc = nullptr;
 	for (unsigned i = 0; i < kUkeCmdDbMaxSlv; i++) {
 		const uint16_t slv = db->header[i].slvId;
 		if (slv == 0) {
@@ -920,6 +923,8 @@ NativeUsbSerial::railsVote(void)
 		    i, slv, db->header[i].count);
 		if (slv == kUkeCmdDbHwVrm) {
 			vrm = &db->header[i];
+		} else if (slv == kUkeCmdDbHwArc) {
+			arc = &db->header[i];
 		}
 	}
 	if (vrm == nullptr) {
@@ -927,36 +932,72 @@ NativeUsbSerial::railsVote(void)
 		return false;
 	}
 
-	const uintptr_t dataBase = fCmdDb + offsetof(UkeCmdDbHeader, data);
-	const volatile UkeCmdDbEntry *entries =
-	    reinterpret_cast<const volatile UkeCmdDbEntry *>(dataBase + vrm->headerOffset);
-	uint32_t railAddr[kUkeUsbPhyRailCount] = {};
-	for (unsigned j = 0; j < vrm->count && j < 64; j++) {
-		char id[9];
-		for (unsigned k = 0; k < 8; k++) {
-			id[k] = static_cast<char>(entries[j].id[k]);
-		}
-		id[8] = '\0';
-		if (j < 12) {
-			IOLog("NativeUsbSerial: rails: vrm[%u] %-8s addr=%05x len=%u\n",
-			    j, id, entries[j].addr, entries[j].len);
-		}
-		// The DT resource-name is "ldob2"/"ldob4"; accept separator spellings
-		// ("ldo.b2", "ldo_b2") by comparing only the alphanumeric bytes.
-		char collapsed[9];
+	// cmd-db ids are 8 bytes and may use separators ("ldo.b2", "xo.lvl");
+	// match on the alphanumeric-only projection of both sides.
+	auto collapseId = [](const char *id, char *out) {
 		unsigned n = 0;
 		for (unsigned k = 0; k < 8 && id[k] != '\0'; k++) {
 			if ((id[k] >= '0' && id[k] <= '9') || (id[k] >= 'a' && id[k] <= 'z')) {
-				collapsed[n++] = id[k];
+				out[n++] = id[k];
 			}
 		}
-		collapsed[n] = '\0';
+		out[n] = '\0';
+	};
+	const uintptr_t dataBase = fCmdDb + offsetof(UkeCmdDbHeader, data);
+	uint32_t railAddr[kUkeUsbPhyRailCount] = {};
+	uint32_t refClkAddr[sizeof(kUkeUsbPhyRefClocks) / sizeof(kUkeUsbPhyRefClocks[0])] = {};
+	char collapsed[9];
+	char wanted[9];
+
+	if (vrm->count <= 64) {
+		const volatile UkeCmdDbEntry *entries =
+		    reinterpret_cast<const volatile UkeCmdDbEntry *>(dataBase + vrm->headerOffset);
 		for (unsigned r = 0; r < kUkeUsbPhyRailCount; r++) {
-			if (railAddr[r] == 0 && strcmp(collapsed, kUkeUsbPhyRails[r].resource) == 0) {
-				railAddr[r] = entries[j].addr;
+			collapseId(kUkeUsbPhyRails[r].resource, wanted);
+			for (unsigned j = 0; j < vrm->count; j++) {
+				char id[9];
+				for (unsigned k = 0; k < 8; k++) {
+					id[k] = static_cast<char>(entries[j].id[k]);
+				}
+				id[8] = '\0';
+				if (j < 12) {
+					IOLog("NativeUsbSerial: rails: vrm[%u] %-8s addr=%05x len=%u\n",
+					    j, id, entries[j].addr, entries[j].len);
+				}
+				collapseId(id, collapsed);
+				if (railAddr[r] == 0 && strcmp(collapsed, wanted) == 0) {
+					railAddr[r] = entries[j].addr;
+				}
+			}
+		}
+	} else {
+		IOLog("NativeUsbSerial: rails: implausible VRM entry count %u\n", vrm->count);
+		return false;
+	}
+
+	if (arc != nullptr && arc->count <= 64) {
+		const volatile UkeCmdDbEntry *entries =
+		    reinterpret_cast<const volatile UkeCmdDbEntry *>(dataBase + arc->headerOffset);
+		for (unsigned r = 0; r < sizeof(kUkeUsbPhyRefClocks) / sizeof(kUkeUsbPhyRefClocks[0]); r++) {
+			collapseId(kUkeUsbPhyRefClocks[r].resource, wanted);
+			for (unsigned j = 0; j < arc->count; j++) {
+				char id[9];
+				for (unsigned k = 0; k < 8; k++) {
+					id[k] = static_cast<char>(entries[j].id[k]);
+				}
+				id[8] = '\0';
+				if (j < 6) {
+					IOLog("NativeUsbSerial: rails: arc[%u] %-8s addr=%05x len=%u\n",
+					    j, id, entries[j].addr, entries[j].len);
+				}
+				collapseId(id, collapsed);
+				if (refClkAddr[r] == 0 && strcmp(collapsed, wanted) == 0) {
+					refClkAddr[r] = entries[j].addr;
+				}
 			}
 		}
 	}
+
 	bool haveAll = true;
 	for (unsigned r = 0; r < kUkeUsbPhyRailCount; r++) {
 		IOLog("NativeUsbSerial: rails: %s addr=%05x\n",
@@ -965,8 +1006,15 @@ NativeUsbSerial::railsVote(void)
 			haveAll = false;
 		}
 	}
+	for (unsigned r = 0; r < sizeof(kUkeUsbPhyRefClocks) / sizeof(kUkeUsbPhyRefClocks[0]); r++) {
+		IOLog("NativeUsbSerial: rails: %s addr=%05x\n",
+		    kUkeUsbPhyRefClocks[r].resource, refClkAddr[r]);
+		if (refClkAddr[r] == 0) {
+			haveAll = false;
+		}
+	}
 	if (!haveAll) {
-		IOLog("NativeUsbSerial: rails: rail(s) missing from cmd-db; no vote sent\n");
+		IOLog("NativeUsbSerial: rails: resource(s) missing from cmd-db; no vote sent\n");
 		return false;
 	}
 
@@ -986,7 +1034,6 @@ NativeUsbSerial::railsVote(void)
 	}
 
 	// Offsets inside the drv-2 window; the TCS block starts at +0xd00.
-	const uint32_t tcsBase = kUkeRscDrv2TcsOffset;
 	auto tcsRegOff = [this](uint32_t reg, int tcs) -> uint32_t {
 		return kUkeRscDrv2TcsOffset + fRscRegs.tcsStride * static_cast<uint32_t>(tcs) + reg;
 	};
@@ -1005,64 +1052,101 @@ NativeUsbSerial::railsVote(void)
 	IOLog("NativeUsbSerial: rails: using ACTIVE tcs %u\n", static_cast<unsigned>(tcs));
 
 	for (unsigned r = 0; r < kUkeUsbPhyRailCount; r++) {
-		struct {
-			uint32_t addr;
-			uint32_t data;
-		} cmds[3] = {
-			{ railAddr[r] + 0, kUkeUsbPhyRails[r].millivolts }, // VOLTAGE (mV)
-			{ railAddr[r] + 8, kUkeUsbPhyRails[r].mode },       // MODE (HPM)
-			{ railAddr[r] + 4, 1 },                             // ENABLE, last
+		// Voltage then mode, enable last (rpmh_regulator_reorder_cmds).
+		const uint32_t addrs[3] = {
+			railAddr[r] + 0, railAddr[r] + 8, railAddr[r] + 4,
 		};
-		for (unsigned j = 0; j < 3; j++) {
-			const uint32_t msgid =
-			    kUkeCmdMsgidLen | kUkeCmdMsgidWrite | kUkeCmdMsgidRespReq;
-			wr32(fRsc, tcsRegOff(fRscRegs.cmdMsgid, tcs) + fRscRegs.cmdStride * j, msgid);
-			wr32(fRsc, tcsRegOff(fRscRegs.cmdAddr, tcs) + fRscRegs.cmdStride * j, cmds[j].addr);
-			wr32(fRsc, tcsRegOff(fRscRegs.cmdData, tcs) + fRscRegs.cmdStride * j, cmds[j].data);
-		}
-		wr32(fRsc, tcsRegOff(fRscRegs.cmdWaitForCmpl, tcs), 0x7);
-		wr32(fRsc, tcsRegOff(fRscRegs.cmdEnable, tcs), 0x7);
-
-		// __tcs_set_trigger(true): clear trigger, clear mode enable, then
-		// enable and trigger, each waiting to stick before the next.
-		uint32_t control = rd32(fRsc, tcsRegOff(fRscRegs.control, tcs));
-		wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), control & ~kUkeTcsAmcTrigger);
-		control &= ~kUkeTcsAmcTrigger;
-		wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), control & ~kUkeTcsAmcEnable);
-		wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), kUkeTcsAmcEnable);
-		wr32(fRsc, tcsRegOff(fRscRegs.control, tcs),
-		    kUkeTcsAmcEnable | kUkeTcsAmcTrigger);
-
-		bool idle = false;
-		for (unsigned i = 0; i < 500; i++) {
-			if (rd32(fRsc, tcsRegOff(fRscRegs.status, tcs)) != 0) {
-				idle = true;
-				break;
-			}
-			IOSleep(1);
-		}
-		uint32_t status[3] = {};
-		uint32_t resp[3] = {};
-		for (unsigned j = 0; j < 3; j++) {
-			status[j] = rd32(fRsc, tcsRegOff(fRscRegs.cmdStatus, tcs) + fRscRegs.cmdStride * j);
-			resp[j] = rd32(fRsc, tcsRegOff(fRscRegs.cmdRespData, tcs) + fRscRegs.cmdStride * j);
-		}
-		IOLog("NativeUsbSerial: rails: %s vote idle=%u st=%08x/%08x/%08x resp=%08x/%08x/%08x\n",
-		    kUkeUsbPhyRails[r].resource, idle ? 1u : 0u,
-		    status[0], status[1], status[2], resp[0], resp[1], resp[2]);
-
-		// Mirror tcs_tx_done(): give the TCS back and drop the IRQ line.
-		wr32(fRsc, tcsRegOff(fRscRegs.cmdEnable, tcs), 0);
-		wr32(fRsc, tcsRegOff(fRscRegs.cmdWaitForCmpl, tcs), 0);
-		wr32(fRsc, tcsBase + fRscRegs.irqClear, 1u << tcs);
-		if (!idle) {
-			IOLog("NativeUsbSerial: rails: TCS did not return to idle; stopping votes\n");
+		const uint32_t datas[3] = {
+			kUkeUsbPhyRails[r].millivolts, kUkeUsbPhyRails[r].mode, 1,
+		};
+		if (!tcsVoteActive(static_cast<unsigned>(tcs), addrs, datas, 3,
+		    kUkeUsbPhyRails[r].resource)) {
 			return false;
 		}
 		IOSleep(2);
 	}
-	IOLog("NativeUsbSerial: rails: vote sent (ldob2=880mV ldob4=1200mV enable hpm)\n");
+
+	// The reference clock source behind the TCSR gate: ARC "xo.lvl" with the
+	// on value 3, the vote clk_prepare_enable(ref_clk_src) sends before the
+	// vendor's phy_init programs the PLL for 38.4 MHz.
+	const uint32_t refAddrs[1] = { refClkAddr[0] };
+	const uint32_t refDatas[1] = { kUkeUsbPhyRefClocks[0].onValue };
+	if (!tcsVoteActive(static_cast<unsigned>(tcs), refAddrs, refDatas, 1,
+	    kUkeUsbPhyRefClocks[0].resource)) {
+		return false;
+	}
+
+	// msm_eusb2_phy_power(true) finishes with mb() and EUD_DETECT set at the
+	// eud_detect_reg (0xc278000) — "to bring EUD out of reset" once the rails
+	// are on; power-down clears it again.
+	wr32(fEudDetect, 0, rd32(fEudDetect, 0) | 1U);
+	IOLog("NativeUsbSerial: rails: eud detect -> %08x\n", rd32(fEudDetect, 0));
+	IOLog("NativeUsbSerial: rails: vote sent (ldob2=880mV ldob4=1200mV enable hpm, xo.lvl=3)\n");
 	return true;
+}
+
+// One ACTIVE_ONLY message on the given TCS: write every addr/data pair with
+// the completion response requested, run the AMC trigger dance from
+// __tcs_set_trigger(), poll the TCS back to idle and reclaim it exactly like
+// tcs_tx_done() does (no host IRQ is taken; the AOP services the RSC
+// interrupt on its side).
+bool
+NativeUsbSerial::tcsVoteActive(unsigned tcs, const uint32_t *addrs, const uint32_t *datas,
+    unsigned count, const char *name)
+{
+	if (count == 0 || count > 16) {
+		return false;
+	}
+	auto tcsRegOff = [this](uint32_t reg, unsigned tcsId) -> uint32_t {
+		return kUkeRscDrv2TcsOffset + fRscRegs.tcsStride * tcsId + reg;
+	};
+	for (unsigned j = 0; j < count; j++) {
+		const uint32_t msgid =
+		    kUkeCmdMsgidLen | kUkeCmdMsgidWrite | kUkeCmdMsgidRespReq;
+		wr32(fRsc, tcsRegOff(fRscRegs.cmdMsgid, tcs) + fRscRegs.cmdStride * j, msgid);
+		wr32(fRsc, tcsRegOff(fRscRegs.cmdAddr, tcs) + fRscRegs.cmdStride * j, addrs[j]);
+		wr32(fRsc, tcsRegOff(fRscRegs.cmdData, tcs) + fRscRegs.cmdStride * j, datas[j]);
+	}
+	uint32_t enable = 0;
+	for (unsigned j = 0; j < count; j++) {
+		enable |= 1u << j;
+	}
+	wr32(fRsc, tcsRegOff(fRscRegs.cmdWaitForCmpl, tcs), enable);
+	wr32(fRsc, tcsRegOff(fRscRegs.cmdEnable, tcs), enable);
+
+	// __tcs_set_trigger(true): clear trigger, clear mode enable, then enable
+	// and trigger, each waiting to stick before the next.
+	uint32_t control = rd32(fRsc, tcsRegOff(fRscRegs.control, tcs));
+	wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), control & ~kUkeTcsAmcTrigger);
+	wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), control & ~(kUkeTcsAmcTrigger | kUkeTcsAmcEnable));
+	wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), kUkeTcsAmcEnable);
+	wr32(fRsc, tcsRegOff(fRscRegs.control, tcs), kUkeTcsAmcEnable | kUkeTcsAmcTrigger);
+
+	bool idle = false;
+	for (unsigned i = 0; i < 500; i++) {
+		if (rd32(fRsc, tcsRegOff(fRscRegs.status, tcs)) != 0) {
+			idle = true;
+			break;
+		}
+		IOSleep(1);
+	}
+	uint32_t status[4] = {};
+	uint32_t resp[4] = {};
+	for (unsigned j = 0; j < count && j < 4; j++) {
+		status[j] = rd32(fRsc, tcsRegOff(fRscRegs.cmdStatus, tcs) + fRscRegs.cmdStride * j);
+		resp[j] = rd32(fRsc, tcsRegOff(fRscRegs.cmdRespData, tcs) + fRscRegs.cmdStride * j);
+	}
+	IOLog("NativeUsbSerial: rails: %s vote idle=%u st=%08x/%08x/%08x resp=%08x/%08x/%08x\n",
+	    name, idle ? 1u : 0u, status[0], status[1], status[2], resp[0], resp[1], resp[2]);
+
+	// Mirror tcs_tx_done(): give the TCS back and drop the IRQ line.
+	wr32(fRsc, tcsRegOff(fRscRegs.cmdEnable, tcs), 0);
+	wr32(fRsc, tcsRegOff(fRscRegs.cmdWaitForCmpl, tcs), 0);
+	wr32(fRsc, kUkeRscDrv2TcsOffset + fRscRegs.irqClear, 1u << tcs);
+	if (!idle) {
+		IOLog("NativeUsbSerial: rails: TCS did not return to idle after %s\n", name);
+	}
+	return idle;
 }
 
 

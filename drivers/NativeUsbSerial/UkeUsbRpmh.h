@@ -113,4 +113,21 @@ constexpr UkeVrmRail kUkeUsbPhyRails[] = {
 };
 constexpr unsigned kUkeUsbPhyRailCount = sizeof(kUkeUsbPhyRails) / sizeof(kUkeUsbPhyRails[0]);
 
+// The PHY reference clock source: DT clocks <&rpmhcc 0x1b> = RPMH_CXO_PAD_CLK,
+// which clk-rpmh.c implements as DEFINE_CLK_RPMH_ARC(pineapple, xo_pad, ...,
+// "xo.lvl", 0x03, 2) — an ARC resource voted on with data = res_on_val = 3
+// (the pad then divides by 2 from the 76.8 MHz xo_board to 38.4 MHz). The
+// TCSR clkref gate at 0x1fb1118 only switches the last leg; if nobody holds
+// the xo.lvl ARC vote after the handoff, the gate being open changes nothing.
+// msm_eusb2_phy_clocks(true) = clk_prepare_enable(ref_clk_src) + (ref_clk),
+// so the vendor enables exactly this vote before touching the PHY.
+struct UkeArcClock {
+	const char *resource; // cmd-db ARC block id
+	uint32_t onValue;     // data word = res_on_val
+};
+
+constexpr UkeArcClock kUkeUsbPhyRefClocks[] = {
+	{ "xo.lvl", 3 },
+};
+
 #endif // UKE_USB_RPMH_H
