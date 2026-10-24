@@ -64,6 +64,27 @@ wr32(uintptr_t base, uint32_t offset, uint32_t value)
 	__asm__ volatile("dsb sy" ::: "memory");
 }
 
+// SMCCC SMC invocation (x0-x3 carry the arguments and results; the callee
+// may clobber x4-x17). Used for the SCM SIO service, which performs the
+// MMIO from EL3 where the CPU-side store to the TCSR region only stalls.
+uint64_t
+scmSmc(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t *out1)
+{
+	register uint64_t x0 __asm__("x0") = a0;
+	register uint64_t x1 __asm__("x1") = a1;
+	register uint64_t x2 __asm__("x2") = a2;
+	register uint64_t x3 __asm__("x3") = a3;
+	__asm__ volatile("smc #0"
+	    : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3)
+	    :
+	    : "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
+	      "x14", "x15", "x16", "x17", "memory");
+	if (out1 != nullptr) {
+		*out1 = x1;
+	}
+	return x0;
+}
+
 void
 cacheCivac(const void *start, size_t length)
 {
@@ -206,6 +227,7 @@ class NativeUsbSerial : public IOService {
 	volatile bool fDump = false;
 	bool fEnablePhy = false;
 	bool fEnableTcsr = false;
+	bool fEnableScm = false;
 	bool fEnableQscratch = false;
 	bool fSoftReset = true;
 	bool fBlockReset = false;
@@ -238,6 +260,7 @@ class NativeUsbSerial : public IOService {
 	void phyApbEchoTest(void);
 	void phyApbWrite(uint8_t reg, uint8_t value);
 	void phyApbRead(uint8_t reg, uint8_t expected);
+	void scmClkrefProbe(void);
 	bool dmaAllocate(void);
 	bool smmuAttach(void);
 	void fifoConfig(void);
@@ -551,6 +574,9 @@ NativeUsbSerial::warmInit(void)
 		IOLog("NativeUsbSerial: warm: hwparams0=%08x 3=%08x\n",
 		    rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS0),
 		    rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS3));
+		if (fEnableScm) {
+			scmClkrefProbe();
+		}
 	}
 
 	// Core identity and port mode. The reference refuses cores other than
@@ -812,6 +838,30 @@ NativeUsbSerial::phyApbRead(uint8_t reg, uint8_t expected)
 	wr32(fPhy, 0x130, 0);
 	IOLog("NativeUsbSerial: warm: phy apb read[%02x]=%02x%02x expected=%02x %s\n",
 	    reg, msb, lsb, expected, (msb == 0 && lsb == expected) ? "ECHO" : "no-echo");
+}
+
+// USB2 clkref enable through the SCM SIO service (TrustZone performs the
+// MMIO from EL3). Every CPU-side access to the TCSR region stalls (usbbr5/
+// usbbr7), but the vendor stack itself uses SCM IO for the EUD registers,
+// and Android's kernel drives this exact SMC pair constantly. Encoding per
+// the vendor qcom_scm.c: ARM_SMCCC fast call, SMC64, SIP owner, FNID
+// (SVC_IO 0x05 << 8 | IO_READ 0x01 / IO_WRITE 0x02), arginfo word, then the
+// address and value.
+void
+NativeUsbSerial::scmClkrefProbe(void)
+{
+	uint64_t ret1 = 0;
+	IOLog("NativeUsbSerial: warm: scm io read 1fb1118\n");
+	uint64_t ret0 = scmSmc(0xC2020501ULL, 0x1ULL, UKE_USB_TCSR_USB2_CLKREF_EN, 0, &ret1);
+	IOLog("NativeUsbSerial: warm: scm read ret=%llx val=%llx\n", ret0, ret1);
+	IOLog("NativeUsbSerial: warm: scm io write 1fb1118 <- 1\n");
+	ret0 = scmSmc(0xC2020502ULL, 0x2ULL, UKE_USB_TCSR_USB2_CLKREF_EN, 1, nullptr);
+	IOLog("NativeUsbSerial: warm: scm write ret=%llx\n", ret0);
+	IOLog("NativeUsbSerial: warm: scm io read 1fb1118 (again)\n");
+	ret0 = scmSmc(0xC2020501ULL, 0x1ULL, UKE_USB_TCSR_USB2_CLKREF_EN, 0, &ret1);
+	IOLog("NativeUsbSerial: warm: scm read ret=%llx val=%llx\n", ret0, ret1);
+	IOLog("NativeUsbSerial: warm: apb echo (after scm clkref)\n");
+	phyApbEchoTest();
 }
 
 
@@ -1790,6 +1840,8 @@ NativeUsbSerial::start(IOService *provider)
 	// held on by the firmware (the CLK_HOLD_STATE model of the uke clock
 	// handoff), so the driver leaves TCSR alone unless asked.
 	uint32_t tcsrMode = 0;
+	uint32_t scmMode = 0;
+	PE_parse_boot_argn("native-usb-scm", &scmMode, sizeof(scmMode));
 	uint32_t qscratchMode = 2;
 	// A stuck CSFTRST wedges the whole device domain on this core (usbdal6:
 	// the event ring stops latching its address after a stuck attempt), and
@@ -1810,6 +1862,7 @@ NativeUsbSerial::start(IOService *provider)
 	fProbeLevel = probeMode;
 	fEnablePhy = phyMode != 0;
 	fEnableTcsr = tcsrMode != 0;
+	fEnableScm = scmMode != 0;
 	fEnableQscratch = qscratchMode != 0;
 	fSoftReset = softResetMode != 0;
 	fBlockReset = blockResetMode != 0;
