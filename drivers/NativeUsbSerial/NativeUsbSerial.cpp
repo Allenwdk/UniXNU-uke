@@ -235,11 +235,9 @@ class NativeUsbSerial : public IOService {
 	void serialStop(void);
 	bool warmInit(void);
 	bool blockReset(void);
-	void phyApbProbe(void);
 	void phyApbEchoTest(void);
 	void phyApbWrite(uint8_t reg, uint8_t value);
 	void phyApbRead(uint8_t reg, uint8_t expected);
-	void tcsrProbe(void);
 	bool dmaAllocate(void);
 	bool smmuAttach(void);
 	void fifoConfig(void);
@@ -493,12 +491,19 @@ NativeUsbSerial::warmInit(void)
 		return false;
 	}
 
+	// Pure-warm APB echo test BEFORE touching anything: every bridge probe
+	// so far ran after the PHY BCR pulse and the reprogramming table, so
+	// "the bridge is dead" was never measured on the untouched ABL state.
+	// An echo here means the firmware-held reference clock is on and OUR
+	// pulse+table breaks the PHY digital; silence means the reference never
+	// arrived in the first place.
+	IOLog("NativeUsbSerial: warm: apb echo (pure warm)\n");
+	phyApbEchoTest();
+
 	// The USB2 reference-clock gate (tcsrcc USB2_CLKREF_EN at 0x1fb1118).
-	// This one is not optional: the PHY's PLL and its internal APB bridge
-	// both run off this reference, and ABL turns the gate off during its USB
-	// shutdown — the earlier 0x1f4b118 address was an arithmetic slip that
-	// wrote an ADSP-owned register instead, so the gate stayed off and the
-	// whole PHY stayed unclocked (usbbr4's APB timeouts).
+	// Opt-in only: the store at that address stalls the whole machine
+	// (usbbr5) and every other TCSR access stalls too (usbbr7), so the
+	// reference clock cannot be switched from here at all.
 	if (fEnableTcsr) {
 		IOLog("NativeUsbSerial: warm: tcsr clkref enable (0x1fb1118)\n");
 		wr32(fTcsr, UKE_USB_TCSR_USB2_CLKREF_OFF, 1);
@@ -534,12 +539,11 @@ NativeUsbSerial::warmInit(void)
 			}
 		}
 		// Every wrapper write held, but that only proves the PHY's config
-		// register file is mapped. Run the APB echo test first (a healthy
-		// bridge over an untouched tuner space also reads zero, so only a
-		// write-read echo settles whether the PHY's clock domain is alive),
-		// then the read sweep, then a read-only probe of the TCSR clkref
-		// candidates — every attempt is logged before it runs so a stall
-		// names the offending address on the next screen.
+		// register file is mapped. Re-run the echo test after the pulse and
+		// the table: if the pure-warm echo passed and this one fails, our
+		// reset+reprogramming is what kills the PHY's clock domain.
+		IOLog("NativeUsbSerial: warm: apb echo (after pulse+table)\n");
+		phyApbEchoTest();
 		IOLog("NativeUsbSerial: warm: phy state common0=%08x ctrl2=%08x ctrl3=%08x cfg0=%08x fsel=%08x utmi0=%08x eud=%08x\n",
 		    rd32(fPhy, 0x054), rd32(fPhy, 0x05c), rd32(fPhy, 0x060),
 		    rd32(fPhy, 0x094), rd32(fPhy, 0x0b8), rd32(fPhy, 0x03c),
@@ -547,9 +551,6 @@ NativeUsbSerial::warmInit(void)
 		IOLog("NativeUsbSerial: warm: hwparams0=%08x 3=%08x\n",
 		    rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS0),
 		    rd32(fWrapper, UKE_USB_DWC3_GHWPARAMS3));
-		phyApbEchoTest();
-		phyApbProbe();
-		tcsrProbe();
 	}
 
 	// Core identity and port mode. The reference refuses cores other than
@@ -759,41 +760,6 @@ NativeUsbSerial::blockReset(void)
 	return true;
 }
 
-// Read a spread of eUSB2 tuner registers through the PHY's internal APB
-// bridge. usbbr4's probe required ACCESS_DONE (bit 0) in the status register
-// and timed out — but the vendor's own poll condition is the constant 1
-// (read once, assume done), so this generation's status register may never
-// set bit 0 at all; status 0 under the ACCESS_IN_PROGRESS (bit 3) semantics
-// means "not busy = done". Poll bit 3 instead, then read the 16-bit value
-// from APB_RDDATA_LSB/MSB (0x144/0x148) regardless: non-zero, varying data
-// proves the bridge (and the PHY's clock domain) is alive, all-zero reads
-// point at an unclocked PHY.
-void
-NativeUsbSerial::phyApbProbe(void)
-{
-	static const uint8_t kApbRegs[] = {
-		0x00, 0x05, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x80
-	};
-
-	for (uint8_t reg : kApbRegs) {
-		wr32(fPhy, 0x138, reg);
-		wr32(fPhy, 0x130, 1U << 1);
-		IODelay(20);
-		uint32_t status = rd32(fPhy, 0x134);
-		bool busy = (status & (1U << 3)) != 0;
-		for (unsigned i = 0; busy && i < 100; i++) {
-			IODelay(10);
-			status = rd32(fPhy, 0x134);
-			busy = (status & (1U << 3)) != 0;
-		}
-		uint32_t lsb = rd32(fPhy, 0x144) & 0xffU;
-		uint32_t msb = rd32(fPhy, 0x148) & 0xffU;
-		wr32(fPhy, 0x130, 0);
-		IOLog("NativeUsbSerial: warm: phy apb[%02x]=%02x%02x status=%08x%s\n",
-		    reg, msb, lsb, status, busy ? " BUSY" : "");
-	}
-}
-
 // The usbbr6 read sweep cannot distinguish a dead bridge from a healthy one
 // over an untouched tuner space (the init table programs everything through
 // MMIO, so the APB registers legitimately read zero). Write the vendor CV9
@@ -848,39 +814,6 @@ NativeUsbSerial::phyApbRead(uint8_t reg, uint8_t expected)
 	    reg, msb, lsb, expected, (msb == 0 && lsb == expected) ? "ECHO" : "no-echo");
 }
 
-// Read-only probe of the USB2 clkref candidates. The vendor DT pairs
-// tcsrcc@1f40000 with offset 0xb1118 (= 0x1fb1118) but that store stalls the
-// machine (usbbr5) and the claimed window overlaps the tcsr_mutex block and
-// an undecoded hole, so try the upstream-style pairings as reads: each
-// address is logged before it is touched, and a read that returns names the
-// live register file. Reads only — the write decision comes later.
-void
-NativeUsbSerial::tcsrProbe(void)
-{
-	static const uint64_t kCandidates[] = {
-		0x01fcb118ULL, // tcsr syscon@1fc0000 + 0xb118
-		0x02071118ULL, // tcsr syscon@1fc0000 + 0xb1118 (vendor offset)
-		0x01fd5118ULL, // tcsr syscon@1fc0000 + 0x15118 (kalama offset)
-		0x01fb1118ULL, // vendor DT pairing — known to stall on write
-	};
-
-	for (uint64_t address : kCandidates) {
-		IOLog("NativeUsbSerial: warm: tcsr read 0x%llx\n",
-		    static_cast<unsigned long long>(address));
-		OSSharedPtr<IOMemoryMap> keep;
-		uintptr_t mapped = mapPhys(address & ~0xfffULL, 0x1000, keep);
-		if (mapped == 0) {
-			IOLog("NativeUsbSerial: warm: tcsr map failed for 0x%llx\n",
-			    static_cast<unsigned long long>(address));
-			continue;
-		}
-		volatile uint32_t *window = reinterpret_cast<volatile uint32_t *>(
-		    mapped + (address & 0xfffULL));
-		uint32_t value = *window;
-		IOLog("NativeUsbSerial: warm: tcsr 0x%llx = %08x\n",
-		    static_cast<unsigned long long>(address), value);
-	}
-}
 
 bool
 NativeUsbSerial::dmaAllocate(void)
