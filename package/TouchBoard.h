@@ -44,9 +44,10 @@
 #define TB_RCG_SRC_GPLL0 1
 #define TB_RCG_SRC_GPLL0_EVEN 6
 #define TB_SCLK_HZ 19200000ULL                // the SE source clock the probe programs (TCXO / 1)
-// TLMM (uke-live.dts pinctrl@f000000, compatible qcom,cliffs-pinctrl; pinctrl-cliffs.c: ctl = 0x100000 + 0x1000*gpio,
-// io = +4, mux_bit 2, drv_bit 6; function slot 0 is gpio, so each qup0_se4 lane is slot 1 in its own pingroup).
-#define TB_TLMM_BASE 0x0f000000ULL
+// TLMM (uke-live.dts pinctrl@f000000, compatible qcom,cliffs-pinctrl; pinctrl-cliffs.c: REG_BASE = 0x100000 inside the node's
+// reg window, so the per-GPIO block starts at 0x0f000000 + 0x100000; ctl = + 0x1000*gpio, io = +4, mux_bit 2, drv_bit 6;
+// function slot 0 is gpio, so each qup0_se4 lane is slot 1 in its own pingroup).
+#define TB_TLMM_BASE 0x0f100000ULL
 #define TB_GPIO_STRIDE 0x1000
 #define TB_GPIO_SPI_MISO 16                   // qupv3_se4_spi_miso_active: gpio16, qup0_se4_l0
 #define TB_GPIO_SPI_MOSI 17                   // qupv3_se4_spi_mosi_active: gpio17, qup0_se4_l1

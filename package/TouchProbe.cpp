@@ -502,7 +502,10 @@ static void touchThread(void *, wait_result_t) {
     PE_parse_boot_argn("sheng-touch-hz", &hz, sizeof hz);
     if (hz < 100000 || hz > TB_SPI_MAX_HZ) hz = TB_SPI_DEFAULT_HZ;
     do {
+        IOLog("UKE TCH: thread start stage %u\n", stage);
         if (!snapshot(*s)) break;
+        IOLog("UKE TCH: snapshot done st%u e%d vote%08x irq%08x rc%08x\n",
+              native_touch_stage_done, native_touch_error, s->vals[0], s->vals[13], s->rcgCfg);
         native_touch_stage_done = 1;
         rows(*s);
         if (stage < 2) break;
