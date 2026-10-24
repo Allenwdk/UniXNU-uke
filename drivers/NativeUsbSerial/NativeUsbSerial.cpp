@@ -205,7 +205,7 @@ class NativeUsbSerial : public IOService {
 	volatile bool fLogPrimed = false;
 	volatile bool fDump = false;
 	bool fEnablePhy = false;
-	bool fEnableTcsr = false;
+	bool fEnableTcsr = true;
 	bool fEnableQscratch = false;
 	bool fSoftReset = true;
 	bool fBlockReset = false;
@@ -302,7 +302,7 @@ NativeUsbSerial::mapWindows(void)
 	fEudDetect = mapPhys(UKE_USB_EUD_DETECT_BASE, 0x10, fEudDetectMap);
 	fGcc = mapPhys(UKE_USB_GDSC_BASE, UKE_USB_GDSC_SIZE, fGccMap);
 	fPhyBcr = mapPhys(UKE_USB_GCC_BASE + 0x12000ULL, 0x1000, fPhyBcrMap);
-	fTcsr = mapPhys(0x01f4b000ULL, 0x1000, fTcsrMap);
+	fTcsr = mapPhys(UKE_USB_TCSR_USB2_CLKREF_PAGE, 0x1000, fTcsrMap);
 	fSmmu = mapPhys(UKE_USB_SMMU_BASE, UKE_USB_SMMU_SIZE, fSmmuMap);
 
 	if (!fWrapper || !fQscratch || !fPhy || !fEudEnable || !fEudDetect ||
@@ -401,19 +401,18 @@ NativeUsbSerial::dumpProbe(void)
 	    rd32(fGcc, 0x024), rd32(fGcc, 0x028), rd32(fGcc, 0x088),
 	    rd32(fGcc, 0x08c));
 
-	// GCC-only reads. The TCSR (0x1f4b118) is deliberately separate: on the
-	// observed uke it hangs unless its clock controller is already up.
+	// GCC-only reads. The TCSR page (0x1fb1000) is write-only to us: the
+	// old 0x1f4b000 page was the ADSP ipc_hwmutex region and its read hung
+	// the tablet; the real clkref page is ordinary TCSR land (the stock
+	// kernel reads and writes it freely) but there is no need to risk it.
 	const uint32_t usb30Bcr = rd32(fGcc, 0x000);
 	IOLog("NativeUsbSerial: GCC usb30-bcr=%08x\n", usb30Bcr);
 	const uint32_t phyBcr = rd32(fPhyBcr, 0x000);
 	IOLog("NativeUsbSerial: GCC qusb2phy-bcr=%08x\n", phyBcr);
 
-	// 0x1f4b000 is inside the tcsrcc window (0x1f40000 + 0xc0000) but the
-	// stock DT also hands that page to the ADSP as its ipc_hwmutex region, so
-	// an APPS read may not be legal. It is opt-in on its own argument.
 	if (fEnableTcsr) {
-		IOLog("NativeUsbSerial: probe: TCSR base=%llx (read skipped; the read hangs)\n",
-		    static_cast<unsigned long long>(0x01f4b118ULL));
+		IOLog("NativeUsbSerial: probe: TCSR clkref at %llx (write-only)\n",
+		    static_cast<unsigned long long>(UKE_USB_TCSR_USB2_CLKREF_EN));
 	}
 
 	if (fProbeLevel >= 2) {
@@ -490,10 +489,15 @@ NativeUsbSerial::warmInit(void)
 		return false;
 	}
 
-	// Experiments that write state ABL owns stay opt-in and off.
+	// The USB2 reference-clock gate (tcsrcc USB2_CLKREF_EN at 0x1fb1118).
+	// This one is not optional: the PHY's PLL and its internal APB bridge
+	// both run off this reference, and ABL turns the gate off during its USB
+	// shutdown — the earlier 0x1f4b118 address was an arithmetic slip that
+	// wrote an ADSP-owned register instead, so the gate stayed off and the
+	// whole PHY stayed unclocked (usbbr4's APB timeouts).
 	if (fEnableTcsr) {
-		IOLog("NativeUsbSerial: warm: tcsr clkref enable\n");
-		wr32(fTcsr, 0x118, 1);
+		IOLog("NativeUsbSerial: warm: tcsr clkref enable (0x1fb1118)\n");
+		wr32(fTcsr, UKE_USB_TCSR_USB2_CLKREF_OFF, 1);
 		IODelay(100);
 	}
 	if (fEnablePhy) {
@@ -1750,7 +1754,9 @@ NativeUsbSerial::start(IOService *provider)
 	uint32_t serialMode = 0;
 	uint32_t dumpMode = 0;
 	uint32_t phyMode = 0;
-	uint32_t tcsrMode = 0;
+	// The USB2 reference-clock gate is required for any PHY operation; only
+	// pass native-usb-tcsr=0 to reproduce the unclocked-PHY state.
+	uint32_t tcsrMode = 1;
 	uint32_t qscratchMode = 2;
 	// A stuck CSFTRST wedges the whole device domain on this core (usbdal6:
 	// the event ring stops latching its address after a stuck attempt), and
