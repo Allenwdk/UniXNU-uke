@@ -1,11 +1,20 @@
 # USB serial debug channel (uke)
 
-Status: **rails theory closed by cross-board evidence (K70/Ace 5 enumerate
-pure-warm; uke's two PHY supplies are `qcom,proxy-consumer-enable` rails ABL
-releases at handoff) and the fix is built: usbbr10 votes `ldob2`/`ldob4`
-back on through apps_rsc before the warm takeover.** Waiting for the flash
-verdict — `warm: apb echo (pure warm)` turning ECHO is the pass line. No
-`/dev/ttyACM0` has appeared yet.
+Status: **usbbr10..16 (2026-10-25 night) closed every theory except one.
+The rails/xo.lvl/EUD_DETECT/200MHz-RCG votes and the GCTL.CORESOFTRESET are
+all in place, yet both reset variants (DCTL.CSFTRST and GCTL
+CORESOFTRESET, bit 11, 100 ms pulse) never complete in the handoff state —
+they only release "once all clocks are synchronized", and one clock into
+the core (almost certainly the PHY UTMI clock) never synchronizes. ABL's
+handoff itself is K70-grade (GDSC on, branches on, master RCG already at
+200 MHz = 0x00100105, TCSR clkref gate reads 1). The RPMH read path is
+unusable (cx.lvl/mx.lvl read 0 while the CPU runs on them — AOP does not
+service runtime reads), so whether the VRM/ARC SET votes actually apply is
+THE open question; the ground-truth probe is a PMIC SPMI read of the
+L2B/L4B status registers through the SCM SIO service. A stuck reset also
+poisons the device domain (GEVNTADR/DEPCMD/DALEPENA writes drop, `ep0
+done` becomes a false success), so `native-usb-softreset` and
+`native-usb-gctlreset` both stay off by default.** No `/dev/ttyACM0` yet.
 
 ## Why
 
@@ -206,46 +215,35 @@ volume down).
 
 ## Next steps (ranked)
 
-1. **usbbr10 — flash and read the verdict line.** `native-usb-rails=1`
-   implements the rails vote: the driver walks the AOP command DB at
-   `0x81c60000` (magic `db 30 03 0c`, VRM block slv=4) for the
-   `ldob2`/`ldob4` entries, then sends ACTIVE_ONLY VRM votes (voltage in
-   mV, mode 4/HPM, enable **last**, completion requested) through an idle
-   ACTIVE TCS of apps_rsc drv-2 (`0x17a20000`, TCS block at `+0xd00`,
-   per-TCS/per-command offsets picked from `RSC_DRV_ID`), transcribed
-   from the vendor `cmd-db.c`/`rpmh-rsc.c`/`rpmh-regulator.c`. Boot
-   args: `native-usb-serial=1 native-usb-serial-dump=1 native-usb-rails=1
-   native-usb-phy=1 native-usb-softreset=1`, image
-   `vendor_boot_uke_usbbr10.img` (`1aa8a1be…`, kernel `ebf81196…`).
-   Read, in order: `rails: cmd-db version…`, the VRM entry list (the
-   real cmd-db resource names), `ldob2/ldob4 addr=…`, `drv2 id=…
-   num_tcs… ncpt…`, `rails: ldoXX vote idle=1 st=… resp=…`, then
-   `warm: apb echo (pure warm)` — **an ECHO there closes the case**: the
-   proxy rails were the missing piece. `native-usb-phy=1` then runs BCR
-   + the 38.4 MHz table on a powered PHY, and `native-usb-softreset=1`
-   retries CSFTRST, which should finally self-clear like the K70
-   reference. If `idle=0` or the vote stalls, the st/resp words
-   localize it (AOP refused vs TCS wedged).
-   Cross-board evidence that closed the rails theory: vermeer-lab's K70
-   (SM8550) and the Ace 5 (SM8650) CDC drivers enumerate on real
-   hardware with a pure warm takeover that never touches
-   PHY/clocks/rails/SMMU — `vermeer_usb_debug.c` only writes DWC device
-   registers plus the QSCRATCH VBUS-valid override (`0x10 |=
-   (1<<20)|(1<<28)`, `0x30 |= (1<<24)`) — so on those boards the handoff
-   leaves USB fully alive. uke's handoff keeps the GDSC and GCC branches
-   on but kills exactly the two PHY supplies its DT marks
-   `qcom,proxy-consumer-enable` (pmxr2230_l2 0.88 V `vdd`, pmxr2230_l4
-   1.2 V `vdda12`, rpmh nodes `qcom,resource-name = "ldob2"/"ldob4"`);
-   ABL's proxy votes are released at handoff by design.
-2. **A cheap rails-state probe**: SCM SIO reads into the SPMI arbiter can
-   query the PMIC rails without new kernel infrastructure (decoding the
-   arbiter protocol is the cost).
-3. **WCD939x repeater init** (GENI I2C `0xa80000` addr `0x0e`, GPIO 119):
-   line-side only — required for enumeration once the PHY is clocked, but
-   it does not gate the clock.
-4. **VBUS override before RUN** is already in the warm path
-   (`serial: qscratch hs/ss`); the K70 reference sets it right before RUN
-   too, so no change needed there.
+1. **Ground-truth the rails: read the PMIC L2B/L4B status through the SCM
+   SIO service.** The SCM io_read SMC (already working, usbbr9) can walk
+   the apps SPMI PMIC arbiter; PMXR2230's LDO status registers then say
+   definitively whether the rails are on. If off, the vote path is broken
+   — the leading suspects become the missing SLEEP/WAKE-state votes
+   (Linux's rpmh-regulator and clk-rpmh always program sleep+wake+active,
+   we only send ACTIVE) or the DRV/channel choice; send the triple if so.
+   If on, the missing clock is not the rails and the hunt moves to the
+   UTMI clock routing into the core.
+2. **Do not re-enable either reset** (`native-usb-softreset`,
+   `native-usb-gctlreset`): usbbr11/usbbr16 proved a stuck reset poisons
+   the whole device domain (GEVNTADR no longer latches, every DEPCMD
+   "completes" as a dropped write, `serial: end` shows adr/dalepena/depcmd
+   all zero) and destroys every downstream diagnostic.
+3. **The repeater is NOT a USB-stack prerequisite on this board**: the
+   stock DT's USB nodes reference no repeater anywhere — the only consumer
+   of `wcd939x-i2c@e` is the sound card. The vendor cold path for uke is
+   exactly rails → clocks (xo.lvl + TCSR gate) → BCR → register table,
+   all of which this driver now replays.
+4. **K70 endpoint order** (SETEPCONFIG before SETTRANSFRESOURCE per
+   endpoint, bulk endpoints configured on SET_CONFIGURATION with
+   `DEPSTARTCFG|xfer_rsc_idx=2`) is worth adopting wholesale once any
+   command at all survives — with the domain un-poisoned every command
+   after DEPSTARTCFG still stalls with CmdAct (`DEP0 cmd=2 readback
+   00000402`, usbbr12..15).
+5. **Slot-retry gotcha**: XNU never marks the boot successful, so several
+   flash/reboot cycles exhaust ABL's slot retries and the device drops to
+   fastboot ~5 s after `fastboot reboot`; run `fastboot set_active a`
+   after flashing to reset the counter.
 
 Historical note: the first revision's `0x1f4b118` "clkref" was an
 arithmetic slip (`0x1f40000 + 0xb1118` was mis-summed); that address is
