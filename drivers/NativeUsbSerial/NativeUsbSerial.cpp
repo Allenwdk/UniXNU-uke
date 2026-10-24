@@ -814,12 +814,6 @@ NativeUsbSerial::configEp(Endpoint &ep, uint8_t type, uint16_t mps, uint32_t fif
 		return false;
 	}
 	ep.resource = UKE_USB_DWC3_DEPCMD_GET_RSC_IDX(result);
-	if (ep0 && ep.phys == 0) {
-		if (!depCommand(ep.phys, UKE_USB_DWC3_DEPCMD_DEPSTARTCFG |
-		    UKE_USB_DWC3_DEPCMD_PARAM(ep.resource), 0, 0, 0, nullptr)) {
-			return false;
-		}
-	}
 	ep.enabled = true;
 	return true;
 }
@@ -1415,6 +1409,13 @@ NativeUsbSerial::serialStart(void)
 	deviceInit();
 
 	IOLog("NativeUsbSerial: serial: ep0\n");
+	// Linux's canonical order: Start New Configuration first on EP0, which
+	// resets the whole transfer-resource allocation, and only then the
+	// Set Endpoint Config / Set Transfer Resource pairs per direction.
+	if (!depCommand(0, UKE_USB_DWC3_DEPCMD_DEPSTARTCFG, 0, 0, 0, nullptr)) {
+		IOLog("NativeUsbSerial: EP0 start-config failed\n");
+		return false;
+	}
 	if (!configEp(fEp0Out, UKE_USB_DWC3_EP_TYPE_CONTROL, 64, 0, false, true) ||
 	    !configEp(fEp0In, UKE_USB_DWC3_EP_TYPE_CONTROL, 64, 0, true, true)) {
 		IOLog("NativeUsbSerial: EP0 configuration failed\n");
