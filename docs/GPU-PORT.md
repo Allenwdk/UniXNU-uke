@@ -514,3 +514,33 @@ python3 scripts/check-uke-gpu.py \
 
 It validates the board values against the DT and the pins, and never touches
 MMIO.
+
+## 2026-10-27 compositor surface state (uke)
+
+- The compositor's 3200x2136 BGRA surface (temp/default surface at +0x1620 / +0x1618)
+  reports height 2136 (+0x60), stride 0x3200 (+0x68), format BGRA (+0x80) and
+  allocation 0x1A13000 (+0x90); the GOP framebuffer is 3200x2136, rowBytes 12800.
+- `backboardd` dies with `EXC_BAD_ACCESS (SIGBUS)` 64 bytes past a 26.1 MiB
+  CoreAnimation region during app-to-home transitions. The region is 0x1A22000
+  = allocation + 0xF000; the mapping has no guard/trailer page. The `UKEVMA`
+  diagnostic (patches/xnu/zzzzzzzzzzz-uke-vm-alloc-log.patch) shows the
+  `mach_vm_allocate_kernel` triage entries are unrelated 4-320 KiB fixed-address
+  user-task failures; there is no 26 MiB failure.
+- Experiments: guard padding of the surface allocation (+0x90 += 0x1000,
+  `LegacyDisplayProbe.cpp` `native_legacy_default_surface_state`) and mapping
+  the GOP framebuffer with `kIOMapWriteCombineCache` (`VM_WIMG_WCOMB`, Normal NC
+  + write-combine) instead of `kIOMapInhibitCache` (`VM_WIMG_IO`, DRAM maps as
+  Device-GRE). The WC experiment is a local worktree
+  `~/.cache/unixnu-modules/NativeMobileDisplay-wc` (33fe049 + the two mapping
+  changes) and needs `--local-module driver:NativeMobileDisplay=<path>`.
+- Upstream: `NativeMobileDisplay` main is at 33e941a, five commits ahead of the
+  uke pin 33fe049: direct DPU scanout (`sheng-dpu-scanout=2`, sheng SM8550
+  registers, off by default), GPU-copied swap retirement, and fixed/panel
+  refresh-rate reporting (c031d88/c99046a). None fixes the uke CA SIGBUS. The
+  sheng repository's display commits are panel 144 Hz, backlight/CoreBrightness
+  and log rows; no surface fix.
+- Next: verify whether the guard moves the CA region in a new backboardd report
+  (swipe up, wait 4 minutes for the crash probe scan), and review the exported
+  surface/region path (selector 3 / `clientMemoryForType`) for a guard. The
+  Settings About hang is separate: scene-update watchdog (10 s) with all threads
+  waiting in `mach_msg`.

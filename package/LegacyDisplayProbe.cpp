@@ -672,10 +672,32 @@ static void native_legacy_default_surface_state(IOService *display,bool adopt) {
         root,gate,workloop,surface,temp,region,(unsigned)flag,(unsigned)width,(unsigned)height,
         (unsigned)format,(unsigned)planes,(unsigned)bpp,(unsigned)sid,tempRegion,tempDescriptor,
         (unsigned)PE_i_can_has_debugger(NULL));
+    // Surface geometry the compositor maps: stride at +0x68, format at +0x80,
+    // allocation at +0x90. Shown as the raw words so a wrong width cannot hide
+    // the values, next to the GOP framebuffer geometry it is copied into.
+    uint32_t fields[16]={};
+    if(temp) for(unsigned k=0;k<16;++k) memcpy(&fields[k],reinterpret_cast<unsigned char *>(temp)+0x60+4*k,4);
+    PE_Video gop={};PE_current_console(&gop);
+    IOLog("UKE: surface fields +60 %08x %08x %08x %08x %08x %08x %08x %08x +80 %08x %08x %08x %08x %08x %08x %08x %08x gop=%ux%u rb=%u d=%u\n",
+        fields[0],fields[1],fields[2],fields[3],fields[4],fields[5],fields[6],fields[7],
+        fields[8],fields[9],fields[10],fields[11],fields[12],fields[13],fields[14],fields[15],
+        (unsigned)gop.v_width,(unsigned)gop.v_height,(unsigned)gop.v_rowBytes,(unsigned)gop.v_depth);
     if(adopt && !surface && temp) {
         ((OSObject *)temp)->retain();
         memcpy(fb+0x1618,&temp,sizeof(temp));
         IOLog("UKE: display surface adopted surface=%p sid=%u\n",temp,(unsigned)sid);
+    }
+    // The compositor writes a 64-byte trailer past the last pixel and the
+    // exported mapping measures 0xF000 past the allocation, so give the
+    // surface one guard page.
+    if(temp) {
+        uint64_t allocation=0;
+        memcpy(&allocation,reinterpret_cast<unsigned char *>(temp)+0x90,8);
+        if(allocation && allocation<=0x1A14000ull) {
+            uint64_t padded=allocation+0x1000;
+            memcpy(reinterpret_cast<unsigned char *>(temp)+0x90,&padded,8);
+            IOLog("UKE: surface allocation %llu -> %llu (guard)\n",(unsigned long long)allocation,(unsigned long long)padded);
+        }
     }
 }
 void native_legacy_display_late_probe(void) {

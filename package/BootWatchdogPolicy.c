@@ -32,8 +32,9 @@ static const char lite_jobs[]=
  "com.apple.ndoagent,com.apple.biomesyncd,com.apple.email.maild,com.apple.amsengagementd,com.apple.adid,com.apple.eyereliefd,"
  // Crash or respawn loops seen on hardware (int-176): fairplayd.A2 is KeepAlive and exits at once (22 launches in 6 minutes), passd crashes,
  // obliteration is a data-wipe daemon with nothing to do here. iconservicesagent also dies in CI::GLContext::init, but disabling it leaves
- // the icons missing (seen on hardware), so it stays enabled.
- "com.apple.fairplayd.A2,com.apple.passd,com.apple.mobile.obliteration";
+ // the icons missing (seen on hardware). It is disabled here temporarily to test whether the Settings scene-create watchdog depends on it.
+ "com.apple.fairplayd.A2,com.apple.passd,com.apple.mobile.obliteration,"
+ "com.apple.iconservicesagent,com.apple.iconservices.iconservicesagent";
 static char policy[2048],jobs[200];
 volatile int sheng_watchdog_policy_status=-1;
 

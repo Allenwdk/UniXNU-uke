@@ -209,7 +209,12 @@ def main():
         *([node('psci', [('compatible', b'arm,psci-1.0\0'), ('method', args.psci_method.encode() + b'\0')])] if len(cpus) > 1 else []),
         # Suspend/resume is not implemented for this board. Use the original
         # root-domain policy input rather than allowing the CPU to park forever.
-        node('defaults', [('sleep-disabled', struct.pack('<I', 1))]),
+        # The BCM2837 kernel config pins CONFIG_VNODES=1024, which clamps XNU's
+        # memory-derived vnode count; an iPadOS file load then trips vnode jetsam
+        # at ~1948. The device-tree value wins over the formula, so pin it to
+        # what the 4.75 GiB DarwinBoot window computes: 0x130000000/65536+1024.
+        node('defaults', [('sleep-disabled', struct.pack('<I', 1)),
+                          ('kern.maxvnodes', struct.pack('<I', 0x13400))]),
         node('options', []),
         # XNU's embedded panic log: pe_init.c maps pram.reg and records the
         # panic header/text there. The memory map keeps it out of DarwinBoot's

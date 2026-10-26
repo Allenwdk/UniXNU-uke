@@ -1,0 +1,14 @@
+diff --git a/osfmk/vm/vm_user.c b/osfmk/vm/vm_user.c
+index 319affa..3c12c0b 100644
+--- a/osfmk/vm/vm_user.c
++++ b/osfmk/vm/vm_user.c
+@@ -345,6 +345,9 @@ mach_vm_allocate_kernel(
+ #endif
+ 	if (result != KERN_SUCCESS) {
+ 		ktriage_record(thread_tid(current_thread()), KDBG_TRIAGE_EVENTID(KDBG_TRIAGE_SUBSYS_VM, KDBG_TRIAGE_RESERVED, KDBG_TRIAGE_VM_ALLOCATE_KERNEL_VMMAPENTER_ERROR), result /* arg */);
++		printf("UKEVMA: map=%p kernel=%d size=%llu addr=%llx fixed=%d flags=%x result=%d\n",
++		    (void *)map, (map->pmap == kernel_pmap), (unsigned long long)map_size,
++		    (unsigned long long)map_addr, (int)vmk_flags.vmf_fixed, flags, result);
+ 	}
+ 	*addr = map_addr;
+ 	return result;

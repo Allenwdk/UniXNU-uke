@@ -24,6 +24,9 @@
 
 extern vm_offset_t gPanicBase;
 extern unsigned int gPanicSize;
+extern int desiredvnodes;
+extern uint64_t sane_size;
+extern void uke_crash_log_start(void);
 
 #define UKE_LAST_LOG_INTERVAL_MS 500
 
@@ -342,6 +345,12 @@ uke_last_log_writer(void *arg, wait_result_t result)
 
 	unsigned tick = 0;
 	for (;;) {
+		// The first seconds of msgbuf are flooded by boot logs; report the
+		// vnode sizing once the window is long past the ring's early noise.
+		if (tick == 240) {
+			IOLog("UkeLastLog: vnodes desired=%d sane=%llu\n",
+			    desiredvnodes, (unsigned long long)sane_size);
+		}
 		uke_last_log_write();
 		// The userdata copy is paced separately: the 32 MiB window only holds
 		// 2048 records, so at the pram writer's 500 ms rate it would wrap every
@@ -370,3 +379,4 @@ uke_last_log_start(void)
 }
 
 STARTUP(EARLY_BOOT, STARTUP_RANK_LAST, uke_last_log_start);
+STARTUP(EARLY_BOOT, STARTUP_RANK_LAST, uke_crash_log_start);

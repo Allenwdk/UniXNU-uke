@@ -236,6 +236,7 @@ kernel_args = [
   "native-ufs-root=1",
   "native-ufs-allow-unverified=1",
   "sheng-data-persist=2",
+  "sheng-staged-apps=1",
   "sheng-log=1",
   "sheng-pmgr=2",
   "sheng-lite=1",
