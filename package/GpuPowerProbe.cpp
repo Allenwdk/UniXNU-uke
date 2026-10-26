@@ -192,7 +192,7 @@ int wr(void *, unsigned w, uint32_t off, uint32_t value) {
     return 0;
 }
 static char loggedRows[8][48];
-void setRow(unsigned slot, const char *text) {
+static char loggedWide[2][112];void setRow(unsigned slot, const char *text) {
     unsigned i = 0;
     for (; i < 47 && text[i]; ++i) boot_progress_ext[slot][i] = text[i];
     for (; i < 47; ++i) boot_progress_ext[slot][i] = ' ';
@@ -1134,9 +1134,16 @@ void metalRows() {
         at += snprintf(tail + at, sizeof tail - at, " %x", d.marks[(total - shown + i) & 15]);
     snprintf(row, sizeof row, "K%u%s", total, tail);
     setRow(7, row);
-    // GPU7/GPU8 (wide): the raw test's report line and the Turnip phase's line (T result or W watchdog sample).
+    // GPU7/GPU8 (wide): the raw test's report line and the Turnip phase's line (T result or W watchdog sample). setRow mirrors slots
+    // 4..7 into the kernel log; mirror these two as well, so the plugin's own verdict is in the userdata dump and not only on the page.
     if (d.report[0]) snprintf(boot_progress_ext_wide[0], sizeof boot_progress_ext_wide[0], "R %.63s", d.report);
     if (d.report2[0]) snprintf(boot_progress_ext_wide[1], sizeof boot_progress_ext_wide[1], "%.63s", d.report2);
+    for (unsigned i = 0; i < 2; ++i) {
+        if (__builtin_memcmp(loggedWide[i], boot_progress_ext_wide[i], 111)) {
+            __builtin_memcpy(loggedWide[i], boot_progress_ext_wide[i], 112);
+            IOLog("UKE GPU%u: %.111s\n", i + 7, boot_progress_ext_wide[i]);
+        }
+    }
     {
         // Row 5: the newest four IOServiceOpen attempts as <process><P plugin type|F other type><MACF result of the sandbox>; 0 = admitted.
         char list[48] = {};
