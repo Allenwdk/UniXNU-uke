@@ -109,7 +109,7 @@ for i in range(len(a) // 16384):
 
 带 addon 的内核在 Data 挂载后的第一次 exec 解压内嵌 blob，写 `/private/var/ngpu/{addons,bin,daemons}`，然后执行原有的 bindfs 挂载。日志读法：
 
-- `UKE GPU addon: stage=3 files=7 bytes=39398839 error=0`：首次写入成功；下一次启动 `stage=4`（cookie 命中，跳过写入），`stage=2` 表示仍在写，`-1` 表示失败（`error=` 是 errno）。首次写入约 39 MB，可能比旧镜像多几秒到几十秒，未完成前不要复位。
+- `UKE GPU addon: stage=3 files=7 bytes=39398839 error=0`：首次写入成功；cookie 命中时安装函数直接返回、**不再打印这一行**（没有这一行但 `M a5.0/5.0` 就表示缓存命中），`stage=2` 表示仍在写，`-1` 表示失败（`error=` 是 errno）。首次写入约 39 MB，可能比旧镜像多几秒到几十秒，未完成前不要复位。
 - 心跳第 6 行 `M a<addon>.<status>/<addon2>.<status> …`：`a5.0` = Extensions 视图已挂载且 `NativeAdrenoMetal.bundle/Info.plist` 可见；`a5.0/5.0` = LaunchDaemons 视图也可见；`o<opens>/<busy>/<closes>` 的 opens > 0 表示插件或 daemon 已打开 AGX user client。
 - 第 7 行 `K<total> <markers>`：插件的 0x4147xxxx 标记（6800 进入插件、6801 找到 Turnip、6802 设备创建、68f1 无 Turnip、68f2 无设备、3xxx 成功步骤、4xxx 失败状态、5xxx 已上报）。
 - GPU7 的 `R …` 是 raw user test 报告，`T …`/`W …` 是 Turnip 阶段行；`D …` 是打开/属性读取计数；第 6 行末尾 `d<ever><alive>:<pid>` 是 `adrenoprobed` 进程。

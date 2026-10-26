@@ -13,7 +13,8 @@ the kernel log, where the userdata window keeps them. Pass the decoded log
 
 The heartbeat's slot 6 is printed as UKE GPU3 and slot 7 as UKE GPU4
 (setRow prints slot-3). The window may mix boots; the last occurrence of each
-row is used.
+row is used. A cached boot (the cookie marker matched) prints no install line,
+so a missing UKE GPU addon row is accepted when both mounts report 5.
 
   check-gpu-addon-boot.py boot.log [--mode auto|probe|stable]
 
@@ -54,9 +55,8 @@ def analyze(text, mode):
     out = []
 
     addon = last(ADDON, lines)
-    if not addon:
-        failures.append('no "UKE GPU addon:" line: sheng-gpu-addon=1 missing or the install did not run')
-    else:
+    addon_missing = addon is None
+    if addon:
         stage = int(addon.group(1))
         error = int(addon.group(4) or -1)
         if stage == -1:
@@ -70,6 +70,7 @@ def analyze(text, mode):
 
     row = last(MROW, lines)
     opens = None
+    mounts_ok = False
     if not row:
         failures.append('no heartbeat row (UKE GPU3: M ...): the addon mount never reported')
     else:
@@ -80,6 +81,7 @@ def analyze(text, mode):
             failures.append('Extensions view is not complete (a%d): bundle/Info.plist not visible' % ext)
         if daemon_view != 5:
             failures.append('LaunchDaemons view is not complete (%d): daemon plist not visible' % daemon_view)
+        mounts_ok = ext == 5 and daemon_view == 5
         if opens == 0:
             failures.append('no AGX user client opened (o0): check the sandbox grant and the plugin markers')
         out.append('heartbeat: a%d/%d opens=%d closes=%d name reads=%s daemon seen=%d alive=%d pid=%s' % (
@@ -88,6 +90,12 @@ def analyze(text, mode):
             warnings.append('the adrenoprobed daemon was never seen (d0): check launchd and the daemons view')
         if alive:
             warnings.append('the adrenoprobed daemon is still alive: it exits after one test')
+    if addon_missing:
+        if mounts_ok:
+            warnings.append('no "UKE GPU addon:" line: the cookie marker matched (a cached boot prints no '
+                            'install line); both mounts are complete, so the addon is in place')
+        else:
+            failures.append('no "UKE GPU addon:" line: sheng-gpu-addon=1 missing or the install did not run')
 
     marks = []
     krow = last(KROW, lines)
@@ -151,12 +159,17 @@ UKE GPU addon: stage=-1 files=0 bytes=0 error=2
 UKE GPU3: M a4.2/3.0 k0 s5/0 r1 o0/0/0 n0 d00:0/80
 UKE GPU4: K3 68f2
 '''
+SELF_CACHED = '''\
+UKE GPU3: M a5.0/5.0 k0 s5/0 r1 o2/0/1 n9 d10:481/120
+UKE GPU4: K9 6800 6801 6802 6810 6803
+UKE GPU7: R 512/512 ok
+'''
 
 
 def self_test():
     cases = [(SELF_STABLE, 'auto', 0), (SELF_PROBE, 'auto', 0),
              (SELF_STABLE, 'stable', 0), (SELF_PROBE, 'probe', 0),
-             (SELF_FAIL, 'auto', 1)]
+             (SELF_FAIL, 'auto', 1), (SELF_CACHED, 'auto', 0)]
     for text, mode, expected in cases:
         if analyze(text, mode) != expected:
             print('FAIL: self-test case mode=%s expected %d' % (mode, expected))
