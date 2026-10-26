@@ -587,13 +587,18 @@ the mount switch.
 - Owner trust: `scripts/make-owner-trust-bundle.py` (one owner module with the
   three CDHashes followed by the two unchanged original modules), passed with
   `--owner-trust-cache` to the payload build; sha256 `b8aa3335…`.
-- Boot arguments: the surf5 set plus `sheng-gpu-addon=1` (971 bytes, under the
-  1000-byte limit). `[payload] size_mib` is 80, because the kernel grows to
+- Boot arguments: the surf5 set plus `sheng-gpu-addon=1` and
+  `sheng-iconservices=1` (992 bytes, under the 1000-byte limit).
+  `sheng-lite=1` disables `com.apple.iconservices.iconservicesagent` in
+  `lite_jobs` (the null-GL crash workaround); `sheng-iconservices=1` leaves it
+  enabled for this image so CoreImage can use the native Metal device. Without
+  the addon it would return to the CI::GLContext crash loop; drop the argument
+  to restore the workaround. `[payload] size_mib` is 80, because the kernel grows to
   64,643,072 bytes with the blob. The old 64 MiB payload had 12.4 MiB free.
-- Artifacts (not yet booted): kernel `649a1ad6…`, payload `74400c3e…`
-  (83,886,080 bytes), ADT `10fc90b9…`, payload kernel (panic-screen patched)
-  `0dc0d7db…`, vendor_boot `9fb9ff60…` (85,782,528 bytes; 80 MiB ramdisk at
-  0x1000, DTB 1,885,893 bytes). The 1 TiB UEFI boot image
+- Artifacts (not yet booted): kernel `e7fbcf19…`, payload `f260ca32…`
+  (83,886,080 bytes), vendor_boot `4195b4c4…` (85,782,528 bytes; 80 MiB
+  ramdisk at 0x1000, DTB 1,885,893 bytes; owner trust `b8aa3335…`, Data seed
+  `20768d00…`). The 1 TiB UEFI boot image
   (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed alongside it.
 - Expected first-boot evidence: `UKE GPU addon: stage=3 files=7
   bytes=39398839 error=0`, then `stage=4` on the next boot; heartbeat

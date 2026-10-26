@@ -104,5 +104,6 @@ for i in range(len(a) // 16384):
 - 第 7 行 `K<total> <markers>`：插件的 0x4147xxxx 标记（6800 进入插件、6801 找到 Turnip、6802 设备创建、68f1 无 Turnip、68f2 无设备、3xxx 成功步骤、4xxx 失败状态、5xxx 已上报）。
 - GPU7 的 `R …` 是 raw user test 报告，`T …`/`W …` 是 Turnip 阶段行；`D …` 是打开/属性读取计数；第 6 行末尾 `d<ever><alive>:<pid>` 是 `adrenoprobed` 进程。
 - 若 `M a1.…`：源目录不存在（写入失败或路径错）；`a2/3/4`：bindfs 挂载失败或视图不完整；对照 `error=` 和 `M` 行。
+- `sheng-iconservices=1` 把 `com.apple.iconservices.iconservicesagent` 从 `lite_jobs` 的禁用名单里去掉：这次启动应在日志里看到该进程（`proc`/CrashReporter 里不再每轮出现它的 `CI::GLContext` 崩溃），图标/设置页应正常。若 addon 失败，它会回到崩溃循环（系统仍存活）；去掉该参数即恢复禁用。
 
 刷机（两种 UEFI 启动镜像都可配 200 GiB packed Data seed）：`fastboot flash boot boot_uke_usbdal2.img`、`fastboot flash vendor_boot vendor_boot_uke_addon1.img`、`fastboot set_active a`、`fastboot reboot`。
