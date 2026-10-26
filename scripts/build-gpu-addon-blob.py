@@ -41,6 +41,8 @@ def main():
     parser.add_argument('--plugin-dir', type=Path, default=DEFAULT_PLUGIN)
     parser.add_argument('--output-dir', type=Path, default=ROOT / 'build/uke-gpu-addon')
     parser.add_argument('--clients', default='iconservicesagent,PosterBoard,CollectionsPoster,AegirPoster,KaleidoscopePoster')
+    parser.add_argument('--no-publish', action='store_true',
+                        help='probe image: omit the .publish marker so the plugin runs its shared user test and returns nil (software rendering kept)')
     args = parser.parse_args()
     plugin = args.plugin_dir.resolve()
     bundle = plugin / 'NativeAdrenoMetal.bundle'
@@ -56,11 +58,12 @@ def main():
         ('addons/NativeAdrenoMetal.bundle/NativeAdrenoMetal', 0o755, executable.read_bytes()),
         ('addons/NativeAdrenoMetal.bundle/libvulkan_freedreno.dylib', 0o755, turnip.read_bytes()),
         ('addons/NativeAdrenoMetal.bundle/Info.plist', 0o644, info.read_bytes()),
-        ('addons/NativeAdrenoMetal.publish', 0o644, b'1\n'),
         ('addons/NativeAdrenoMetal.clients', 0o644, (args.clients.replace(',', '\n') + '\n').encode()),
         ('bin/adrenoprobed', 0o755, daemon.read_bytes()),
         ('daemons/org.blu-sharky.adrenoprobed.plist', 0o644, daemon_plist.read_bytes()),
     ]
+    if not args.no_publish:
+        entries.insert(3, ('addons/NativeAdrenoMetal.publish', 0o644, b'1\n'))
     body = bytearray()
     paths = []
     for path, mode, data in entries:
@@ -100,7 +103,8 @@ def main():
         'blob_sha256': hashlib.sha256(blob).hexdigest(),
     }
     (out / 'gpu-addon.json').write_text(json.dumps(report, indent=2) + '\n')
-    print('PASS: GPU addon blob %d bytes (%d raw, cookie %08x); %d entries' % (len(blob), len(body), cookie, len(entries)))
+    print('PASS: GPU addon blob %d bytes (%d raw, cookie %08x); %d entries%s' % (
+        len(blob), len(body), cookie, len(entries), ' (probe, no publish marker)' if args.no_publish else ''))
 
 
 if __name__ == '__main__':

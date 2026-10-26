@@ -153,16 +153,22 @@ def main():
                 fail(name + ': sha256 does not match gpu-addon.json')
         print('PASS: gpu-addon.json matches the blob')
 
-    if set(entries) != set(EXPECTED):
-        fail('entry set differs: %s' % sorted(set(entries) ^ set(EXPECTED)))
-    for name, mode in EXPECTED.items():
+    probe = 'addons/NativeAdrenoMetal.publish' not in entries
+    expected = dict(EXPECTED)
+    if probe:
+        del expected['addons/NativeAdrenoMetal.publish']
+    if set(entries) != set(expected):
+        fail('entry set differs: %s' % sorted(set(entries) ^ set(expected)))
+    for name, mode in expected.items():
         if entries[name]['mode'] & 0o7777 != mode:
             fail('%s: mode %04o, expected %04o' % (name, entries[name]['mode'] & 0o7777, mode))
-    print('PASS: the seven expected entries with the expected modes')
+    print('PASS: the %u expected entries with the expected modes%s' % (
+        len(expected), ' (probe, no publish marker)' if probe else ''))
 
-    publish = entries['addons/NativeAdrenoMetal.publish']['data'].strip()
-    if not publish:
-        fail('the publish marker is empty')
+    if not probe:
+        publish = entries['addons/NativeAdrenoMetal.publish']['data'].strip()
+        if not publish:
+            fail('the publish marker is empty')
     clients = entries['addons/NativeAdrenoMetal.clients']['data'].decode().split()
     if not clients or any('/' in client or not client for client in clients):
         fail('the clients list is empty or malformed')

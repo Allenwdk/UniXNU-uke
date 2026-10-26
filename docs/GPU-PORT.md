@@ -626,6 +626,12 @@ the mount switch.
   (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed alongside.
   addon1 and addon2 are superseded: addon1 mounted the bindfs views over
   launchd's environment, and both would have passed a NULL zlib allocator.
+  A probe image (tag `addon3p`, the blob omits `NativeAdrenoMetal.publish` so
+  the plugin runs its shared user test and returns nil while software rendering
+  continues): kernel `ce8911be…`, payload `b0aac814…`, vendor_boot `d2bfd46b…`
+  (972-byte args, iconservices off). Flash it first to prove the mount, plugin
+  load/trust, AGX open grant and the user test before letting backboardd
+  register the native device.
 - zlib allocator fix (addon3): this kernel builds zlib with `KERNEL`, which
   defines `NO_ZCFUNCS`, so `inflateInit` installs no default allocator and the
   first `ZALLOC` calls a NULL function pointer — the addon2 image would panic in
@@ -739,7 +745,10 @@ printing the build tag/surface/iconservices values), and requires the
 vendor_boot ramdisk at 0x1000 to equal the payload. It passes for all three
 addon3 images (kernel `59cf1714…`): stable and map2 measure 992 bytes (tag
 `addon3`, surface 1/2, iconservices on) and the fallback measures 972 bytes
-(tag `addon3n`, iconservices off).
+(tag `addon3n`, iconservices off). A probe blob is built with
+`build-gpu-addon-blob.py --no-publish` into its own output directory (six
+entries, no `NativeAdrenoMetal.publish`); the kernel built against it (tag
+`addon3p`) embeds that blob and the checker accepts it as a probe.
 
 A clean `out/` rebuild also needs one previously built prelink candidate under
 `build/native-prelink/` for the legacy-display archive audit, and
