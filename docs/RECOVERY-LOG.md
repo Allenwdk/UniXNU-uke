@@ -106,5 +106,6 @@ for i in range(len(a) // 16384):
 - 若 `M a1.…`：源目录不存在（写入失败或路径错）；`a2/3/4`：bindfs 挂载失败或视图不完整；对照 `error=` 和 `M` 行。
 - 授权路径：`S` 行的 MACF 是驱动的只读探测，仍可能显示 `backboarddP1`；真正的 open 由内核补丁的 client/service grant 放行。`o<opens>` > 0、插件 `K…` 和 GPU7 `R/T` 才是授权成功的证据。`o` 一直 0 且 `M a5.0` 时检查加速器上的 `NativeSandboxGrantProcess`/`NativeSandboxGrantService`。
 - `sheng-iconservices=1` 把 `com.apple.iconservices.iconservicesagent` 从 `lite_jobs` 的禁用名单里去掉：这次启动应在日志里看到该进程（`proc`/CrashReporter 里不再每轮出现它的 `CI::GLContext` 崩溃），图标/设置页应正常。若 addon 失败，它会回到崩溃循环（系统仍存活）；去掉该参数即恢复禁用。
+- addon2 修复了首版补丁的 scratch 冲突：bindfs 挂载参数原先在 `scratch+0x400/+0x600`，会覆盖 cache 阶段留给 launchd 的环境串/向量（+0x400/+0x600，向量 +0x500），init exec 会把 `/private...` 当 envp；现在两处挂载都用 `+0x800`（mkdir 仍 +0xc00）。旧 addon1 镜像不要再刷。
 
-刷机（两种 UEFI 启动镜像都可配 200 GiB packed Data seed）：`fastboot flash boot boot_uke_usbdal2.img`、`fastboot flash vendor_boot vendor_boot_uke_addon1.img`、`fastboot set_active a`、`fastboot reboot`。
+刷机（两种 UEFI 启动镜像都可配 200 GiB packed Data seed）：`fastboot flash boot boot_uke_usbdal2.img`、`fastboot flash vendor_boot vendor_boot_uke_addon2.img`（CA 映射实验用 `vendor_boot_uke_addon2_map2.img`）、`fastboot set_active a`、`fastboot reboot`。

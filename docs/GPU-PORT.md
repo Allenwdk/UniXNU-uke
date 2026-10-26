@@ -616,14 +616,28 @@ the mount switch.
   the addon it would return to the CI::GLContext crash loop; drop the argument
   to restore the workaround. `[payload] size_mib` is 80, because the kernel grows to
   64,643,072 bytes with the blob. The old 64 MiB payload had 12.4 MiB free.
-- Artifacts (not yet booted): kernel `028f9e7e…`, stable payload
-  `96ede592…` (83,886,080 bytes) and CA-experiment payload `1688cdae…`;
-  vendor_boot `d43ca7ce…` and `5f4b1a37…` (each 85,782,528 bytes; 80 MiB
-  ramdisk at 0x1000, DTB 1,885,893 bytes; owner trust `b8aa3335…`, Data seed
-  `20768d00…`). The stable image keeps `offline-legacy-default-surface=1`;
+- Artifacts (addon2, not yet booted): kernel `b3fcd74f…` (64,643,072 bytes),
+  stable payload `fc98b5db…` (83,886,080 bytes) and CA-experiment payload
+  `6870cf0c…`; vendor_boot `47eef425…` and `d7966b9b…` (each 85,782,528 bytes;
+  80 MiB ramdisk at 0x1000, DTB 1,885,893 bytes; owner trust `b8aa3335…`, Data
+  seed `20768d00…`). The stable image keeps `offline-legacy-default-surface=1`;
   the experiment image uses `=2` (see the compositor section). The 1 TiB UEFI
   boot image (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed
-  alongside either.
+  alongside either. The earlier addon1 images (kernel `028f9e7e…`, payloads
+  `96ede592…`/`1688cdae…`, vendor_boots `d43ca7ce…`/`5f4b1a37…`) are superseded
+  by the scratch collision below.
+- Boot-time staging scratch fix (addon2): the first image mounted the two
+  bindfs views with mount arguments at `scratch + 0x400` and `+0x600`.
+  `native_owner_cache_prepare` writes launchd's environment there
+  (`DYLD_SHARED_CACHE_DIR` at +0x400, the pointer vector at +0x500, the
+  fallback string at +0x600) and `load_init_program_at_path` reads it after the
+  Data mount, so the mount's `copyout("bindfs")` and source paths replaced the
+  vector with `/private...` ASCII — the init exec would have read it as envp.
+  The addon2 patch keeps both mount arguments at `scratch + 0x800` (the mkdir
+  path stays at `+0xc00`), clear of the environment. The same patch makes the
+  ownership attempt non-fatal: files are written 0755/0644 and chowned to
+  root:wheel when owner Data allows it, with a mode-only retry otherwise; the
+  bindfs view reports root:wheel either way (`BINDM_FORCE_ROOT`).
 - Default-surface CA experiment: `offline-legacy-default-surface=2` maps the
   32 MiB seed region as the surface's +0x30 descriptor after adoption (the
   +0x90 allocation stays 0x1A13000); the boot log shows `UKE: surface mapping
@@ -672,8 +686,14 @@ export UKE_GPU_ADDON_DIR=$HOME/UniXNU/UniXNU-uke/build/uke-gpu-addon
   --unique-chip-id 0x7252a8b07f8cb8f9 --kernel-arg=sheng-gpu-addon=1 ...
 python3 ../UniXNU-uke/scripts/patch-vendor-boot.py \
   --base vendor_boot_uke_surf5.img --payload out/uke/payload/payload.img \
-  --output vendor_boot_uke_addon1.img
+  --output vendor_boot_uke_addon2.img
 ```
+
+`--kernel-arg` takes one token per occurrence (quote negative flags as
+`--kernel-arg=-v`); passing the whole boot-args string as one value is rejected
+as unsupported. On this Linux host `/tmp` is a size-limited tmpfs and some tools
+(`patch`, `ar`) fail with `Disk quota exceeded`; export `TMPDIR` to a workspace
+directory for the build.
 
 A clean `out/` rebuild also needs one previously built prelink candidate under
 `build/native-prelink/` for the legacy-display archive audit, and

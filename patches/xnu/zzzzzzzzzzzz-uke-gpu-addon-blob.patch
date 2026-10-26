@@ -9,7 +9,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
  #include <os/log.h>
  
-@@ -7254,6 +7255,242 @@
+@@ -7254,6 +7255,250 @@
  	}
  	*status = error;
  }
@@ -47,6 +47,24 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +volatile int native_gpu_addon_blob_error = 0;
 +volatile uint64_t native_gpu_addon_blob_bytes = 0;
 +
++/* Owner Data is mounted with its anonymous-owner mapping, and the bindfs view reports root:wheel for every entry anyway
++ * (BINDM_FORCE_ROOT); a refused chown only leaves the on-disk owner, so retry with the mode alone. */
++static int
++native_gpu_addon_setattr(vnode_t vp, int mode, vfs_context_t ctx)
++{
++	struct vnode_attr va;
++	VATTR_INIT(&va);
++	VATTR_SET(&va, va_mode, mode);
++	VATTR_SET(&va, va_uid, 0);
++	VATTR_SET(&va, va_gid, 0);
++	int error = vnode_setattr(vp, &va, ctx);
++	if (error) {
++		VATTR_INIT(&va);
++		VATTR_SET(&va, va_mode, mode);
++		error = vnode_setattr(vp, &va, ctx);
++	}
++	return error;
++}
 +static int
 +native_gpu_addon_mkdir(proc_t p, user_addr_t scratch, const char *path)
 +{
@@ -66,12 +84,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +		vnode_t vp = NULLVP;
 +		error = vnode_lookup(path, VNODE_LOOKUP_NOFOLLOW, &vp, vfs_context_current());
 +		if (!error) {
-+			struct vnode_attr va;
-+			VATTR_INIT(&va);
-+			VATTR_SET(&va, va_mode, 0755);
-+			VATTR_SET(&va, va_uid, 0);
-+			VATTR_SET(&va, va_gid, 0);
-+			error = vnode_setattr(vp, &va, vfs_context_current());
++			error = native_gpu_addon_setattr(vp, 0755, vfs_context_current());
 +			vnode_put(vp);
 +		}
 +	}
@@ -116,12 +129,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +		}
 +	}
 +	if (!error) {
-+		struct vnode_attr va;
-+		VATTR_INIT(&va);
-+		VATTR_SET(&va, va_mode, mode);
-+		VATTR_SET(&va, va_uid, 0);
-+		VATTR_SET(&va, va_gid, 0);
-+		error = vnode_setattr(vp, &va, ctx);
++		error = native_gpu_addon_setattr(vp, mode, ctx);
 +	}
 +	if (!error) {
 +		error = VNOP_FSYNC(vp, MNT_WAIT, ctx);
@@ -252,12 +260,23 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  static void
  native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
  {
-@@ -7261,6 +7498,8 @@
+@@ -7261,5 +7506,9 @@
  	if (!PE_parse_boot_argn("sheng-gpu-addon", &enabled, sizeof(enabled)) || enabled != 1) {
  		return;
  	}
 +	/* The addon lives on owner Data; write the embedded bundle before mounting it. */
 +	(void)native_gpu_addon_install(p, scratch);
++	/* The cache-mount environment (strings at +0x400/+0x600, the vector at +0x500) is still needed by launchd exec;
++	 * keep the addon mount arguments at +0x800. */
  	static const char extensions_source[] = "/private/var/ngpu/addons", extensions_point[] = "/System/Library/Extensions";
  	static const char daemons_source[] = "/private/var/ngpu/daemons", daemons_point[] = "/System/Library/LaunchDaemons";
- 	native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source), extensions_point,
+@@ -7266,7 +7515,7 @@
+-	native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source), extensions_point,
++	native_gpu_addon_mount(p, scratch, 0x800, extensions_source, sizeof(extensions_source), extensions_point,
+ 	    sizeof(extensions_point), "/System/Library/Extensions/AGXMetalA10.bundle",
+ 	    "/System/Library/Extensions/NativeAdrenoMetal.bundle/Info.plist", &native_gpu_addon_stage,
+ 	    &native_gpu_addon_status);
+-	native_gpu_addon_mount(p, scratch, 0x600, daemons_source, sizeof(daemons_source), daemons_point, sizeof(daemons_point),
++	native_gpu_addon_mount(p, scratch, 0x800, daemons_source, sizeof(daemons_source), daemons_point, sizeof(daemons_point),
+ 	    "/System/Library/LaunchDaemons/com.apple.backboardd.plist",
+ 	    "/System/Library/LaunchDaemons/org.blu-sharky.adrenoprobed.plist", &native_gpu_addon2_stage, &native_gpu_addon2_status);
