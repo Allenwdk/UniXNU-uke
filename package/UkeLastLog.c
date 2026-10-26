@@ -3,8 +3,10 @@
 // The low half keeps the embedded-panic FUNK record that the next XNU boot
 // prints; the high half is a ramoops-compatible console ring
 // (persistent_ram_buffer, sig 0x43474244) that a reader can expose at
-// /sys/fs/pstore/console-ramoops-0. Enabled with sheng-log=1. Only writes the
-// pram mapping the device tree already reserved; it never allocates, changes
+// /sys/fs/pstore/console-ramoops-0. Enabled with sheng-log=1. The pram half is
+// the only thing written directly: the same snapshot is also appended to the
+// userdata log window through NativeUfs, which is what makes it readable from
+// recovery. Apart from those two the writer never allocates, changes
 // translation, or touches a device register.
 #include <stdint.h>
 #include <stddef.h>
@@ -205,14 +207,150 @@ uke_last_log_write(void)
 	uke_ramoops_write(m);
 }
 
+// ---- userdata copy --------------------------------------------------------------------------
+//
+// The pram ring above survives only until the next reset and cannot be read
+// from outside the device. The same snapshot is therefore also appended to the
+// log window NativeUfs keeps at the end of userdata, which a recovery image or
+// a host can read directly with dd.
+//
+// Layout: the window is a ring of 16 KiB records. Each record is
+//
+//   [ 0] magic "UKELLOG1"
+//   [ 8] sequence number (u64, monotonic)
+//   [16] payload length (u32)
+//   [20] payload crc32 (u32)
+//   [24] reserved
+//   [32] payload (the newest bytes of the kernel message buffer)
+//
+// A reader sorts by sequence and concatenates the contiguous run it finds.
+#define UKE_UFS_RECORD_BYTES   (16 * 1024)
+#define UKE_UFS_RECORD_BLOCKS  (UKE_UFS_RECORD_BYTES / 4096)
+#define UKE_UFS_PAYLOAD_BYTES  (UKE_UFS_RECORD_BYTES - 32)
+#define UKE_UFS_INTERVAL_MS    2000
+
+int native_ufs_log_open(uint64_t *firstLba, uint64_t *blocks, const char **why);
+int native_ufs_log_write(uint64_t rel, uint32_t blocks, const void *src);
+int native_ufs_log_sync(void);
+
+static uint32_t
+uke_crc32(const uint8_t *data, size_t length)
+{
+	uint32_t crc = 0xffffffffU;
+	for (size_t i = 0; i < length; i++) {
+		crc ^= data[i];
+		for (unsigned bit = 0; bit < 8; bit++) {
+			crc = (crc >> 1) ^ (0xedb88320U & (0U - (crc & 1U)));
+		}
+	}
+	return ~crc;
+}
+
+static uint8_t ukeUfsBuffer[UKE_UFS_RECORD_BYTES] __attribute__((aligned(4096)));
+static bool ukeUfsOpen;
+static bool ukeUfsRefused;
+static uint64_t ukeUfsBlocks;
+static uint64_t ukeUfsSeq;
+static uint64_t ukeUfsCursor;
+
+// One record: the newest UKE_UFS_PAYLOAD_BYTES of the message buffer.
+static size_t
+uke_snapshot(uint8_t *out, size_t capacity)
+{
+	struct msgbuf *m = msgbufp;
+	if (m == NULL || m->msg_bufc == NULL || m->msg_size <= 1 || m->msg_magic != MSG_MAGIC) {
+		return 0;
+	}
+	const int write = m->msg_bufx;
+	if (write <= 0) {
+		return 0;
+	}
+	size_t size = (size_t)m->msg_size;
+	size_t cap = capacity;
+	if (cap > size) {
+		cap = size;
+	}
+	size_t start = ((size_t)write + size - cap) % size;
+	size_t first = size - start;
+	if (first > cap) {
+		first = cap;
+	}
+	memcpy(out, m->msg_bufc + start, first);
+	if (cap > first) {
+		memcpy(out + first, m->msg_bufc, cap - first);
+	}
+	return cap;
+}
+
+static void
+uke_ufs_publish(void)
+{
+	if (ukeUfsRefused) {
+		return;
+	}
+	if (!ukeUfsOpen) {
+		const char *why = "";
+		uint64_t first = 0, blocks = 0;
+		if (!native_ufs_log_open(&first, &blocks, &why)) {
+			// "off" and "no root layout" are the normal states before the
+			// storage driver has started; anything else will not change.
+			if (why != NULL && strcmp(why, "off") != 0 &&
+			    strcmp(why, "no root layout") != 0) {
+				IOLog("UkeLastLog: userdata log window unavailable: %s\n", why);
+				ukeUfsRefused = true;
+			}
+			return;
+		}
+		ukeUfsBlocks = blocks;
+		ukeUfsCursor = 0;
+		ukeUfsSeq = 0;
+		ukeUfsOpen = true;
+		IOLog("UkeLastLog: userdata log window at lba %llu, %llu blocks\n",
+		    (unsigned long long)first, (unsigned long long)blocks);
+	}
+
+	bzero(ukeUfsBuffer, sizeof(ukeUfsBuffer));
+	const size_t length = uke_snapshot(ukeUfsBuffer + 32, UKE_UFS_PAYLOAD_BYTES);
+	if (length == 0) {
+		return;
+	}
+	memcpy(ukeUfsBuffer, "UKELLOG1", 8);
+	uint64_t *seq = (uint64_t *)(ukeUfsBuffer + 8);
+	*seq = ukeUfsSeq;                       // little-endian AArch64
+	uint32_t *len = (uint32_t *)(ukeUfsBuffer + 16);
+	*len = (uint32_t)length;
+	uint32_t *crc = (uint32_t *)(ukeUfsBuffer + 20);
+	*crc = uke_crc32(ukeUfsBuffer + 32, length);
+	__asm__ volatile("dsb sy" ::: "memory");
+
+	if (!native_ufs_log_write(ukeUfsCursor, UKE_UFS_RECORD_BLOCKS, ukeUfsBuffer)) {
+		IOLog("UkeLastLog: userdata log write failed at record %llu\n",
+		    (unsigned long long)ukeUfsSeq);
+		return;
+	}
+	(void)native_ufs_log_sync();
+	ukeUfsSeq++;
+	ukeUfsCursor = (ukeUfsCursor + UKE_UFS_RECORD_BLOCKS) % ukeUfsBlocks;
+	ukeUfsCursor -= ukeUfsCursor % UKE_UFS_RECORD_BLOCKS;
+}
+
 static void
 uke_last_log_writer(void *arg, wait_result_t result)
 {
 	(void)arg;
 	(void)result;
 
+	unsigned tick = 0;
 	for (;;) {
 		uke_last_log_write();
+		// The userdata copy is paced separately: the 32 MiB window only holds
+		// 2048 records, so at the pram writer's 500 ms rate it would wrap every
+		// seventeen minutes and discard the start of the boot, which is what
+		// this copy exists to keep. Two seconds stretches the ring to about an
+		// hour.
+		if ((tick++ % (UKE_UFS_INTERVAL_MS / UKE_LAST_LOG_INTERVAL_MS)) == 0) {
+			uke_ufs_publish();
+		}
 		IOSleep(UKE_LAST_LOG_INTERVAL_MS);
 	}
 }
@@ -224,9 +362,6 @@ uke_last_log_start(void)
 	thread_t thread;
 
 	if (!PE_parse_boot_argn("sheng-log", &enabled, (int)sizeof(enabled)) || enabled != 1) {
-		return;
-	}
-	if (gPanicBase == 0 || gPanicSize <= sizeof(struct embedded_panic_header) + 1) {
 		return;
 	}
 	if (kernel_thread_start_priority(uke_last_log_writer, NULL, BASEPRI_KERNEL, &thread) == KERN_SUCCESS) {
