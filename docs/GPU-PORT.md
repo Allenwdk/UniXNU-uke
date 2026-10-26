@@ -616,11 +616,20 @@ the mount switch.
   the addon it would return to the CI::GLContext crash loop; drop the argument
   to restore the workaround. `[payload] size_mib` is 80, because the kernel grows to
   64,643,072 bytes with the blob. The old 64 MiB payload had 12.4 MiB free.
-- Artifacts (not yet booted): kernel `055dcead…`, payload `da5093f9…`
-  (83,886,080 bytes), vendor_boot `0198dc10…` (85,782,528 bytes; 80 MiB
+- Artifacts (not yet booted): kernel `028f9e7e…`, stable payload
+  `96ede592…` (83,886,080 bytes) and CA-experiment payload `1688cdae…`;
+  vendor_boot `d43ca7ce…` and `5f4b1a37…` (each 85,782,528 bytes; 80 MiB
   ramdisk at 0x1000, DTB 1,885,893 bytes; owner trust `b8aa3335…`, Data seed
-  `20768d00…`). The 1 TiB UEFI boot image
-  (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed alongside it.
+  `20768d00…`). The stable image keeps `offline-legacy-default-surface=1`;
+  the experiment image uses `=2` (see the compositor section). The 1 TiB UEFI
+  boot image (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed
+  alongside either.
+- Default-surface CA experiment: `offline-legacy-default-surface=2` maps the
+  32 MiB seed region as the surface's +0x30 descriptor after adoption (the
+  +0x90 allocation stays 0x1A13000); the boot log shows `UKE: surface mapping
+  -> region ... (mode 2)`. `=1` keeps the adopted descriptor. The stable image
+  is `vendor_boot_uke_addon1.img`; the experiment is
+  `vendor_boot_uke_addon1_map2.img`.
 - The surf5 heartbeat already proved the discovery side: `s5/0 r1` (the
   accelerator reached publish stage 5 and was registered) and `n` rising from
   3 to 8 (`MetalPluginName` reads by the original discovery). The missing

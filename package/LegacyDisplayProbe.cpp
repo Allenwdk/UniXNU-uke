@@ -646,7 +646,8 @@ extern void native_touch_probe(void);
 // platform driver ever installs the default surface at +0x1618, so adopt the
 // created surface there and let the original slot 174/242 produce the
 // IOSurfaceID and Mach port name.
-static void native_legacy_default_surface_state(IOService *display,bool adopt) {
+static void native_legacy_default_surface_state(IOService *display,unsigned mode) {
+    const bool adopt=mode!=0;
     unsigned char *fb=reinterpret_cast<unsigned char *>(display);
     if(!fb)return;
     void *root=nullptr,*gate=nullptr,*workloop=nullptr,*surface=nullptr,*temp=nullptr,*region=nullptr;
@@ -705,6 +706,16 @@ static void native_legacy_default_surface_state(IOService *display,bool adopt) {
             memcpy(reinterpret_cast<unsigned char *>(temp)+0x90,&padded,8);
             IOLog("UKE: surface allocation %llu -> %llu (guard)\n",(unsigned long long)allocation,(unsigned long long)padded);
         }
+    }
+    // Opt-in CA mapping experiment (offline-legacy-default-surface=2): the surface's +0x30 descriptor is what the
+    // display exports; the compositor's 0x1A22000-byte region is the allocation (0x1A13000) plus 0xF000. Map the
+    // 32 MiB seed region instead so the compositor's trailer page is covered. Mode 1 keeps the adopted descriptor.
+    if(temp && region && mode==2 && tempDescriptor!=region) {
+        OSObject *mapping=reinterpret_cast<OSObject *>(region);
+        mapping->retain();
+        memcpy(reinterpret_cast<unsigned char *>(temp)+0x30,&region,sizeof(region));
+        IOLog("UKE: surface mapping -> region %p bytes=%llu (mode 2)\n",region,
+            (unsigned long long)reinterpret_cast<IOMemoryDescriptor *>(region)->getLength());
     }
 }
 void native_legacy_display_late_probe(void) {
@@ -793,7 +804,7 @@ void native_legacy_display_late_probe(void) {
                         }
                         native_legacy_stage=5;started=display->start(nub);native_legacy_start_result=started;
                     }
-                    if(started && defaultSurface)native_legacy_default_surface_state(display,defaultSurface==1);
+                    if(started && defaultSurface)native_legacy_default_surface_state(display,defaultSurface);
                     if(started && phase==4) {
                         activeLegacyDisplay=display;activeGOPNub=nub;native_legacy_stage=10;
                         {
