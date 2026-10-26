@@ -9,7 +9,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
  #include <os/log.h>
  
-@@ -7254,6 +7255,250 @@
+@@ -7254,6 +7255,281 @@
  	}
  	*status = error;
  }
@@ -46,6 +46,35 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +volatile int native_gpu_addon_blob_files = 0;
 +volatile int native_gpu_addon_blob_error = 0;
 +volatile uint64_t native_gpu_addon_blob_bytes = 0;
++
++/* This kernel's zlib is built with KERNEL, which defines NO_ZCFUNCS: inflateInit installs no default allocators and
++ * ZALLOC would call a NULL function pointer. Supply the kernel pair; each block carries its size for kfree_data. */
++struct native_gpu_addon_zmem {
++	uint64_t size;
++	uint64_t data[0];
++};
++static void *
++native_gpu_addon_zalloc(void *opaque __unused, uInt items, uInt size)
++{
++	uint64_t total = (uint64_t)items * (uint64_t)size;
++	if (!total || total > UINT32_MAX - sizeof(struct native_gpu_addon_zmem)) {
++		return NULL;
++	}
++	struct native_gpu_addon_zmem *block = kalloc_data((vm_size_t)(total + sizeof(*block)), Z_WAITOK);
++	if (!block) {
++		return NULL;
++	}
++	block->size = total + sizeof(*block);
++	return block->data;
++}
++static void
++native_gpu_addon_zfree(void *opaque __unused, voidpf address)
++{
++	if (address) {
++		struct native_gpu_addon_zmem *block = (struct native_gpu_addon_zmem *)((uintptr_t)address - sizeof(*block));
++		kfree_data(block, (vm_size_t)block->size);
++	}
++}
 +
 +/* Owner Data is mounted with its anonymous-owner mapping, and the bindfs view reports root:wheel for every entry anyway
 + * (BINDM_FORCE_ROOT); a refused chown only leaves the on-disk owner, so retry with the mode alone. */
@@ -191,6 +220,8 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +	uint8_t *raw = (uint8_t *)raw_address;
 +	z_stream stream;
 +	memset(&stream, 0, sizeof(stream));
++	stream.zalloc = native_gpu_addon_zalloc;
++	stream.zfree = native_gpu_addon_zfree;
 +	stream.next_in = (Bytef *)(native_gpu_addon_blob + sizeof(*header));
 +	stream.avail_in = (uInt)(native_gpu_addon_blob_size - sizeof(*header));
 +	stream.next_out = (Bytef *)raw;
@@ -260,7 +291,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  static void
  native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
  {
-@@ -7261,5 +7506,9 @@
+@@ -7261,5 +7537,9 @@
  	if (!PE_parse_boot_argn("sheng-gpu-addon", &enabled, sizeof(enabled)) || enabled != 1) {
  		return;
  	}
@@ -270,7 +301,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +	 * keep the addon mount arguments at +0x800. */
  	static const char extensions_source[] = "/private/var/ngpu/addons", extensions_point[] = "/System/Library/Extensions";
  	static const char daemons_source[] = "/private/var/ngpu/daemons", daemons_point[] = "/System/Library/LaunchDaemons";
-@@ -7266,7 +7515,7 @@
+@@ -7266,7 +7546,7 @@
 -	native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source), extensions_point,
 +	native_gpu_addon_mount(p, scratch, 0x800, extensions_source, sizeof(extensions_source), extensions_point,
  	    sizeof(extensions_point), "/System/Library/Extensions/AGXMetalA10.bundle",

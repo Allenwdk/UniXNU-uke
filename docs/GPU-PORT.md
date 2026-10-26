@@ -616,18 +616,23 @@ the mount switch.
   the addon it would return to the CI::GLContext crash loop; drop the argument
   to restore the workaround. `[payload] size_mib` is 80, because the kernel grows to
   64,643,072 bytes with the blob. The old 64 MiB payload had 12.4 MiB free.
-- Artifacts (addon2, not yet booted): kernel `b3fcd74f…` (64,643,072 bytes),
-  stable payload `fc98b5db…` (83,886,080 bytes) and CA-experiment payload
-  `6870cf0c…`; vendor_boot `47eef425…` and `d7966b9b…` (each 85,782,528 bytes;
-  80 MiB ramdisk at 0x1000, DTB 1,885,893 bytes; owner trust `b8aa3335…`, Data
-  seed `20768d00…`). The stable image keeps `offline-legacy-default-surface=1`;
-  the experiment image uses `=2` (see the compositor section). The 1 TiB UEFI
-  boot image (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed
-  alongside either. The earlier addon1 images (kernel `028f9e7e…`, payloads
-  `96ede592…`/`1688cdae…`, vendor_boots `d43ca7ce…`/`5f4b1a37…`) are superseded
-  by the scratch collision below. A fallback without `sheng-iconservices=1`
-  (tag `addon2n`, so the icon agent stays disabled and cannot crash-loop if the
-  addon fails): payload `a297de73…`, vendor_boot `7b7c23ab…`.
+- Artifacts (addon3, not yet booted): kernel `59cf1714…` (64,643,072 bytes),
+  stable payload `9f01595b…`, CA-experiment payload `34335e0e…`, fallback payload
+  `ba0d3e16…` (each 83,886,080 bytes); vendor_boot `014a7415…`, `dd6176ff…`,
+  `10073f02…` (each 85,782,528 bytes; 80 MiB ramdisk at 0x1000, DTB 1,885,893
+  bytes; owner trust `b8aa3335…`, Data seed `20768d00…`). Stable keeps
+  `offline-legacy-default-surface=1`, the experiment uses `=2`, the fallback
+  drops `sheng-iconservices=1` (tags addon3/addon3n). The 1 TiB UEFI boot image
+  (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed alongside.
+  addon1 and addon2 are superseded: addon1 mounted the bindfs views over
+  launchd's environment, and both would have passed a NULL zlib allocator.
+- zlib allocator fix (addon3): this kernel builds zlib with `KERNEL`, which
+  defines `NO_ZCFUNCS`, so `inflateInit` installs no default allocator and the
+  first `ZALLOC` calls a NULL function pointer — the addon2 image would panic in
+  `native_owner_data_prepare` before writing anything. addon3 supplies
+  `native_gpu_addon_zalloc`/`zfree` over `kalloc_data`/`kfree_data` (each block
+  keeps its size in a header, the same shape as OSKext's `z_alloc`/`z_free`) and
+  keeps addon2's mode-only chown retry.
 - Boot-time staging scratch fix (addon2): the first image mounted the two
   bindfs views with mount arguments at `scratch + 0x400` and `+0x600`.
   `native_owner_cache_prepare` writes launchd's environment there
@@ -731,9 +736,9 @@ the blob byte-for-byte, reads the payload's `unixnu.toml` through `mcopy`
 (requiring `sheng-gpu-addon=1`, `sheng-gpu-metal=1`, at most 1000 bytes, and
 printing the build tag/surface/iconservices values), and requires the
 vendor_boot ramdisk at 0x1000 to equal the payload. It passes for all three
-addon2 images: stable and map2 measure 992 bytes (tag `addon2`, surface 1/2,
-iconservices on) and the fallback measures 972 bytes (tag `addon2n`,
-iconservices off).
+addon3 images (kernel `59cf1714…`): stable and map2 measure 992 bytes (tag
+`addon3`, surface 1/2, iconservices on) and the fallback measures 972 bytes
+(tag `addon3n`, iconservices off).
 
 A clean `out/` rebuild also needs one previously built prelink candidate under
 `build/native-prelink/` for the legacy-display archive audit, and
