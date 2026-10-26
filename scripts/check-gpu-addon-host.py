@@ -5,17 +5,23 @@ Parses build/uke-gpu-addon/gpu-addon.z the way kern_exec.c's
 native_gpu_addon_install does (header, zlib stream, per-entry bounds), validates
 the tree the kernel will write against the packer report and the current plugin
 build, derives each Mach-O's ldid CDHash from its CodeDirectory, and optionally
-confirms the owner trust module carries those CDHashes and that a flashable
-kernel embeds this exact blob. Nothing here touches hardware.
+confirms the owner trust module carries those CDHashes, that a flashable kernel
+embeds this exact blob, that a payload's unixnu.toml carries the Metal addon
+boot arguments, and that a vendor_boot image carries that payload at 0x1000.
+Nothing here touches hardware.
 
   check-gpu-addon-host.py [--blob-dir DIR] [--plugin-dir DIR]
                           [--owner-trust BUNDLE] [--kernel MACHO]
+                          [--payload IMG] [--vendor-boot IMG]
 """
 import argparse
 import hashlib
 import json
 import plistlib
+import re
+import shutil
 import struct
+import subprocess
 import sys
 import zlib
 from pathlib import Path
@@ -124,6 +130,8 @@ def main():
     parser.add_argument('--plugin-dir', type=Path, default=ROOT.parent / 'UniXNU/build/adreno-metal-plugin')
     parser.add_argument('--owner-trust', type=Path, help='owner trust bundle that the payload carries')
     parser.add_argument('--kernel', type=Path, help='prelinked kernel that should embed this blob')
+    parser.add_argument('--payload', type=Path, help='payload image whose unixnu.toml should carry the addon arguments')
+    parser.add_argument('--vendor-boot', type=Path, help='vendor_boot image that should carry --payload at 0x1000')
     args = parser.parse_args()
 
     blob = (args.blob_dir / 'gpu-addon.z').read_bytes()
@@ -218,6 +226,42 @@ def main():
         if b'UKE GPU addon: stage=' not in kernel:
             fail(str(args.kernel) + ': has the blob but not the staging log')
         print('PASS: %s embeds this blob (%u bytes)' % (args.kernel, blob_size))
+
+    if args.payload:
+        mcopy = shutil.which('mcopy')
+        if not mcopy:
+            fail('mcopy (mtools) is needed to read the payload boot configuration')
+        try:
+            toml = subprocess.run([mcopy, '-i', str(args.payload), '::/EFI/UniXNU/unixnu.toml', '-'],
+                                  capture_output=True, check=True).stdout.decode()
+        except subprocess.CalledProcessError as error:
+            fail('cannot read unixnu.toml from %s: %s' % (args.payload, error.stderr.decode().strip()))
+        match = re.search(r'^args = "(.*)"$', toml, re.MULTILINE)
+        if not match:
+            fail(str(args.payload) + ': unixnu.toml has no xnu args line')
+        boot_args = match.group(1)
+        if len(boot_args.encode()) > 1000:
+            fail('%s: boot args are %u bytes, over the 1000-byte limit' % (args.payload, len(boot_args.encode())))
+        tokens = boot_args.split()
+        for required in ('sheng-gpu-addon=1', 'sheng-gpu-metal=1'):
+            if required not in tokens:
+                fail(str(args.payload) + ': boot args lack ' + required)
+        tag = next((token.split('=', 1)[1] for token in tokens if token.startswith('sheng-build-tag=')), None)
+        surface = next((token.split('=', 1)[1] for token in tokens if token.startswith('offline-legacy-default-surface=')), None)
+        print('PASS: %s boot args %u bytes, tag %s, surface %s, iconservices %s' % (
+            args.payload, len(boot_args.encode()), tag, surface,
+            'on' if 'sheng-iconservices=1' in tokens else 'off'))
+
+    if args.vendor_boot:
+        if not args.payload:
+            fail('--vendor-boot needs --payload to know the ramdisk length')
+        payload = args.payload.read_bytes()
+        with args.vendor_boot.open('rb') as image:
+            image.seek(0x1000)
+            embedded = image.read(len(payload))
+        if embedded != payload:
+            fail(str(args.vendor_boot) + ': ramdisk at 0x1000 differs from ' + str(args.payload))
+        print('PASS: %s carries %s at 0x1000' % (args.vendor_boot, args.payload))
 
 
 if __name__ == '__main__':

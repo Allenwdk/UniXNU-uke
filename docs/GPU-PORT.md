@@ -716,7 +716,8 @@ Verify the artifact before flashing:
 
 ```sh
 python3 ../UniXNU-uke/scripts/check-gpu-addon-host.py \
-  --owner-trust <owner-trust.bundle> --kernel <kernel.macho>
+  --owner-trust <owner-trust.bundle> --kernel <kernel.macho> \
+  --payload <payload.img> --vendor-boot <vendor_boot.img>
 ```
 
 The checker parses the blob exactly as `native_gpu_addon_install` does
@@ -725,11 +726,14 @@ The checker parses the blob exactly as `native_gpu_addon_install` does
 `.publish`/`.clients`/Info.plist/daemon plist, compares the packaged bundle and
 daemon against `build/adreno-metal-plugin`, derives each Mach-O CDHash from its
 CodeDirectory and matches `trust.json`/`owner-trust.json`, confirms the owner
-trust bundle carries the three CDHashes, and requires the prelinked kernel to
-embed the blob byte-for-byte. It passes for addon2 (cookie `5208ee31`, kernel
-`b3fcd74f…`). The flashable images were also checked directly: each vendor_boot
-ramdisk at 0x1000 equals its payload byte-for-byte, and the payload's
-`unixnu.toml` args measure 992 bytes (addon2/map2) or 972 bytes (noicon).
+trust bundle carries the three CDHashes, requires the prelinked kernel to embed
+the blob byte-for-byte, reads the payload's `unixnu.toml` through `mcopy`
+(requiring `sheng-gpu-addon=1`, `sheng-gpu-metal=1`, at most 1000 bytes, and
+printing the build tag/surface/iconservices values), and requires the
+vendor_boot ramdisk at 0x1000 to equal the payload. It passes for all three
+addon2 images: stable and map2 measure 992 bytes (tag `addon2`, surface 1/2,
+iconservices on) and the fallback measures 972 bytes (tag `addon2n`,
+iconservices off).
 
 A clean `out/` rebuild also needs one previously built prelink candidate under
 `build/native-prelink/` for the legacy-display archive audit, and
