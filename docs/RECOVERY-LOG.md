@@ -46,6 +46,16 @@
 
    解码器校验 magic/CRC、按 seq 排序，输出 `N valid records, sequence 0..N-1`。
 
+   GPU addon 镜像启动后，用同一个日志跑一次自动核对：
+
+   ```bash
+   python3 scripts/check-gpu-addon-boot.py /home/allenwdk/UniXNU/boot-new.log
+   ```
+
+   它取最后一次出现的 `UKE GPU addon:`/`UKE GPU3: M`/`UKE GPU4: K`/`UKE GPU7/8` 行，逐项判
+   addon stage、两个视图（`a5.0/5.0`）、`o>0`、插件 marker 与 68f1/68f2/68f3 失败原因，自动区分
+   probe/stable，并以退出码 1 表示有必须修复的项。
+
 ## 记录格式
 
 每条 16 KiB：
@@ -111,5 +121,6 @@ for i in range(len(a) // 16384):
 - 若 `M a5.0`、`o>0`、`K68xx` 表明原生设备已注册但画面黑/停留旧帧，换 `vendor_boot_uke_addon5_fbgpu.img`（tag `addon5f`，`sheng-fb-gpu=1`：帧交给插件的 scanout client 做 GPU 拷贝，offer 被拒时自动回退 CPU 拷贝）。
 - addon5 的 clients 名单补上 `WidgetRenderer_Default`（驱动 int-196/200：缺它时小组件白块），与 `iconservicesagent`、`PosterBoard` 一并允许；三个共享 GPU 窗口之外的进程得到 busy 并回退软件渲染。
 - 日志行号：屏幕第 5/6/7 行在 decode 出的日志里分别是 `UKE GPU2:`/`UKE GPU3:`/`UKE GPU4:`（`setRow` 打印 slot-3）；宽行是 `UKE GPU7:`（`R` 报告）与 `UKE GPU8:`（`T`/`W`）。取证：`grep -aE "UKE GPU addon:|UKE GPU[0-9]+: (M|K|S|R|T|W)|UKE: display surface|UKE: surface mapping|UKeCrash:" boot.log`。
+- 刷完 addon5 后直接跑 `scripts/check-gpu-addon-boot.py <log>`：它把上面这些判据一次跑完（`--mode probe` 要求探针的 `K` 行非空；`--mode stable` 另外拒绝 68f1/68f2/68f3）。
 
 刷机（两种 UEFI 启动镜像都可配 200 GiB packed Data seed）：`fastboot flash boot boot_uke_usbdal2.img`、`fastboot flash vendor_boot vendor_boot_uke_addon5.img`（CA 映射实验用 `vendor_boot_uke_addon5_map2.img`；iconservices 兜底用 `vendor_boot_uke_addon5_noicon.img`；画面黑/旧帧用 `vendor_boot_uke_addon5_fbgpu.img`）、`fastboot set_active a`、`fastboot reboot`。
