@@ -614,6 +614,11 @@ the mount switch.
   ramdisk at 0x1000, DTB 1,885,893 bytes; owner trust `b8aa3335…`, Data seed
   `20768d00…`). The 1 TiB UEFI boot image
   (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed alongside it.
+- The surf5 heartbeat already proved the discovery side: `s5/0 r1` (the
+  accelerator reached publish stage 5 and was registered) and `n` rising from
+  3 to 8 (`MetalPluginName` reads by the original discovery). The missing
+  pieces were only the addon bundle and the sandbox grant, not the accelerator
+  or the property names.
 - Expected first-boot evidence: `UKE GPU addon: stage=3 files=7
   bytes=39398839 error=0`, then `stage=4` on the next boot; heartbeat
   `M a5.0/5.0 …` (both views mounted, own files visible), `o<opens>` > 0, the
