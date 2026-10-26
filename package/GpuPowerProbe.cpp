@@ -1088,6 +1088,11 @@ void publishMetal() {
     // addon mount, and no Apple device identity (gpu,t8011 and the like) is claimed.
     accelerator->setProperty("MetalPluginName", "NativeAdrenoMetal");
     accelerator->setProperty("MetalPluginClassName", "NativeAdrenoMetalDevice");
+    // The accelerator is the only service that accepts the plugin (0x4147) and hand-off (0x4148) open types. Mark it so the kernel's open path
+    // grants those opens in place of the sandbox verdict (the original profiles name no class of this driver); keep the named-process property
+    // for the render server as the sheng-compatible path.
+    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd");
+    accelerator->setProperty("NativeSandboxGrantService", kOSBooleanTrue);
     gMetalStage = 4;
     if (!accelerator->attach(IOService::getPlatform())) {accelerator->release(); gMetalStatus = kIOReturnNotAttached; return;}
     accelerator->registerService();

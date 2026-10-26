@@ -554,12 +554,18 @@ driver, the `AGXAccelerator` publication and both sandbox patches were already
 in the kernel; the missing pieces were the plugin bundle, its trust entries and
 the mount switch.
 
-- Kernel support already present: `patches/xnu/zzy-native-gpu-addon-mount.patch`
-  (bindfs views over `/System/Library/Extensions` and
-  `/System/Library/LaunchDaemons`, boot arg `sheng-gpu-addon=1`) and
-  `patches/xnu/zzw-native-adreno-sandbox-grant.patch` (the driver's
-  `NativeSandboxGrant` property replaces the sandbox verdict for the plugin's
-  `AGXDeviceUserClient` opens).
+- Kernel support: `patches/xnu/zzy-native-gpu-addon-mount.patch` (bindfs views
+  over `/System/Library/Extensions` and `/System/Library/LaunchDaemons`, boot
+  arg `sheng-gpu-addon=1`). The core sandbox patch
+  `zzw-native-adreno-sandbox-grant.patch` only honors
+  `NativeSandboxGrantProcess` on the accelerator service, while the driver
+  sets `NativeSandboxGrant` on the client object; an audit found the
+  mismatch, so the device patch
+  `patches/xnu/zzzzzzzzzzzz-uke-gpu-sandbox-client-grant.patch` honors the
+  client property and `NativeSandboxGrantService` (the accelerator's own
+  0x4147 plugin and 0x4148 hand-off opens). `GpuPowerProbe.cpp` publishes
+  `NativeSandboxGrantProcess=backboardd` and `NativeSandboxGrantService`;
+  other connect types remain sandboxed.
 - Linux plugin build (no macOS image tools needed for this part): iOS 17.0 SDK
   from `xybp888/iOS-SDKs`; the installed `xnu-linux-toolchain` shims with an
   `ld64.lld` `/ld` wrapper (cctools ld64 cannot read the SDK's TBD v4 stubs);
@@ -603,15 +609,18 @@ the mount switch.
   the addon it would return to the CI::GLContext crash loop; drop the argument
   to restore the workaround. `[payload] size_mib` is 80, because the kernel grows to
   64,643,072 bytes with the blob. The old 64 MiB payload had 12.4 MiB free.
-- Artifacts (not yet booted): kernel `e7fbcf19…`, payload `f260ca32…`
-  (83,886,080 bytes), vendor_boot `4195b4c4…` (85,782,528 bytes; 80 MiB
+- Artifacts (not yet booted): kernel `240aa0a5…`, payload `ddd95a57…`
+  (83,886,080 bytes), vendor_boot `9663d11c…` (85,782,528 bytes; 80 MiB
   ramdisk at 0x1000, DTB 1,885,893 bytes; owner trust `b8aa3335…`, Data seed
   `20768d00…`). The 1 TiB UEFI boot image
   (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed alongside it.
 - Expected first-boot evidence: `UKE GPU addon: stage=3 files=7
   bytes=39398839 error=0`, then `stage=4` on the next boot; heartbeat
   `M a5.0/5.0 …` (both views mounted, own files visible), `o<opens>` > 0, the
-  `K…` plugin markers and the GPU7 `R …`/`T …` report lines. The daemon
+  `K…` plugin markers and the GPU7 `R …`/`T …` report lines. The heartbeat's
+  `S` row still prints the driver's log-only MACF probe (for example
+  `backboarddP1`); the granted open shows as `o` > 0 and in the plugin
+  markers. The daemon
   `adrenoprobed` runs the sandbox-free user test even if the Metal discovery
   fails, so `o` > 0 and a raw `R` line separate the user-client grant from the
   Metal frontend.

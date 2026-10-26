@@ -1,0 +1,56 @@
+diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -4342,6 +4342,23 @@
+ 	return 0 == strncmp(name, process->getCStringNoCopy(), sizeof(name) - 1);
+ }
+ 
++/* The driver marks the client object it returns for every plugin open (NativeSandboxGrant) and marks its accelerator
++ * service (NativeSandboxGrantService); the service accepts only the plugin (0x4147) and the display hand-off (0x4148)
++ * connect types. Honor both in place of the sandbox verdict, so every process that runs the owner plugin (the render
++ * server, IconServices, PosterBoard, the poster extensions) may open its own device; other types stay sandboxed. */
++static bool
++native_client_sandbox_grant(IOUserClient * client)
++{
++	OSBoolean * grant = OSDynamicCast(OSBoolean, client->getProperty("NativeSandboxGrant"));
++	return grant && grant->getValue();
++}
++static bool
++native_service_sandbox_grant(IOService * service, uint32_t type)
++{
++	OSBoolean * grant = OSDynamicCast(OSBoolean, service->getProperty("NativeSandboxGrantService"));
++	return grant && grant->getValue() && (type == 0x4147 || type == 0x4148);
++}
++
+ kern_return_t
+ is_io_service_open_extended(
+ 	io_object_t _service,
+@@ -4370,7 +4387,8 @@
+ 	}
+ 
+ #if CONFIG_MACF
+-	if (!native_sandbox_grant(service) && mac_iokit_check_open_service(kauth_cred_get(), service, connect_type) != 0) {
++	if (!native_sandbox_grant(service) && !native_service_sandbox_grant(service, connect_type) &&
++	    mac_iokit_check_open_service(kauth_cred_get(), service, connect_type) != 0) {
+ 		return kIOReturnNotPermitted;
+ 	}
+ #endif
+@@ -4530,7 +4548,8 @@
+ 			}
+ #if CONFIG_MACF
+ 			/* The service's grant (native_sandbox_grant) stands in for the sandbox's verdict on the render server's open. */
+-			else if (!native_sandbox_grant(service)
++			else if (!native_sandbox_grant(service) && !native_service_sandbox_grant(service, connect_type)
++			    && !native_client_sandbox_grant(client)
+ 			    && 0 != mac_iokit_check_open(kauth_cred_get(), client, connect_type)) {
+ 				IOLog("IOUC %s failed MACF in process %s\n",
+ 				    client->getMetaClass()->getClassName(), creatorNameCStr);
+@@ -4540,6 +4559,8 @@
+ 
+ 			if ((kIOReturnSuccess == res)
+ 			    && !native_sandbox_grant(service)
++			    && !native_service_sandbox_grant(service, connect_type)
++			    && !native_client_sandbox_grant(client)
+ 			    && gIOUCFilterCallbacks
+ 			    && gIOUCFilterCallbacks->io_filter_resolver) {
+ 				io_filter_policy_t filterPolicy;
