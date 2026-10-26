@@ -463,7 +463,7 @@ bool configureClock(Session &s, unsigned hz) {
 
 // The touch interrupt (GPIO 54): registers per pin at TLMM + 0x1000 * pin, as pinctrl-msm.c / pinctrl-cliffs.c define
 // them: +0x4 IN_OUT (bit 0 the level), +0x8 INTR_CFG (bit 0 enable, bit 1 polarity, bits 3:2 detection 0 level /
-// 1 rising / 2 falling / 3 both, bit 4 raw status enable, bits 7:5 target, 3 = the application processor), +0xc
+// 1 rising / 2 falling / 3 both, bit 4 raw status enable, bits 10:8 target, 3 = the application processor), +0xc
 // INTR_STATUS (bit 0; acknowledged by writing 0). All TLMM pin interrupts share the summary SPI 208
 // (uke-live.dts pinctrl@f000000 interrupts = <0 0xd0 4>), INTID 240.
 extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
@@ -496,18 +496,27 @@ static void touchIrq(void *) {
 static bool armTouchIrq(Session &s) {
     gTouchPin = reinterpret_cast<volatile uint32_t *>(s.tlmmIrq.va);
     uint32_t cfg = gTouchPin[0x8 / 4];
-    cfg &= ~((7u << 5) | (3u << 2) | (1u << 1) | 1u);
-    cfg |= (3u << 5) | (1u << 2) | (1u << 1) | (1u << 4);   // application processor, rising edge, polarity high, raw status on
+    cfg &= ~((7u << TB_TLMM_INTR_TARGET_BIT) | (3u << 2) | (1u << 1) | 1u);
+    cfg |= (TB_TLMM_INTR_TARGET_APPS << TB_TLMM_INTR_TARGET_BIT) | (1u << 2) | (1u << 1) | (1u << 4);   // application processor, rising edge, polarity high, raw status on
     gTouchPin[0x8 / 4] = cfg;
     gTouchPin[0xc / 4] = 0;
     __asm__ volatile("dsb sy" ::: "memory");
-    if (!armcpu_spi_attach) {native_touch_irq_stats[0] = 2; native_touch_irq_stats[3] = 0xffff; return false;}
+    if (!armcpu_spi_attach) {
+        native_touch_irq_stats[0] = 2; native_touch_irq_stats[3] = 0xffff;
+        IOLog("UKE TCH: irq no-attach cfg%08x ctl%08x io%08x st%08x\n",
+              gTouchPin[0x8 / 4], gTouchPin[0], gTouchPin[1], gTouchPin[0xc / 4]);
+        return false;
+    }
     const int rc = armcpu_spi_attach(TB_TLMM_INTID, false, touchIrq, nullptr, nullptr, nullptr);
     native_touch_irq_stats[3] = (uint32_t)rc;
-    if (rc) {native_touch_irq_stats[0] = 2; return false;}
-    gTouchPin[0x8 / 4] = cfg | 1u;   // enable last
-    native_touch_irq_stats[0] = 1;
-    return true;
+    if (!rc) {gTouchPin[0x8 / 4] = cfg | 1u; native_touch_irq_stats[0] = 1;}   // enable last
+    else native_touch_irq_stats[0] = 2;
+    // One shot: the register state the handler will see, so a silent line is distinguishable from a
+    // misrouted target (ctl mux must be 0 = GPIO, cfg bits 10:8 must be 3 = AP).
+    IOLog("UKE TCH: irq %s intid%u rc%d cfg%08x ctl%08x io%08x st%08x\n",
+          rc ? "attach-failed" : "armed", TB_TLMM_INTID, rc,
+          gTouchPin[0x8 / 4], gTouchPin[0], gTouchPin[1], gTouchPin[0xc / 4]);
+    return rc == 0;
 }
 
 static void touchThread(void *, wait_result_t) {

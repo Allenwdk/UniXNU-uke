@@ -64,6 +64,10 @@
 // interrupts = <0 0xd0 4> = GIC SPI 208, level high), INTID 240.
 #define TB_TLMM_SPI 208
 #define TB_TLMM_INTID (32u + TB_TLMM_SPI)
+// INTR_CFG target field: pinctrl-cliffs.c PINGROUP intr_target_bit = 8, intr_target_kpss_val = 3.
+// sheng/Kalama keeps the same value at bit 5; copying that shift leaves the uke target unwritten.
+#define TB_TLMM_INTR_TARGET_BIT 8
+#define TB_TLMM_INTR_TARGET_APPS 3
 
 static inline uint32_t tb_pin_cfg(unsigned func, unsigned drive_code) {return (func&15u)<<2|(drive_code&7u)<<6;}   // pull disabled
 static inline uint32_t tb_tlmm_ctl(unsigned gpio) {return (uint32_t)gpio*TB_GPIO_STRIDE;}
