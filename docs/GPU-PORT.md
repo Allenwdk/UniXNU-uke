@@ -732,7 +732,8 @@ The checker parses the blob exactly as `native_gpu_addon_install` does
 daemon against `build/adreno-metal-plugin`, derives each Mach-O CDHash from its
 CodeDirectory and matches `trust.json`/`owner-trust.json`, confirms the owner
 trust bundle carries the three CDHashes, requires the prelinked kernel to embed
-the blob byte-for-byte, reads the payload's `unixnu.toml` through `mcopy`
+the blob byte-for-byte and to carry the zlib allocator wrapper
+(`native_gpu_addon_zalloc`; the addon2 kernel is rejected), reads the payload's `unixnu.toml` through `mcopy`
 (requiring `sheng-gpu-addon=1`, `sheng-gpu-metal=1`, at most 1000 bytes, and
 printing the build tag/surface/iconservices values), and requires the
 vendor_boot ramdisk at 0x1000 to equal the payload. It passes for all three

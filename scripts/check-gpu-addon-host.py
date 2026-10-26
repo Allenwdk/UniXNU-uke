@@ -225,7 +225,9 @@ def main():
             fail(str(args.kernel) + ': does not embed this exact blob')
         if b'UKE GPU addon: stage=' not in kernel:
             fail(str(args.kernel) + ': has the blob but not the staging log')
-        print('PASS: %s embeds this blob (%u bytes)' % (args.kernel, blob_size))
+        if b'native_gpu_addon_zalloc' not in kernel:
+            fail(str(args.kernel) + ': lacks the zlib allocator wrapper; inflateInit would call NULL on the first boot')
+        print('PASS: %s embeds this blob (%u bytes) and the zlib allocator wrapper' % (args.kernel, blob_size))
 
     if args.payload:
         mcopy = shutil.which('mcopy')
