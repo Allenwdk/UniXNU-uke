@@ -625,7 +625,9 @@ the mount switch.
   boot image (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed
   alongside either. The earlier addon1 images (kernel `028f9e7e…`, payloads
   `96ede592…`/`1688cdae…`, vendor_boots `d43ca7ce…`/`5f4b1a37…`) are superseded
-  by the scratch collision below.
+  by the scratch collision below. A fallback without `sheng-iconservices=1`
+  (tag `addon2n`, so the icon agent stays disabled and cannot crash-loop if the
+  addon fails): payload `a297de73…`, vendor_boot `7b7c23ab…`.
 - Boot-time staging scratch fix (addon2): the first image mounted the two
   bindfs views with mount arguments at `scratch + 0x400` and `+0x600`.
   `native_owner_cache_prepare` writes launchd's environment there
