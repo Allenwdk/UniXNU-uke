@@ -631,7 +631,13 @@ the mount switch.
   continues): kernel `ce8911be…`, payload `b0aac814…`, vendor_boot `d2bfd46b…`
   (972-byte args, iconservices off). Flash it first to prove the mount, plugin
   load/trust, AGX open grant and the user test before letting backboardd
-  register the native device.
+  register the native device. A GPU hand-off variant (tag `addon3f`,
+  `sheng-fb-gpu=1`): payload `fb265b2b…`, vendor_boot `7e34f42d…` (993-byte
+  args, iconservices on). The addon images keep `sheng-fb-gpu=0`, the known
+  CPU-copy presentation path; if the device is registered (`M a5.0`, `o>0`,
+  `K68xx`) but the screen stays black or stale, this variant offers frames to
+  the plugin's scanout client instead (a refused offer falls back to the CPU
+  copy).
 - zlib allocator fix (addon3): this kernel builds zlib with `KERNEL`, which
   defines `NO_ZCFUNCS`, so `inflateInit` installs no default allocator and the
   first `ZALLOC` calls a NULL function pointer — the addon2 image would panic in
@@ -741,11 +747,12 @@ trust bundle carries the three CDHashes, requires the prelinked kernel to embed
 the blob byte-for-byte and to carry the zlib allocator wrapper
 (`native_gpu_addon_zalloc`; the addon2 kernel is rejected), reads the payload's `unixnu.toml` through `mcopy`
 (requiring `sheng-gpu-addon=1`, `sheng-gpu-metal=1`, at most 1000 bytes, and
-printing the build tag/surface/iconservices values), and requires the
-vendor_boot ramdisk at 0x1000 to equal the payload. It passes for all three
-addon3 images (kernel `59cf1714…`): stable and map2 measure 992 bytes (tag
-`addon3`, surface 1/2, iconservices on) and the fallback measures 972 bytes
-(tag `addon3n`, iconservices off). A probe blob is built with
+printing the build tag/surface/fb-gpu/iconservices values), and requires the
+vendor_boot ramdisk at 0x1000 to equal the payload. It passes for all addon3
+images (kernel `59cf1714…`): stable and map2 measure 992 bytes (tag `addon3`,
+surface 1/2, iconservices on), the fallback measures 972 bytes (tag `addon3n`,
+iconservices off), and the hand-off variant measures 993 bytes (tag `addon3f`,
+fb-gpu 1). A probe blob is built with
 `build-gpu-addon-blob.py --no-publish` into its own output directory (six
 entries, no `NativeAdrenoMetal.publish`); the kernel built against it (tag
 `addon3p`) embeds that blob and the checker accepts it as a probe.

@@ -256,8 +256,9 @@ def main():
                 fail(str(args.payload) + ': boot args lack ' + required)
         tag = next((token.split('=', 1)[1] for token in tokens if token.startswith('sheng-build-tag=')), None)
         surface = next((token.split('=', 1)[1] for token in tokens if token.startswith('offline-legacy-default-surface=')), None)
-        print('PASS: %s boot args %u bytes, tag %s, surface %s, iconservices %s' % (
-            args.payload, len(boot_args.encode()), tag, surface,
+        fbgpu = next((token.split('=', 1)[1] for token in tokens if token.startswith('sheng-fb-gpu=')), None)
+        print('PASS: %s boot args %u bytes, tag %s, surface %s, fb-gpu %s, iconservices %s' % (
+            args.payload, len(boot_args.encode()), tag, surface, fbgpu,
             'on' if 'sheng-iconservices=1' in tokens else 'off'))
 
     if args.vendor_boot:

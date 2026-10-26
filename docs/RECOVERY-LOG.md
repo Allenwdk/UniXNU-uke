@@ -108,5 +108,6 @@ for i in range(len(a) // 16384):
 - `sheng-iconservices=1` 把 `com.apple.iconservices.iconservicesagent` 从 `lite_jobs` 的禁用名单里去掉：这次启动应在日志里看到该进程（`proc`/CrashReporter 里不再每轮出现它的 `CI::GLContext` 崩溃），图标/设置页应正常。若 addon 失败，它会回到崩溃循环（系统仍存活）；去掉该参数即恢复禁用。
 - addon2 修复了首版补丁的 scratch 冲突：bindfs 挂载参数原先在 `scratch+0x400/+0x600`，会覆盖 cache 阶段留给 launchd 的环境串/向量（+0x400/+0x600，向量 +0x500），init exec 会把 `/private...` 当 envp；现在两处挂载都用 `+0x800`（mkdir 仍 +0xc00）。addon3 又修复了内核 zlib 的分配器：本内核以 `KERNEL` 编译、强制 `NO_ZCFUNCS`，`inflateInit` 不装默认 `zalloc/zfree`，旧 blob 补丁会在首启 `native_owner_data_prepare` 里空指针调用；addon3 自带 `kalloc_data`/`kfree_data` 分配器。旧 addon1/addon2 镜像不要再刷。
 - 探针镜像（tag `addon3p`）：blob 不含 `NativeAdrenoMetal.publish`，插件只跑 stage-1 用户态测试并返回 nil，软件渲染保持不变。建议先刷 `vendor_boot_uke_addon3_probe.img` 验证 `UKE GPU addon:`、`M a5.0/5.0`、`o>0`、`K6…` 与 daemon，通过后再刷发布版 `vendor_boot_uke_addon3.img`，看 `K68xx`/GPU7 `R/T` 与 backboardd 的原生设备。
+- 若 `M a5.0`、`o>0`、`K68xx` 表明原生设备已注册但画面黑/停留旧帧，换 `vendor_boot_uke_addon3_fbgpu.img`（tag `addon3f`，`sheng-fb-gpu=1`：帧交给插件的 scanout client 做 GPU 拷贝，offer 被拒时自动回退 CPU 拷贝）。
 
 刷机（两种 UEFI 启动镜像都可配 200 GiB packed Data seed）：`fastboot flash boot boot_uke_usbdal2.img`、`fastboot flash vendor_boot vendor_boot_uke_addon3.img`（CA 映射实验用 `vendor_boot_uke_addon3_map2.img`；iconservices 兜底用 `vendor_boot_uke_addon3_noicon.img`）、`fastboot set_active a`、`fastboot reboot`。
