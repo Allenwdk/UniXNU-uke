@@ -40,7 +40,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--plugin-dir', type=Path, default=DEFAULT_PLUGIN)
     parser.add_argument('--output-dir', type=Path, default=ROOT / 'build/uke-gpu-addon')
-    parser.add_argument('--clients', default='iconservicesagent,PosterBoard,CollectionsPoster,AegirPoster,KaleidoscopePoster')
+    parser.add_argument('--clients', default='iconservicesagent,PosterBoard,WidgetRenderer_Default,CollectionsPoster,AegirPoster,KaleidoscopePoster')
     parser.add_argument('--no-publish', action='store_true',
                         help='probe image: omit the .publish marker so the plugin runs its shared user test and returns nil (software rendering kept)')
     args = parser.parse_args()

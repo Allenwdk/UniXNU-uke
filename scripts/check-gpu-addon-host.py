@@ -172,8 +172,9 @@ def main():
     clients = entries['addons/NativeAdrenoMetal.clients']['data'].decode().split()
     if not clients or any('/' in client or not client for client in clients):
         fail('the clients list is empty or malformed')
-    if 'iconservicesagent' not in clients:
-        fail('the clients list does not name iconservicesagent')
+    for required in ('iconservicesagent', 'WidgetRenderer_Default'):
+        if required not in clients:
+            fail('the clients list does not name ' + required)
     info = plistlib.loads(entries['addons/NativeAdrenoMetal.bundle/Info.plist']['data'])
     if info.get('CFBundleExecutable') != 'NativeAdrenoMetal' or info.get('NSPrincipalClass') != 'NativeAdrenoMetalDevice':
         fail('Info.plist does not name the bundle executable and principal class')

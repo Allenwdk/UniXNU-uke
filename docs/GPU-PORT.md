@@ -616,29 +616,30 @@ the mount switch.
   the addon it would return to the CI::GLContext crash loop; drop the argument
   to restore the workaround. `[payload] size_mib` is 80, because the kernel grows to
   64,643,072 bytes with the blob. The old 64 MiB payload had 12.4 MiB free.
-- Artifacts (addon4, not yet booted): kernel `f9cc2255…` (64,643,072 bytes),
-  stable payload `26c243ff…`, CA-experiment payload `d81ef3c4…`, fallback
-  payload `939c477d…`, GPU-hand-off payload `75a47e98…` (each 83,886,080
-  bytes); vendor_boot `2da0ff2f…`, `4ab7d1c2…`, `e910b99d…`, `fe6e5efb…` (each
+- Artifacts (addon5, not yet booted): kernel `cc1a290f…` (64,643,072 bytes),
+  stable payload `0ee77654…`, CA-experiment payload `234d213b…`, fallback
+  payload `eba32cf4…`, GPU-hand-off payload `7a2f4ae0…` (each 83,886,080
+  bytes); vendor_boot `5508b2f6…`, `9a3f2809…`, `2d95da8a…`, `985806e9…` (each
   85,782,528 bytes; 80 MiB ramdisk at 0x1000, DTB 1,885,893 bytes; owner trust
   `b8aa3335…`, Data seed `20768d00…`). Stable keeps
   `offline-legacy-default-surface=1`, the experiment uses `=2`, the fallback
   drops `sheng-iconservices=1`, the hand-off variant uses `sheng-fb-gpu=1`
-  (tags addon4/addon4n/addon4f). The 1 TiB UEFI boot image
+  (tags addon5/addon5n/addon5f). The 1 TiB UEFI boot image
   (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed alongside.
   addon1 and addon2 are superseded (bindfs over launchd's environment, NULL
-  zlib allocator); addon3 is superseded by the log mirror below. The addon
+  zlib allocator); addon3 by the log mirror and addon4 by the missing
+  `WidgetRenderer_Default` client (below). The addon
   images keep `sheng-fb-gpu=0`, the known CPU-copy presentation path; if the
   device is registered (`M a5.0`, `o>0`, `K68xx`) but the screen stays black or
-  stale, addon4f offers frames to the plugin's scanout client instead (a
+  stale, addon5f offers frames to the plugin's scanout client instead (a
   refused offer falls back to the CPU copy). The hand-off ABI is the shared
   `GpuScanoutClient.h`/`NativeGOPWire.h` pair (plugin and presenter compile the
   same records), and `serveScanout` starts only after the frontend checks pass;
   a missing client makes the offer fail and the display driver falls back to
   its CPU copy, so the variant is fail-safe.
-- Probe image (tag `addon4p`): the blob omits `NativeAdrenoMetal.publish`, so
+- Probe image (tag `addon5p`): the blob omits `NativeAdrenoMetal.publish`, so
   the plugin runs its shared user test and returns nil while software rendering
-  continues. Kernel `aea8f02c…`, payload `b07793f3…`, vendor_boot `2b267c0a…`
+  continues. Kernel `e272bf4a…`, payload `b2c4026a…`, vendor_boot `c3ee801d…`
   (972-byte args, iconservices off). Flash it first to prove the mount, plugin
   load/trust, AGX open grant and the user test before letting backboardd
   register the native device.
@@ -649,6 +650,13 @@ the mount switch.
   report and GPU8 `T`/`W` Turnip phase) used to exist only on the boot page;
   addon4 mirrors them into the log on change as `UKE GPU7:`/`UKE GPU8:`. addon3
   lacks that mirror.
+- Client list (addon5): `NativeAdrenoMetal.clients` now names
+  `WidgetRenderer_Default` beside `iconservicesagent` and `PosterBoard` (the
+  driver's int-196/int-200 notes record white widget boxes without a native
+  device). The poster-extension names stay for the wallpaper path; a process
+  beyond the three shared GPU windows gets `kIOReturnBusy` and keeps the
+  software renderer. The verifier requires `iconservicesagent` and
+  `WidgetRenderer_Default` in the clients file.
 - zlib allocator fix (addon3): this kernel builds zlib with `KERNEL`, which
   defines `NO_ZCFUNCS`, so `inflateInit` installs no default allocator and the
   first `ZALLOC` calls a NULL function pointer — the addon2 image would panic in
@@ -759,15 +767,15 @@ the blob byte-for-byte and to carry the zlib allocator wrapper
 (`native_gpu_addon_zalloc`; the addon2 kernel is rejected), reads the payload's `unixnu.toml` through `mcopy`
 (requiring `sheng-gpu-addon=1`, `sheng-gpu-metal=1`, at most 1000 bytes, and
 printing the build tag/surface/fb-gpu/iconservices values), and requires the
-vendor_boot ramdisk at 0x1000 to equal the payload. It passes for all addon4
-images (kernel `f9cc2255…`): stable and map2 measure 992 bytes (tag `addon4`,
-surface 1/2, iconservices on), the fallback measures 972 bytes (tag `addon4n`,
-iconservices off), the hand-off variant measures 993 bytes (tag `addon4f`,
-fb-gpu 1), and the probe image (kernel `aea8f02c…`) measures 972 bytes (tag
-`addon4p`). A probe blob is built with
+vendor_boot ramdisk at 0x1000 to equal the payload. It passes for all addon5
+images (kernel `cc1a290f…`): stable and map2 measure 992 bytes (tag `addon5`,
+surface 1/2, iconservices on), the fallback measures 972 bytes (tag `addon5n`,
+iconservices off), the hand-off variant measures 993 bytes (tag `addon5f`,
+fb-gpu 1), and the probe image (kernel `e272bf4a…`) measures 972 bytes (tag
+`addon5p`). A probe blob is built with
 `build-gpu-addon-blob.py --no-publish` into its own output directory (six
 entries, no `NativeAdrenoMetal.publish`); the kernel built against it (tag
-`addon3p`) embeds that blob and the checker accepts it as a probe.
+`addon5p`) embeds that blob and the checker accepts it as a probe.
 
 A clean `out/` rebuild also needs one previously built prelink candidate under
 `build/native-prelink/` for the legacy-display archive audit, and
