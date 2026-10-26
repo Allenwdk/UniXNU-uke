@@ -1,8 +1,8 @@
 # UniXNU on Xiaomi Pad 7 (uke) — 进度文档
 
-> **Last updated:** 2026-10-24
+> **Last updated:** 2026-10-25
 >
-> **当前一句话状态：** **内存墙已拆 + 画面首次上屏**（2026-10-24）。UEFI 静态映射 0x8C0000000-0xB0000000 高区 DRAM（FD `e3ffdcbc…`）配合 `owned_memory_size=0x130000000`，XNU VM 实测 ~4.5 GiB、t=538s+ 无 jetsam；反汇编原厂 SwapEnd 链后打通呈现：合成器把整帧渲进 overlay surface（记录 layer 6、ID 如 41，原厂 4 层循环翻译不到），`presentBase` 在 sel 5 返回后用原厂 IOSurfaceRoot lookup（`0xfffffff0057a28c0`）解析该 ID 并拷贝到 GOP —— `gpu-framepresent2`（内核 `ea95a0dd…`）**首次在面板上显示系统 UI**（白底 + home indicator + "swipe up to upgrade"）。v3（内核 `f2598af9…`、vendor_boot `a4128390…`、归档 `releases/2026-10-24-gpu-framepresent-v3/`）去掉空事务时回落纯黑默认 surface 的路径（v2 几秒后黑屏的原因），上机判定中。**下一里程碑：触摸输入（"swipe up" 需要它）、异步/GPU 呈现提帧率（当前 CPU 拷贝 150-300ms/帧）、防自动变暗。**
+> **当前一句话状态：** **内存墙已拆 + 画面首次上屏**（2026-10-24）。UEFI 静态映射 0x8C0000000-0xB0000000 高区 DRAM（FD `e3ffdcbc…`）配合 `owned_memory_size=0x130000000`，XNU VM 实测 ~4.5 GiB、t=538s+ 无 jetsam；反汇编原厂 SwapEnd 链后打通呈现：合成器把整帧渲进 overlay surface（记录 layer 6、ID 如 41，原厂 4 层循环翻译不到），`presentBase` 在 sel 5 返回后用原厂 IOSurfaceRoot lookup（`0xfffffff0057a28c0`）解析该 ID 并拷贝到 GOP —— `gpu-framepresent2`（内核 `ea95a0dd…`）**首次在面板上显示系统 UI**（白底 + home indicator + "swipe up to upgrade"）。v3（内核 `f2598af9…`、vendor_boot `a4128390…`、归档 `releases/2026-10-24-gpu-framepresent-v3/`）去掉空事务时回落纯黑默认 surface 的路径（v2 几秒后黑屏的原因），上机判定中。**2026-10-25 触摸轨：驱动管线真机全通**（时钟/引脚/GENI/固件下载/帧循环/接触/坐标/HID 报告/事件驱动，`drv1 rpt7004 r0`、34 分钟长跑稳定），唯一判定项是真实 UI 下持续手势；有 UI 时 ~1 分钟触摸死锁已定为 `NativeHidInput 588c96f` 在触摸线程调 `handleReport`，上游 `5f3a37c` 改为 workloop `runAction` 并已 pin，touch5b 判定中。详见 `docs/TOUCH-PORT.md`。其他里程碑不变：异步/GPU 呈现提帧率（当前 CPU 拷贝 150-300ms/帧）、防自动变暗。
 >
 > **维护规则：** 每次 CI run 或实机测试后更新本文件。见文末「维护约定」。
 
@@ -127,12 +127,12 @@
 - 触摸 = `qupv3_se4_spi: spi@a90000`（SE 0xa90000，wrapper `qcom,qupv3_0_geni_se@ac0000`/0x2000，apps SMMU sid 仍 0xa3，SMMU reg 0x15000000/0x100000）上的 NT36532，SPI mode 0、19.2 MHz——**地址与 sheng 相同，但这是 QUP wrap 0，不是 sheng 的 wrap 1**。
 - GCC：五个 wrap0 分支同在 vote 0x52008、位 18/19/20/21/26（与 sheng wrap1 巧合相同）；halt 改为 m_ahb 0x23000 / s_ahb 0x23004 / core 0x23008 / core_2x 0x23018 / s4 0x183bc；GPLL0 vote **0x52020**（sheng 0x52018），且是 fixed Lucid OLE PLL（常开，无 mode 锁位可轮询）。
 - **关键结构差**：`gcc_qupv3_wrap0_s4_clk_src`（cmd_rcgr **0x183c8**）是普通 freq_tbl RCG（`clk_rcg2_ops`），不是 sheng 的 DFS——探针必须自己编程 RCG。方案：直接编 freq_tbl 的 `F(19200000, P_BI_TCXO, 1, 0, 0)` 条目（CFG=src 0/hid 1/M/N/D 清零 + CMD_UPDATE 自清位轮询 + 回读解码校验 19.2 MHz），SE 源时钟即 TCXO 直通，零 GPLL0 依赖；`GENI_CLK_SEL` 写 0。parent_map_0 与 sheng 同（TCXO 0 / GPLL0 600M 1 / even 300M 6）。
-- TLMM 基址 **0x0f000000**（sheng 0x0f100000，cliffs-pinctrl，ctl=0x100000+0x1000*gpio、mux_bit 2、drv_bit 6、gpio 功能槽 0）；SPI 引脚 **MISO 16 / MOSI 17 / CLK 18 / CS 19**（功能 `qup0_se4_l0..l3`，各自 pingroup 的槽 1）、驱动 6 mA；IRQ 引脚 **GPIO 54**（`novatek,irq-gpio`）。触摸矩阵 60×40（mp-criteria X 0x3c/Y 0x28），与 sheng NT36532E 相同，`NVT_SHORT_AXIS_MAX=20320` ⇒ 沿用 sheng 的 Y 镜像 20319，待实机判定。
+- TLMM 基址 **0x0f100000**（= DT 节点 pinctrl@f000000 + pinctrl-cliffs.c REG_BASE 0x100000，**每 GPIO 块起点**；初版误写 0x0f000000，实机读未背线区域挂总线导致无 panic 复位，见下；ctl=+0x1000*gpio、mux_bit 2、drv_bit 6、gpio 功能槽 0）；SPI 引脚 **MISO 16 / MOSI 17 / CLK 18 / CS 19**（功能 `qup0_se4_l0..l3`，各自 pingroup 的槽 1）、驱动 6 mA；IRQ 引脚 **GPIO 54**（`novatek,irq-gpio`）。触摸矩阵 60×40（mp-criteria X 0x3c/Y 0x28），与 sheng NT36532E 相同，`NVT_SHORT_AXIS_MAX=20320` ⇒ 沿用 sheng 的 Y 镜像 20319，待实机判定。
 - TLMM 摘要中断 SPI 208（`pinctrl@f000000 interrupts=<0 0xd0 4>`）⇒ INTID 240，与 sheng 相同；`armcpu_spi_attach` 在核心仓 `drivers/ArmCpu/ArmCpu.cpp` 已有定义。
 
 **回移的上游实机修复**（sheng 仓在 uke 快照之后的演化）：≤50 µs 自旋 `ioDelayUs`（int-182：轮询 1 µs 的 IODelay 每次两个上下文切换，触摸线程曾是最忙内核线程）；**中断驱动帧循环**（int-189：GPIO54 上升沿 TLMM 引脚中断唤醒读帧，无人触摸时零唤醒；`sheng-touch-poll=1` 回到轮询诊断，attach 失败自动回退 10 ms 轮询）；`thread_set_thread_name("sheng-touch")`；`native_touch_set_sink` 改原子 store/load。
 
-**验证**：`TouchBoardTests.c` 重写（TLMM 地址/引脚编码、RCG encode/decode、SMMU bypass fixture）本机 PASS；`NvtTouchCore`/`GeniSpi` 主机测试 PASS（本机 gcc 需 `-Wno-misleading-indentation` 模拟 CI clang）。**阶段 4（固件下载+帧处理）需要 `.cache/firmware/novatek/novatek_nt36532_n81a_fw_csot.bin`**（从设备 `/vendor/firmware`/ODM 导出；缺文件时探针按设计停在下载前）。上机分阶段：`sheng-touch=1`（只读快照）→ `2`（投票+引脚+引擎 ID）→ `3`（RCG+GENI init+chip id）→ `4`（固件+帧循环）。
+**验证**：`TouchBoardTests.c` 重写（TLMM 地址/引脚编码、RCG encode/decode、SMMU bypass fixture）本机 PASS；`NvtTouchCore`/`GeniSpi` 主机测试 PASS（本机 gcc 需 `-Wno-misleading-indentation` 模拟 CI clang）。**阶段 4（固件下载+帧处理）需要 `.cache/firmware/novatek/novatek_nt36532_o82_fw_csot.bin`**（实际来自设备 ODM 镜像 `odm/firmware/`，o82 双变体 csot/tm；早期默认名 n81a 不存在，已修正；缺文件时探针按设计停在下载前）。上机分阶段：`sheng-touch=1`（只读快照）→ `2`（投票+引脚+引擎 ID）→ `3`（RCG+GENI init+chip id）→ `4`（固件+帧循环）。
 
 ### 3.2 UEFI 固件（uefi-uke）
 
@@ -282,7 +282,7 @@
 - `boot-progress=1/2` 仍需要 audited UFS/owner-root + VirtIO + source-corecrypto；当前 full 配置没有这些，所以保持关闭。
 - `sheng-platform-stage`、`sheng-aks=1`、`amfi_get_out_of_my_way=1`、`cs_debug`、`kextlog` 等 boot args 尚未系统测试；它们不是当前 root 阻塞的优先项。
 - GPU 已收集 A732 的真实 `gen71100_*` 固件和 9 档频率（`docs/GPU-PORT.md`）；驱动仍是 A740 常量，`CONFIG_XNU_NATIVE_ADRENO` 关闭。
-- 触摸、Wi-Fi/蓝牙、USB、音频、传感器、电池、suspend/resume 均未做。
+- 触摸已完整移植并真机验证驱动管线（见 §3.1.4 与 `docs/TOUCH-PORT.md`）；Wi-Fi/蓝牙、USB、音频、传感器、电池、suspend/resume 均未做。
 - `owned_memory_size` 目前 256 MiB；sheng 用 4.75 GiB。uke 的 DT reserved-memory 把最大连续块压到 326 MiB；如需更大窗口，要裁剪 reserved-memory，而不是只调大 `ADD_LIMIT`。
 - `kernel` 与 `full` 两个 CI job 已在 run `39495271779` 同时绿；UFS 驱动改动后会触发新一轮 full 构建。
 
@@ -525,6 +525,9 @@ fastboot reboot
 | 2026-10-23 | 实机 mode 4 通过 | `vendor_boot_uke_gpu_m4b.img`（`46409c67…`，kernel `b0fdff6f…`，payload `e04250fc…`，`sheng-gpu-power=4`，`sheng-smp=0`）刷入成功：`GMUCTX step 1..7 running` → `B s7 st0 k0/0 i5511 p5w13r1e1 r4w2v1`（Ready，status 0；program phase 5/13 writes/readback+enabled；route phase 4/2 writes/verified），`T00010000c900f000 S00000167 C00000001 R00000005`；板级行 `gcc=ok cc=ok sm=ok gp=skip io=0 pw11`、`ahb=80000003>80000003 mem=80000003 dvm=82000001`、`cx=0022f001>f822f000 gx=0022f001 sv=00000001`、`SM 00290406 4c017e18 40000016 v0 R00000000`。系统同时跑到 launchd/OwnerData 挂载、Gunyah pets 正常（t=36s）。**阶段 4 的 GMU SMMU context 门已过**；下一步 mode 5（只读 GMU 时钟 + AOP command DB） |
 | 2026-10-23 | mode 4 修复 | NativeAdreno `59bcc5a`：`adopt` 改为 `kIOMapAnywhere|kIOMapWriteCombineCache`（与 sheng `GpuPowerProbe` 的 payload hand-off 一致），清零改为普通 8 字节 store 循环，跳过按 VA 的 cache 维护（`MaintainPhysicalPages` 本就跳过 DRAM 外页面）；core pin `ab27f41`。kernel `b0fdff6f…`，payload `e04250fc…`，`vendor_boot_uke_gpu_m4b.img` `46409c67…`，待刷 |
 | 2026-10-24 | 触摸驱动板级对齐 | `TouchBoard.h` 从 sheng 常量重写为 uke（Cliffs）实测值（见 §3.1.4）：wrap0（非 wrap1）、RCG 0x183c8 直接编程 TCXO 19.2 MHz（非 DFS 读表）、TLMM 0x0f000000、SPI 引脚 16-19、IRQ 54、GPLL0 vote 0x52020 不做锁位门控；`TouchProbe.cpp` 回移 sheng 实机修复（自旋 ioDelayUs、GPIO54+TLMM INTID 240 中断驱动帧循环、线程名、原子 sink），轮询回退保留；主机测试全过。阶段 4 需导出 `.cache/firmware/novatek/novatek_nt36532_n81a_fw_csot.bin` |
+| 2026-10-25 | 触摸 TLMM 基址修正 | 实机首次运行触摸代码即复位（CI/本地内核同现象，卡在 `IOSurfaceRoot::installMemoryRegions`）：`pinctrl-cliffs.c` 的 `REG_BASE=0x100000` 意味着每 GPIO 块起点是 **0x0f100000**，误用 DT 节点基址 0x0f000000 读到未背线区域挂总线 → 无 panic 复位。修正后阶段 1-3 通过（`clocks+pins ok`/`geni+rcg ok 19200000Hz`/`identify ok`）。device `6f203a5` |
+| 2026-10-25 | 触摸固件 + 阶段 4 闭环 | ODM 镜像 `new-port/out/dna/odm/firmware` 拿到 `novatek_nt36532_o82_fw_{csot,tm}.bin`（245,760 B；16 分区 ILM 95447 + DLM 82079，协议模型全过）；默认名 n81a→o82（`8726186`）。本地内核嵌入固件（`4da01e82…`，+245,760 B 精确吻合）后实机 `firmware downloaded crc ok` → `scanning v11 pid5993 60x40` → 帧流 ~58fps、`c1/c2`、坐标跟手（`3017,11373`）。无 UI 长跑 34 分钟+ 稳定：`f119123 ok119123 c1 hid7004 drv1 rpt7004 r0 edge1 99/6`。`2026-10-25-touch4/` 归档 |
+| 2026-10-25 | 触摸 UI 死锁根因 | 开画面呈现后触摸在 UI 出现 ~1 分钟死、系统活：`NativeHidInput 588c96f` 在触摸线程直接 `handleReport`，SpringBoard HID user client 挂上后 workloop 上下文死锁。上游 `5f3a37c` 改 `inputLoop->runAction()`（+多指集合分发/按 ID 抬指/非手掌判定/按键）；core `uke-gpu` pin 升级（`48b45aa`），TouchProbe 补按钮弱桩（`21be464`），touch5b `bfde5e22…` 已刷判定中。文档 `docs/TOUCH-PORT.md` |
 | 2026-10-26 | 日志第二条通路：userdata + recovery 读取（从 `uke-usb-warm` 并入） | `c2f0582`（cherry-pick 自 `uke-usb-warm @ 068902f`）：`UkeLastLog.c` 在原有 pram 两半区之外，每 2 s 把 msgbuf 尾部写成 16 KiB 记录追加到 userdata 最后 32 MiB（`UKELLOG1` + seq u64 + len u32 + crc32 u32 + 尾部），环形约保留最近 68 分钟；写入走 `native_ufs_log_open/write/sync`，几何未就绪（`off`/`no root layout`）时逐 tick 重试，遇到不会变的理由则停。pram 侧的 FUNK 与 ramoops 半区代码未改动，只去掉了 `uke_last_log_start` 里的 `gPanicBase` 门（两个写函数各自自守）。**recovery 读取**（`uke-usb-warm` 上 warm21 起每版实机验证过；本分支用其转储 `ukelog-warm36.bin`/`ukelog-warm21.bin` 验证解码器，211/43 条全部 magic+CRC 通过）：`fastboot flash boot_a uke-images/boot.img` + `fastboot flash vendor_boot_a uke-images/vendor_boot.img`（原厂镜像，否则 TWRP 起不来）→ `fastboot reboot recovery` → `adb shell "dd if=/dev/block/sda32 bs=4096 skip=58980347 count=8192 of=/tmp/ukelog.bin"` → `adb pull` → `python3 tools/decode-ukelog.py ukelog.bin -o boot.log`。pram 仍受“复位后丢失、设备外不可读”限制，userdata 这条是断电后仍可取的部分 |
 
 ---
@@ -544,3 +547,4 @@ fastboot reboot
 - 本设备核心 fork：https://github.com/Allenwdk/UniXNU（`uke` 分支）
 - CI：`.github/workflows/build-kernel.yml`
 - GPU 准备：`docs/GPU-PORT.md`
+- 触摸移植：`docs/TOUCH-PORT.md`
