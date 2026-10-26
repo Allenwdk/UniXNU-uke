@@ -640,6 +640,19 @@ the mount switch.
   ownership attempt non-fatal: files are written 0755/0644 and chowned to
   root:wheel when owner Data allows it, with a mode-only retry otherwise; the
   bindfs view reports root:wheel either way (`BINDM_FORCE_ROOT`).
+- Offline loadability audit (addon2): the three Mach-Os depend only on
+  OS-provided libraries (Foundation/CoreFoundation/Metal/IOSurface/libobjc/
+  libc++/libSystem for the plugin, plus IOKit/CoreGraphics/QuartzCore/libz for
+  Turnip); the bundle exports `_OBJC_CLASS_$_NativeAdrenoMetalDevice` (matching
+  `NSPrincipalClass`) and carries the `initWithAcceleratorPort:`,
+  `NativeAdrenoMetal.publish`/`.clients` strings; the runtime itself implements
+  `waitUntilSignaledValue:timeoutMS:` (`NativeBridgeMetalFrontend.mm:455`), so
+  the selector the frontend checks use is not a missing-method risk; the daemon
+  is signed with `com.apple.private.security.no-container` and
+  `com.apple.security.iokit-user-client-class=[AGXDeviceUserClient]`, and its
+  `ProgramArguments` path is the blob's `/private/var/ngpu/bin/adrenoprobed`.
+  Turnip is loaded by absolute path beside the plugin executable
+  (`turnip::libraryPath`), so the bundle needs no rpath.
 - Default-surface CA experiment: `offline-legacy-default-surface=2` maps the
   32 MiB seed region as the surface's +0x30 descriptor after adoption (the
   +0x90 allocation stays 0x1A13000); the boot log shows `UKE: surface mapping
