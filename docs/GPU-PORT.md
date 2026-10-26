@@ -690,6 +690,11 @@ the mount switch.
   ownership attempt non-fatal: files are written 0755/0644 and chowned to
   root:wheel when owner Data allows it, with a mode-only retry otherwise; the
   bindfs view reports root:wheel either way (`BINDM_FORCE_ROOT`).
+  The one-page scratch map (host-audited against the built `kern_exec.c`): init
+  argv at 0x0, cache-mount args 0x100/0x120/0x200, environment strings
+  0x400/0x600 with the vector at 0x500, addon mount args 0x800..0x920, the
+  staged-apps mkdir at 0xa00 (runs after the addon mounts), and the addon mkdir
+  path at 0xc00..0x1000; the watchdog policy runs after the mounts too.
 - Offline loadability audit (addon2): the three Mach-Os have the right file
   types (plugin `MH_BUNDLE` with no `LC_ID_DYLIB`, Turnip `MH_DYLIB`, daemon
   `MH_EXECUTE`/PIE) and depend only on OS-provided libraries
