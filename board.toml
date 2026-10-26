@@ -196,7 +196,7 @@ BUILDID_STRING = "uke-research"
 # the optional trust cache and Data seed. The loader (DarwinBoot) is part of the firmware volume.
 [payload]
 volume = "UKEESP"
-size_mib = 64
+size_mib = 80
 loader = "firmware"
 title = "uke first boot: source 4K XNU to console"
 dram_size = "0x240000000"            # XNU VM DRAM: the full 9 GiB high range (0x8C0000000-0xB00000000)

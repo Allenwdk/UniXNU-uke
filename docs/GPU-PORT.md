@@ -544,3 +544,99 @@ MMIO.
   surface/region path (selector 3 / `clientMemoryForType`) for a guard. The
   Settings About hang is separate: scene-update watchdog (10 s) with all threads
   waiting in `mach_msg`.
+
+## 2026-10-27 userland Metal addon on Data (uke)
+
+The surf5 payload enabled `sheng-gpu-metal=1` but not `sheng-gpu-addon=1`, so the
+kernel's addon mount never ran: the heartbeat stayed `M a0.ffffffff/0.ffffffff`
+(addon stage 0) and no process could load `NativeAdrenoMetal.bundle`. The
+driver, the `AGXAccelerator` publication and both sandbox patches were already
+in the kernel; the missing pieces were the plugin bundle, its trust entries and
+the mount switch.
+
+- Kernel support already present: `patches/xnu/zzy-native-gpu-addon-mount.patch`
+  (bindfs views over `/System/Library/Extensions` and
+  `/System/Library/LaunchDaemons`, boot arg `sheng-gpu-addon=1`) and
+  `patches/xnu/zzw-native-adreno-sandbox-grant.patch` (the driver's
+  `NativeSandboxGrant` property replaces the sandbox verdict for the plugin's
+  `AGXDeviceUserClient` opens).
+- Linux plugin build (no macOS image tools needed for this part): iOS 17.0 SDK
+  from `xybp888/iOS-SDKs`; the installed `xnu-linux-toolchain` shims with an
+  `ld64.lld` `/ld` wrapper (cctools ld64 cannot read the SDK's TBD v4 stubs);
+  Mesa Turnip at the pinned commit plus `patches/mesa/*`; the metal2vulkan
+  bridge with Rust 1.98 and the `aarch64-apple-ios` target; `ldid` for 4 KiB
+  ad-hoc signing behind a `codesign` shim. Two portability changes:
+  `drivers/NativeMetal/bridge/FrontendChecks.h` declares the private
+  `waitUntilSignaledValue:timeoutMS:` selector (the iOS 17.0 SDK no longer
+  publishes it), and `scripts/build-adreno-metal-plugin.py` skips the
+  macOS-only Turnip host replay when not on Darwin.
+  CDHashes: plugin `061a4eb5631c9cdaa65be9c9ae25bc94d1d63fd4`, Turnip
+  `6f4102660b29aa6ee2b04419e9b6ae02397adb4b`, daemon
+  `cea5bf12d09c3fc6549c1f5db9c5988dc7e7a3c0`.
+- Addon delivery from a Linux host: `scripts/build-gpu-addon-blob.py` packs the
+  bundle, the `publish`/`clients` markers and the `adrenoprobed` daemon into a
+  zlib stream (`build/uke-gpu-addon/gpu-addon.z`, 12,220,142 bytes for
+  39,398,839 bytes raw). `GpuAddonBlob.S` embeds it with `.incbin`; the kernel
+  archive step (`build-boot-log.py`) links it, and the device patch
+  `patches/xnu/zzzzzzzzzzzz-uke-gpu-addon-blob.patch` decompresses it in the
+  first exec after the Data mount and writes `/private/var/ngpu/{addons,bin,
+  daemons}` in 64 KiB pieces with a per-file fsync and a cookie marker; the
+  existing bindfs mount then exposes the bundle. Later boots skip the copy
+  (marker hit, stage 4). A macOS host can still use
+  `scripts/add-gpu-plugin-data.py`.
+- Owner trust: `scripts/make-owner-trust-bundle.py` (one owner module with the
+  three CDHashes followed by the two unchanged original modules), passed with
+  `--owner-trust-cache` to the payload build; sha256 `b8aa3335…`.
+- Boot arguments: the surf5 set plus `sheng-gpu-addon=1` (971 bytes, under the
+  1000-byte limit). `[payload] size_mib` is 80, because the kernel grows to
+  64,643,072 bytes with the blob. The old 64 MiB payload had 12.4 MiB free.
+- Artifacts (not yet booted): kernel `649a1ad6…`, payload `74400c3e…`
+  (83,886,080 bytes), ADT `10fc90b9…`, payload kernel (panic-screen patched)
+  `0dc0d7db…`, vendor_boot `9fb9ff60…` (85,782,528 bytes; 80 MiB ramdisk at
+  0x1000, DTB 1,885,893 bytes). The 1 TiB UEFI boot image
+  (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed alongside it.
+- Expected first-boot evidence: `UKE GPU addon: stage=3 files=7
+  bytes=39398839 error=0`, then `stage=4` on the next boot; heartbeat
+  `M a5.0/5.0 …` (both views mounted, own files visible), `o<opens>` > 0, the
+  `K…` plugin markers and the GPU7 `R …`/`T …` report lines. The daemon
+  `adrenoprobed` runs the sandbox-free user test even if the Metal discovery
+  fails, so `o` > 0 and a raw `R` line separate the user-client grant from the
+  Metal frontend.
+
+### Linux build sequence used for this image
+
+```sh
+# once: toolchain shims, iOS SDK, Mesa venv, ldid, Rust 1.98 + aarch64-apple-ios
+#   ~/.cache/ios-toolchain/bin/{target-clang,target-clang++} from the xnu-linux-toolchain
+#   prefix, an `ld` wrapper translating -iphoneos_version_min to
+#   -platform_version for /usr/bin/ld64.lld, and a `codesign` wrapper over ldid
+#   (ldid signs 4 KiB pages; `ldid -h` gives the CDHash the trust cache needs).
+cd ~/UniXNU/UniXNU && source <xnu-linux-toolchain>/env.sh
+export UNIXNU_SHIM=$PWD/.cache/ios-toolchain/bin
+export UNIXNU_SDKROOT=$PWD/.cache/iPhoneOS17.0.sdk
+export PATH=$UNIXNU_SHIM:$HOME/.cargo/bin:$PWD/.cache/mesa-venv/bin:$PATH
+python3 scripts/build-turnip-darwin.py --target ios
+python3 scripts/build-native-metal-bridge.py --target ios
+python3 scripts/build-adreno-metal-plugin.py
+
+cd ~/UniXNU/UniXNU-uke && python3 scripts/build-gpu-addon-blob.py
+cd ~/UniXNU/UniXNU-linux && source scripts/linux-build-env.sh
+export UNIXNU_HOST_COMPAT_INCLUDE=$HOME/.local/xnu-linux/include/compat   # fresh fakeroot
+export UKE_GPU_ADDON_DIR=$HOME/UniXNU/UniXNU-uke/build/uke-gpu-addon
+./unixnu build kernel -D ../UniXNU-uke --local-module driver:NativeHidInput=...
+./unixnu build payload -D ../UniXNU-uke \
+  --owner-trust-cache <owner-trust.bundle> --data-ramdisk <scratch-data.img> \
+  --unique-chip-id 0x7252a8b07f8cb8f9 --kernel-arg=sheng-gpu-addon=1 ...
+python3 ../UniXNU-uke/scripts/patch-vendor-boot.py \
+  --base vendor_boot_uke_surf5.img --payload out/uke/payload/payload.img \
+  --output vendor_boot_uke_addon1.img
+```
+
+A clean `out/` rebuild also needs one previously built prelink candidate under
+`build/native-prelink/` for the legacy-display archive audit, and
+`build/display-analysis/mobile-graphics-legacy-abi.json` (the audit keeps only
+the recorded runtime-observation hash when the QEMU checkpoint was pruned).
+
+Next: boot the image, read `UKE GPU addon:` and the heartbeat, then decide
+whether the CA SIGBUS/About problems move with the render server's Metal device
+or remain the separate display-surface/VM issues.

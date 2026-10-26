@@ -2,6 +2,7 @@
 """Build the opt-in pram log writer against this source kernel's actual ABI."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -50,6 +51,20 @@ for name, record, obj_name in sources:
     source_sha, object_sha = compile_source(source, record, obj)
     report[name] = {'source_sha256': source_sha, 'object_sha256': object_sha}
     objects.append(obj)
+
+# The GPU addon blob (scripts/build-gpu-addon-blob.py) is an assembler object: .incbin embeds the compressed
+# stream without a generated C array. A build without the blob keeps the weak empty definitions in kern_exec.c.
+blob_dir = Path(os.environ.get('UKE_GPU_ADDON_DIR', str(ROOT / 'build/uke-gpu-addon')))
+blob_asm = blob_dir / 'GpuAddonBlob.S'
+if blob_asm.is_file():
+    blob_obj = OUT / 'GpuAddonBlob.o'
+    subprocess.run(['xcrun', 'clang', '-c', str(blob_asm), '-o', str(blob_obj)], check=True, timeout=300)
+    report['GpuAddonBlob.S'] = {'source_sha256': hashlib.sha256(blob_asm.read_bytes()).hexdigest(),
+                                'object_sha256': hashlib.sha256(blob_obj.read_bytes()).hexdigest(),
+                                'blob_bytes': (blob_dir / 'gpu-addon.z').stat().st_size if (blob_dir / 'gpu-addon.z').is_file() else 0}
+    objects.append(blob_obj)
+else:
+    report['GpuAddonBlob.S'] = None
 
 archive = OUT / 'libUkeLastLog.a'
 archive.unlink(missing_ok=True)

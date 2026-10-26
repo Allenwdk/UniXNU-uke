@@ -1,0 +1,263 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -144,6 +144,7 @@
+ #include <kern/policy_internal.h>
+ #include <kern/kalloc.h>
+ #include <kern/zalloc.h> /* zone_userspace_reboot_checks() */
++#include <libkern/zlib.h>
+ 
+ #include <os/log.h>
+ 
+@@ -7254,6 +7255,242 @@
+ 	}
+ 	*status = error;
+ }
++
++/* The owner-built GPU addon travels in the kernel as one zlib stream (scripts/build-gpu-addon-blob.py in the device repository):
++ * the NativeAdrenoMetal bundle, its publish/client markers and the probe daemon. The Data volume is the only writable owner
++ * storage; on the first boot after the Data mount this code creates /private/var/ngpu and writes the entries there, so the
++ * boot-time bindfs mount below sees the same content the packer writes into a Data seed on macOS. A marker cookie skips the
++ * copy on later boots (sheng-data-persist keeps Data). Never panics: a failure only records its stage and error. */
++#define NATIVE_GPU_ADDON_MAGIC "NGPUADD2"
++#define NATIVE_GPU_ADDON_BASE "/private/var/ngpu"
++#define NATIVE_GPU_ADDON_MARKER "/private/var/db/.sheng-gpu-addon"
++#define NATIVE_GPU_ADDON_PATH_MAX 1024
++struct native_gpu_addon_header {
++	char magic[8];
++	uint32_t version, count;
++	uint64_t raw;
++	uint64_t cookie;
++} __attribute__((packed));
++struct native_gpu_addon_entry {
++	uint32_t path_len, mode;
++	uint64_t data_len;
++} __attribute__((packed));
++extern const uint8_t native_gpu_addon_blob[], native_gpu_addon_blob_end[];
++extern const uint64_t native_gpu_addon_blob_size, native_gpu_addon_blob_raw_size;
++extern const uint32_t native_gpu_addon_blob_cookie;
++/* Kernel builds without the generated object keep these weak empty definitions. */
++__attribute__((weak)) const uint8_t native_gpu_addon_blob[1] = {0};
++__attribute__((weak)) const uint8_t native_gpu_addon_blob_end[1] = {0};
++__attribute__((weak)) const uint64_t native_gpu_addon_blob_size = 0;
++__attribute__((weak)) const uint64_t native_gpu_addon_blob_raw_size = 0;
++__attribute__((weak)) const uint32_t native_gpu_addon_blob_cookie = 0;
++volatile int native_gpu_addon_blob_stage = 0;   /* 1 decompress, 2 write, 3 staged, 4 cached, -1 error */
++volatile int native_gpu_addon_blob_files = 0;
++volatile int native_gpu_addon_blob_error = 0;
++volatile uint64_t native_gpu_addon_blob_bytes = 0;
++
++static int
++native_gpu_addon_mkdir(proc_t p, user_addr_t scratch, const char *path)
++{
++	struct mkdir_args request = {.path = scratch + 0xc00, .mode = 0755};
++	int32_t result = 0;
++	if (strlen(path) + 1 > 0x400) {
++		return ENAMETOOLONG;
++	}
++	int error = copyout(path, request.path, strlen(path) + 1);
++	if (!error) {
++		error = mkdir(p, &request, &result);
++	}
++	if (error == EEXIST) {
++		error = 0;
++	}
++	if (!error) {
++		vnode_t vp = NULLVP;
++		error = vnode_lookup(path, VNODE_LOOKUP_NOFOLLOW, &vp, vfs_context_current());
++		if (!error) {
++			struct vnode_attr va;
++			VATTR_INIT(&va);
++			VATTR_SET(&va, va_mode, 0755);
++			VATTR_SET(&va, va_uid, 0);
++			VATTR_SET(&va, va_gid, 0);
++			error = vnode_setattr(vp, &va, vfs_context_current());
++			vnode_put(vp);
++		}
++	}
++	return error;
++}
++/* Creates every directory of PATH below the base, not the last component. */
++static int
++native_gpu_addon_parents(proc_t p, user_addr_t scratch, char *path)
++{
++	for (char *at = path + sizeof(NATIVE_GPU_ADDON_BASE); *at; at++) {
++		if (*at != '/') {
++			continue;
++		}
++		char saved = *at;
++		*at = 0;
++		int error = native_gpu_addon_mkdir(p, scratch, path);
++		*at = saved;
++		if (error) {
++			return error;
++		}
++	}
++	return 0;
++}
++static int
++native_gpu_addon_write(const char *path, const void *data, uint64_t length, int mode, vfs_context_t ctx)
++{
++	vnode_t vp = NULLVP;
++	int error = vnode_open(path, O_CREAT | O_TRUNC | FWRITE | O_NOFOLLOW, mode, 0, &vp, ctx);
++	if (error) {
++		return error;
++	}
++	/* 64 KiB pieces: one 22 MiB UPL is refused and dirty pages pile up the way the staged-apps copy
++	 * found (int-220); each piece is written through the same vnode. */
++	const uint8_t *bytes = (const uint8_t *)data;
++	for (off_t at = 0; !error && (uint64_t)at < length; at += 0x10000) {
++		const int chunk = (int)(length - (uint64_t)at > 0x10000 ? 0x10000 : length - (uint64_t)at);
++		int resid = 0;
++		error = vn_rdwr(UIO_WRITE, vp, (caddr_t)(bytes + at), chunk, at, UIO_SYSSPACE, IO_NOAUTH | IO_UNIT,
++		    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx));
++		if (!error && resid) {
++			error = EIO;
++		}
++	}
++	if (!error) {
++		struct vnode_attr va;
++		VATTR_INIT(&va);
++		VATTR_SET(&va, va_mode, mode);
++		VATTR_SET(&va, va_uid, 0);
++		VATTR_SET(&va, va_gid, 0);
++		error = vnode_setattr(vp, &va, ctx);
++	}
++	if (!error) {
++		error = VNOP_FSYNC(vp, MNT_WAIT, ctx);
++	}
++	int close_error = vnode_close(vp, FWRITE, ctx);
++	return error ? error : close_error;
++}
++/* The marker holds the build cookie; a matching cookie means the persisted Data volume already has this addon. */
++static int
++native_gpu_addon_cached(vfs_context_t ctx, uint32_t cookie)
++{
++	vnode_t vp = NULLVP;
++	int error = vnode_open(NATIVE_GPU_ADDON_MARKER, FREAD, 0, 0, &vp, ctx);
++	if (error) {
++		return 0;
++	}
++	uint32_t stored = 0;
++	int resid = 0;
++	error = vn_rdwr(UIO_READ, vp, (caddr_t)&stored, sizeof(stored), 0, UIO_SYSSPACE, IO_NOAUTH,
++	    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx));
++	vnode_close(vp, FREAD, ctx);
++	return !error && !resid && stored == cookie;
++}
++static int
++native_gpu_addon_mark(vfs_context_t ctx, uint32_t cookie)
++{
++	return native_gpu_addon_write(NATIVE_GPU_ADDON_MARKER, &cookie, sizeof(cookie), 0644, ctx);
++}
++static int
++native_gpu_addon_install(proc_t p, user_addr_t scratch)
++{
++	const struct native_gpu_addon_header *header = (const struct native_gpu_addon_header *)native_gpu_addon_blob;
++	vfs_context_t ctx = vfs_context_current();
++	int error = 0;
++	if (!native_gpu_addon_blob_size || native_gpu_addon_blob_size < sizeof(*header)) {
++		native_gpu_addon_blob_stage = -1;
++		native_gpu_addon_blob_error = ENOENT;
++		return ENOENT;
++	}
++	if (memcmp(header->magic, NATIVE_GPU_ADDON_MAGIC, 8) || header->version != 2 ||
++	    header->cookie != native_gpu_addon_blob_cookie || header->raw != native_gpu_addon_blob_raw_size ||
++	    header->raw < sizeof(*header)) {
++		native_gpu_addon_blob_stage = -1;
++		native_gpu_addon_blob_error = EINVAL;
++		return EINVAL;
++	}
++	if (native_gpu_addon_cached(ctx, (uint32_t)header->cookie)) {
++		native_gpu_addon_blob_stage = 4;
++		return 0;
++	}
++	native_gpu_addon_blob_stage = 1;
++	vm_offset_t raw_address = 0;
++	kern_return_t allocated = kmem_alloc(kernel_map, &raw_address, (vm_size_t)header->raw, KMA_NONE, VM_KERN_MEMORY_BSD);
++	if (allocated != KERN_SUCCESS || !raw_address) {
++		native_gpu_addon_blob_stage = -1;
++		native_gpu_addon_blob_error = ENOMEM;
++		return ENOMEM;
++	}
++	uint8_t *raw = (uint8_t *)raw_address;
++	z_stream stream;
++	memset(&stream, 0, sizeof(stream));
++	stream.next_in = (Bytef *)(native_gpu_addon_blob + sizeof(*header));
++	stream.avail_in = (uInt)(native_gpu_addon_blob_size - sizeof(*header));
++	stream.next_out = (Bytef *)raw;
++	stream.avail_out = (uInt)header->raw;
++	int z = inflateInit(&stream);
++	if (z == Z_OK) {
++		z = inflate(&stream, Z_FINISH);
++	}
++	inflateEnd(&stream);
++	if (z != Z_STREAM_END || stream.total_out != header->raw) {
++		error = EINVAL;
++		goto out;
++	}
++	native_gpu_addon_blob_stage = 2;
++	error = native_gpu_addon_mkdir(p, scratch, NATIVE_GPU_ADDON_BASE);
++	uint8_t *at = raw, *end = raw + header->raw;
++	for (uint32_t index = 0; !error && index < header->count; index++) {
++		struct native_gpu_addon_entry entry;
++		if ((uint64_t)(end - at) < sizeof(entry)) {
++			error = EINVAL;
++			break;
++		}
++		memcpy(&entry, at, sizeof(entry));
++		at += sizeof(entry);
++		if (!entry.path_len || entry.path_len > NATIVE_GPU_ADDON_PATH_MAX || entry.data_len > (uint64_t)(end - at) ||
++		    entry.path_len > (uint64_t)(end - at) ||
++		    entry.data_len > (uint64_t)(end - at - entry.path_len)) {
++			error = EINVAL;
++			break;
++		}
++		char name[NATIVE_GPU_ADDON_PATH_MAX + 1];
++		memcpy(name, at, entry.path_len);
++		name[entry.path_len] = 0;
++		at += entry.path_len;
++		char path[NATIVE_GPU_ADDON_PATH_MAX + 1];
++		int length = snprintf(path, sizeof(path), "%s/%s", NATIVE_GPU_ADDON_BASE, name);
++		if (length < 0 || (size_t)length >= sizeof(path)) {
++			error = ENAMETOOLONG;
++			break;
++		}
++		error = native_gpu_addon_parents(p, scratch, path);
++		if (!error) {
++			error = native_gpu_addon_write(path, at, entry.data_len, (int)(entry.mode & 07777), ctx);
++		}
++		at += entry.data_len;
++		if (!error) {
++			native_gpu_addon_blob_files++;
++			native_gpu_addon_blob_bytes += entry.data_len;
++		}
++	}
++	if (!error) {
++		/* The marker only skips the next boot's copy; failing to write it does not fail the staging. */
++		(void)native_gpu_addon_mark(ctx, (uint32_t)header->cookie);
++		native_gpu_addon_blob_stage = 3;
++	}
++out:
++	if (error) {
++		native_gpu_addon_blob_stage = -1;
++		native_gpu_addon_blob_error = error;
++	}
++	kmem_free(kernel_map, raw_address, (vm_size_t)header->raw);
++	printf("UKE GPU addon: stage=%d files=%d bytes=%llu error=%d\n", native_gpu_addon_blob_stage,
++	    native_gpu_addon_blob_files, native_gpu_addon_blob_bytes, native_gpu_addon_blob_error);
++	return error;
++}
++
+ static void
+ native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
+ {
+@@ -7261,6 +7498,8 @@
+ 	if (!PE_parse_boot_argn("sheng-gpu-addon", &enabled, sizeof(enabled)) || enabled != 1) {
+ 		return;
+ 	}
++	/* The addon lives on owner Data; write the embedded bundle before mounting it. */
++	(void)native_gpu_addon_install(p, scratch);
+ 	static const char extensions_source[] = "/private/var/ngpu/addons", extensions_point[] = "/System/Library/Extensions";
+ 	static const char daemons_source[] = "/private/var/ngpu/daemons", daemons_point[] = "/System/Library/LaunchDaemons";
+ 	native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source), extensions_point,
