@@ -657,6 +657,20 @@ the mount switch.
   beyond the three shared GPU windows gets `kIOReturnBusy` and keeps the
   software renderer. The verifier requires `iconservicesagent` and
   `WidgetRenderer_Default` in the clients file.
+- Discovery contract (host-audited 2026-10-27): the plugin resolves
+  `NativeAdrenoMetal.publish`/`.clients` beside the bundle directory
+  (`NativeAdrenoMetalPlugin.mm:34`, i.e. `/System/Library/Extensions/`, where
+  the union view puts them) and `libvulkan_freedreno.dylib` inside the bundle
+  (`NativeTurnipSmoke.h:641`); both match the packed tree, and the Metal
+  discovery itself loads `/System/Library/Extensions/<MetalPluginName>.bundle`
+  (`NativeAdrenoAccelerator.cpp:3`). The driver serves four connections
+  (`NativeAdrenoMaxClients=4`, `NativeAdrenoPublish.cpp:112`): slot 0 is
+  reserved for `backboardd` by name, slots 1..3 go to the next free process, so
+  at most three listed processes beyond the render server hold a native device.
+  A fifth connection gets `kIOReturnNoSpace`; a client whose queue range still
+  has a job in flight at `setScope` gets `kIOReturnBusy`; both leave the plugin
+  at `device = nil` (marker 0x68f2) with the software renderer kept. The
+  `adrenoprobed` one-shot test also occupies a slot while it runs.
 - zlib allocator fix (addon3): this kernel builds zlib with `KERNEL`, which
   defines `NO_ZCFUNCS`, so `inflateInit` installs no default allocator and the
   first `ZALLOC` calls a NULL function pointer — the addon2 image would panic in
