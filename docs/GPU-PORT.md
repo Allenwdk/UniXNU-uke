@@ -637,7 +637,11 @@ the mount switch.
   CPU-copy presentation path; if the device is registered (`M a5.0`, `o>0`,
   `K68xx`) but the screen stays black or stale, this variant offers frames to
   the plugin's scanout client instead (a refused offer falls back to the CPU
-  copy).
+  copy). The hand-off ABI is the shared `GpuScanoutClient.h`/`NativeGOPWire.h`
+  pair (plugin and presenter compile the same records), and `serveScanout`
+  starts only after the frontend checks pass; a missing client makes the offer
+  fail and the display driver falls back to its CPU copy, so the variant is
+  fail-safe.
 - zlib allocator fix (addon3): this kernel builds zlib with `KERNEL`, which
   defines `NO_ZCFUNCS`, so `inflateInit` installs no default allocator and the
   first `ZALLOC` calls a NULL function pointer — the addon2 image would panic in
