@@ -584,6 +584,14 @@ the mount switch.
   existing bindfs mount then exposes the bundle. Later boots skip the copy
   (marker hit, stage 4). A macOS host can still use
   `scripts/add-gpu-plugin-data.py`.
+- Verification without a device: an independent big-endian CodeDirectory parse
+  of the three Mach-Os matches the owner module exactly (plugin
+  `061a4eb5…`, Turnip `6f410266…`, daemon `cea5bf12…`), all with SHA-256
+  hashing, `pageShift=12` (4 KiB) and an iOS 17.0 `LC_BUILD_VERSION`; the
+  dylib dependencies are Foundation/Metal/IOSurface/libobjc for the plugin,
+  IOKit/CoreGraphics/QuartzCore for Turnip and libc++/libSystem for the
+  daemon. The signatures are ldid ad-hoc ones (no Apple notarization or
+  bundle resource seal); the owner trust cache is what admits them.
 - Owner trust: `scripts/make-owner-trust-bundle.py` (one owner module with the
   three CDHashes followed by the two unchanged original modules), passed with
   `--owner-trust-cache` to the payload build; sha256 `b8aa3335…`.
