@@ -539,11 +539,18 @@ MMIO.
   refresh-rate reporting (c031d88/c99046a). None fixes the uke CA SIGBUS. The
   sheng repository's display commits are panel 144 Hz, backlight/CoreBrightness
   and log rows; no surface fix.
-- Next: verify whether the guard moves the CA region in a new backboardd report
-  (swipe up, wait 4 minutes for the crash probe scan), and review the exported
-  surface/region path (selector 3 / `clientMemoryForType`) for a guard. The
-  Settings About hang is separate: scene-update watchdog (10 s) with all threads
-  waiting in `mach_msg`.
+- Mapping lead (2026-10-27, host side): the guard experiment changed the
+  surface allocation at +0x90, but the compositor receives its mapping through
+  the surface's +0x30 `IOMemoryDescriptor`. `LegacyDisplayProbe.cpp` now logs
+  `descbytes`/`regionbytes` at adoption next to the allocation. If `descbytes`
+  is 0x1A13000 (the allocation) while the CA region is 0x1A22000, the exported
+  mapping is 0xF000 short and the next experiment is to map the region
+  descriptor (+0x28, the 32 MiB seed) or pad the +0x30 descriptor to the region
+  plus one page, gated by a boot argument. If `descbytes` is 32 MiB, the
+  mapping already covers the region and the CA buffer is a separate IOSurface,
+  so the display surface is not the fault. The Settings About hang is separate:
+  scene-update watchdog (10 s) with all threads waiting in `mach_msg`; a Data
+  mount `vfs_statfs` timing probe is the next host-side diagnostic.
 
 ## 2026-10-27 userland Metal addon on Data (uke)
 
@@ -609,8 +616,8 @@ the mount switch.
   the addon it would return to the CI::GLContext crash loop; drop the argument
   to restore the workaround. `[payload] size_mib` is 80, because the kernel grows to
   64,643,072 bytes with the blob. The old 64 MiB payload had 12.4 MiB free.
-- Artifacts (not yet booted): kernel `240aa0a5…`, payload `ddd95a57…`
-  (83,886,080 bytes), vendor_boot `9663d11c…` (85,782,528 bytes; 80 MiB
+- Artifacts (not yet booted): kernel `055dcead…`, payload `da5093f9…`
+  (83,886,080 bytes), vendor_boot `0198dc10…` (85,782,528 bytes; 80 MiB
   ramdisk at 0x1000, DTB 1,885,893 bytes; owner trust `b8aa3335…`, Data seed
   `20768d00…`). The 1 TiB UEFI boot image
   (`boot_uke_usbdal2.img` or `boot_uke_1tib.img`) must be flashed alongside it.

@@ -668,9 +668,16 @@ static void native_legacy_default_surface_state(IOService *display,bool adopt) {
         memcpy(&tempRegion,reinterpret_cast<unsigned char *>(temp)+0x28,sizeof(tempRegion));
         memcpy(&tempDescriptor,reinterpret_cast<unsigned char *>(temp)+0x30,sizeof(tempDescriptor));
     }
-    IOLog("UKE: display surface root=%p gate=%p wl=%p surface=%p temp=%p region=%p flag=%u dims=%ux%u mode=%08x/%u/%u sid=%u mem=%p desc=%p debugger=%u\n",
+    // The compositor's 0x1A22000-byte region is the surface allocation (0x1A13000) plus 0xF000; the mapping it
+    // receives is the +0x30 descriptor, not +0x90. Log both descriptor lengths next to the allocation so the next
+    // report can tell a short mapping from the compositor's own buffer.
+    uint64_t tempDescriptorBytes=0,tempRegionBytes=0;
+    if(tempDescriptor) tempDescriptorBytes=reinterpret_cast<IOMemoryDescriptor *>(tempDescriptor)->getLength();
+    if(tempRegion) tempRegionBytes=reinterpret_cast<IOMemoryDescriptor *>(tempRegion)->getLength();
+    IOLog("UKE: display surface root=%p gate=%p wl=%p surface=%p temp=%p region=%p flag=%u dims=%ux%u mode=%08x/%u/%u sid=%u mem=%p desc=%p descbytes=%llu regionbytes=%llu debugger=%u\n",
         root,gate,workloop,surface,temp,region,(unsigned)flag,(unsigned)width,(unsigned)height,
         (unsigned)format,(unsigned)planes,(unsigned)bpp,(unsigned)sid,tempRegion,tempDescriptor,
+        (unsigned long long)tempDescriptorBytes,(unsigned long long)tempRegionBytes,
         (unsigned)PE_i_can_has_debugger(NULL));
     // Surface geometry the compositor maps: stride at +0x68, format at +0x80,
     // allocation at +0x90. Shown as the raw words so a wrong width cannot hide
