@@ -66,7 +66,11 @@ if [ -f "$AUDIT_PATCH" ] && ! grep -q 'native_owner_root_apple_autherr' "$ROOT/.
   apply_xnu_patch "$AUDIT_PATCH"
 fi
 for PATCH_DIR in "$FORK_PATCHES" "$ROOT/patches/xnu" "$ROOT/kits/NativePrelink/patches"; do
+  # Seven fork patches postdate the validated uke patch set; the board patches are written against the set
+  # without them. The migration's device series adopts them explicitly later.
+  FORMAT2_ONLY=" native-lookup-trace.patch native-union-lower-directory.patch native-work-interval-instance.patch zzwb-native-sandbox-grant-set-properties.patch zzyb-native-cryptex-os-view.patch zzyc-owner-skip-launch-constraints.patch zzy-staged-system-apps.patch "
   for PATCH in $(find "$PATCH_DIR/" -maxdepth 1 -name '*.patch' -print 2>/dev/null | sort); do
+    case "$FORMAT2_ONLY" in *" $(basename "$PATCH") "*) continue;; esac
     if [ "$PATCH" = "$AUDIT_PATCH" ]; then
       continue
     fi
