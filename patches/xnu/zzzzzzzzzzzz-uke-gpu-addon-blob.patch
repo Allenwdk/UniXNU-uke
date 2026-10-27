@@ -1,4 +1,5 @@
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index beec746..079b5b1 100644
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
 @@ -144,6 +144,7 @@
@@ -9,9 +10,9 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
  #include <os/log.h>
  
-@@ -7254,6 +7255,281 @@
- 	}
- 	*status = error;
+@@ -7640,6 +7641,281 @@ native_ls_store_drop(proc_t p, user_addr_t scratch)
+ 	(void)native_gpu_addon_write(marker, (const uint8_t *)"1\n", 2, 0644, ctx);
+ 	native_ls_store_status = removed;
  }
 +
 +/* The owner-built GPU addon travels in the kernel as one zlib stream (scripts/build-gpu-addon-blob.py in the device repository):
@@ -291,7 +292,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  static void
  native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
  {
-@@ -7261,5 +7537,9 @@
+@@ -7647,14 +7923,18 @@ native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
  	if (!PE_parse_boot_argn("sheng-gpu-addon", &enabled, sizeof(enabled)) || enabled != 1) {
  		return;
  	}
@@ -299,9 +300,9 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +	(void)native_gpu_addon_install(p, scratch);
 +	/* The cache-mount environment (strings at +0x400/+0x600, the vector at +0x500) is still needed by launchd exec;
 +	 * keep the addon mount arguments at +0x800. */
+ 	native_gpu_addon_install(p, scratch);
  	static const char extensions_source[] = "/private/var/ngpu/addons", extensions_point[] = "/System/Library/Extensions";
  	static const char daemons_source[] = "/private/var/ngpu/daemons", daemons_point[] = "/System/Library/LaunchDaemons";
-@@ -7266,7 +7546,7 @@
 -	native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source), extensions_point,
 +	native_gpu_addon_mount(p, scratch, 0x800, extensions_source, sizeof(extensions_source), extensions_point,
  	    sizeof(extensions_point), "/System/Library/Extensions/AGXMetalA10.bundle",
@@ -311,3 +312,4 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +	native_gpu_addon_mount(p, scratch, 0x800, daemons_source, sizeof(daemons_source), daemons_point, sizeof(daemons_point),
  	    "/System/Library/LaunchDaemons/com.apple.backboardd.plist",
  	    "/System/Library/LaunchDaemons/org.blu-sharky.adrenoprobed.plist", &native_gpu_addon2_stage, &native_gpu_addon2_status);
+ 	/* The default iPadOS 17 wallpaper's layered animation with PNG images in place of its HEIC ones (no hardware HEVC decoder here).

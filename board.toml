@@ -48,10 +48,10 @@ windows = [
 
 [kernel]
 defconfig = "uke_defconfig"
-# The board keeps its validated patch set as one explicit series; the shared layers are
-# listed inside it. Empty fragments: the board's defconfigs carry the full configuration.
+# The four-layer series of the resolver: shared arch patches, the SoC platform
+# patches, the OS patches and the board's own. Empty fragments: the board's
+# defconfigs carry the full configuration.
 config_fragments = []
-patch_series = ["device:patches/xnu/series"]
 # Archive builders of the kernel step, in order. They run only for a configuration with
 # CONFIG_XNU_BUILD_ARCHIVES=y (configs/uke-full_defconfig), after the bootstrap pass has left the
 # compile records behind. component: entries are catalog recipes; the rest are scripts of the

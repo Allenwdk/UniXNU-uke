@@ -1,8 +1,9 @@
 diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
+index c1c3a9c..af69e45 100644
 --- a/iokit/Kernel/IOUserClient.cpp
 +++ b/iokit/Kernel/IOUserClient.cpp
-@@ -4342,6 +4342,23 @@
- 	return 0 == strncmp(name, process->getCStringNoCopy(), sizeof(name) - 1);
+@@ -4359,6 +4359,23 @@ native_sandbox_grant(IOService * service)
+ 	return false;
  }
  
 +/* The driver marks the client object it returns for every plugin open (NativeSandboxGrant) and marks its accelerator
@@ -25,7 +26,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
  kern_return_t
  is_io_service_open_extended(
  	io_object_t _service,
-@@ -4370,7 +4387,8 @@
+@@ -4387,7 +4404,8 @@ is_io_service_open_extended(
  	}
  
  #if CONFIG_MACF
@@ -35,7 +36,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
  		return kIOReturnNotPermitted;
  	}
  #endif
-@@ -4530,7 +4548,8 @@
+@@ -4547,7 +4565,8 @@ is_io_service_open_extended(
  			}
  #if CONFIG_MACF
  			/* The service's grant (native_sandbox_grant) stands in for the sandbox's verdict on the render server's open. */
@@ -45,7 +46,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
  			    && 0 != mac_iokit_check_open(kauth_cred_get(), client, connect_type)) {
  				IOLog("IOUC %s failed MACF in process %s\n",
  				    client->getMetaClass()->getClassName(), creatorNameCStr);
-@@ -4540,6 +4559,8 @@
+@@ -4557,6 +4576,8 @@ is_io_service_open_extended(
  
  			if ((kIOReturnSuccess == res)
  			    && !native_sandbox_grant(service)
