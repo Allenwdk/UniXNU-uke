@@ -1,10 +1,23 @@
-# Board description of the Xiaomi Pad 6S Pro (sheng, SM8550), read by the unixnu build driver.
+# Board description of the Xiaomi Pad 7 (uke, SM7675), read by the unixnu build driver.
+schema_version = 2
 
 [board]
 name = "uke"
 soc = "SM7675"
+soc_source = "sm7675"
+os_profile = "ipados-17.7.11-21H461"
 description = "Xiaomi Pad 7"
-kit = "uke"                      # the package/ of this repository appears as kits/sheng in the build tree
+kit = "uke"                      # the package/ of this repository appears as kits/uke in the build tree
+
+# The full component selection; the resolver adds dependencies and orders their recipes.
+[components]
+include = [
+  "ArmDTPlatform", "ArmCpu", "ArmVirtPlatform",
+  "SoftwareAES", "ShengUfs", "ShengHidInput", "ShengNovatekTouch", "AppleKeyStoreState",
+  "RamBlock", "VirtioMmioBlock", "VirtioMmioConsole",
+  "Adreno740", "AdrenoMetal", "GopFramebuffer", "QcomGeniSpi",
+  "XnuPrelink", "DarwinBoot", "VerifiedRoot", "AirNir", "AdrenoPM4", "AdrenoFirmware", "ArmSmmu4K",
+]
 
 # The target OS image: the unchanged iPad7,1 iPadOS 17.7.11 restore image. Give --ipsw PATH to use a local file; without
 # it the remote url is read with range requests, only the members that are needed.
@@ -35,27 +48,38 @@ windows = [
 
 [kernel]
 defconfig = "uke_defconfig"
+# The board keeps its validated patch set as one explicit series; the shared layers are
+# listed inside it. Empty fragments: the board's defconfigs carry the full configuration.
+config_fragments = []
+patch_series = ["device:patches/xnu/series"]
 # Archive builders of the kernel step, in order. They run only for a configuration with
 # CONFIG_XNU_BUILD_ARCHIVES=y (configs/uke-full_defconfig), after the bootstrap pass has left the
-# compile records behind. Each entry is a script of the build tree with its arguments.
+# compile records behind. component: entries are catalog recipes; the rest are scripts of the
+# build tree with their arguments.
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
-  "build-arm-driver.py ArmDTPlatform",
-  "build-arm-driver.py ArmCpu",
-  "build-arm-driver.py NativeAES",
-  "build-native-aes-bindings.py",
+  "component:ArmDTPlatform",
+  "component:ArmCpu",
+  "component:ArmVirtPlatform",
+  "component:SoftwareAES",
+  "build-software-aes-bindings.py",
   "prepare-storage-headers.py",
+  "component:ShengUfs",
   "build-arm-driver.py NativeUfs --unverified",
   "build-ufs-original-bindings.py",
-  "build-arm-driver.py NativeRamBlock",
+  "component:RamBlock",
+  "component:VirtioMmioBlock",
+  "component:VirtioMmioConsole",
   "build-mockfs-fixture.py",
   "build-sheng-platform-power.py",
   "build-libpthread-kernel.py",
   "prepare-uke-gmu.py",
-  "build-arm-driver.py NativeAdreno",
+  "component:Adreno740",
   "build-native-adreno-kits.py",
-  "build-native-adreno-accelerator.py",
+  "build-adreno740-accelerator.py",
+  "component:ShengHidInput",
+  "component:AppleKeyStoreState",
   "build-native-legacy-display.py",
   "build-boot-log.py",
 ]

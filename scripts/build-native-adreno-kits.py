@@ -11,7 +11,7 @@ for header in ('ShengGmuSource.h', 'ShengGmuVotesSource.h', 'ShengGmuCommandDbSo
         sys.exit('build/sheng-gmu/%s is missing; run prepare-uke-gmu.py first' % header)
 c_recipe = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o.json').read_text().strip().rstrip(','))
 cxx_recipe = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json').read_text().strip().rstrip(','))
-out = ROOT / 'build/native-adreno'
+out = ROOT / 'build/adreno740'
 out.mkdir(parents=True, exist_ok=True)
 sources = [ROOT / 'kits/uke' / name for name in
            ('ShengGmu.c', 'ShengGmuVotes.c', 'ShengGmuCommandDb.c')]
@@ -21,7 +21,7 @@ sources += [ROOT / 'kits/AdrenoFirmware' / name for name in
 sources += sorted(p for p in (ROOT / 'kits/ArmSmmu4K').glob('ArmSmmu4K*.c'))
 sources += [ROOT / 'kits/AdrenoPM4/AdrenoPM4.c']
 objects = []
-sources += sorted(p for p in (ROOT / 'drivers/NativeAdreno').glob('NativeAdreno*.cpp')
+sources += sorted(p for p in (ROOT / 'drivers/Adreno740').glob('NativeAdreno*.cpp')
                   if p.name not in ('NativeAdrenoClient.cpp', 'NativeAdrenoService.cpp', 'NativeAdrenoAccelerator.cpp'))
 # NativeAdrenoAccelerator.cpp is built staged by build-native-adreno-accelerator.py (its initializer must not run at boot).
 # NativeAdrenoService.cpp is the archive's NativeAdreno.o from build-arm-driver.py; start from that object only.
@@ -45,7 +45,7 @@ for source in sources:
         i += 1
     command += ['-I', str(ROOT / 'kits/uke'), '-I', str(ROOT / 'kits/AdrenoFirmware'),
                 '-I', str(ROOT / 'build/sheng-gmu'), '-I', str(ROOT / 'kits/AdrenoPM4'), '-I', str(ROOT / 'kits/ArmSmmu4K'), '-I', str(ROOT / '.cache/xnu-work/osfmk'),
-                '-I', str(ROOT / 'drivers/NativeAdreno'), '-Wall', '-Wextra', '-Werror',
+                '-I', str(ROOT / 'drivers/Adreno740'), '-Wall', '-Wextra', '-Werror',
                 '-Wno-unused-parameter', '-Wno-incompatible-sysroot', '-Wno-c99-designator',
                 '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion',
                 '-Wno-unnecessary-virtual-specifier']
@@ -83,7 +83,7 @@ if present:
     subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Wno-incompatible-sysroot',
                     '-c', out / 'firmware.S', '-o', out / 'firmware.o'], check=True)
     objects.append(out / 'firmware.o')
-archive = out / 'libNativeAdreno.a'
+archive = out / 'libAdreno740.a'
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *objects], check=True)
 defined = subprocess.run(['xcrun', 'nm', '-g', archive], capture_output=True, text=True).stdout
 missing = [s for s in ('_ShengGmuColdStart', '_ShengGmuBuildStartup',

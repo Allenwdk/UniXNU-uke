@@ -28,7 +28,7 @@ parser.add_argument('--objects-dir', type=Path, default=None)
 args = parser.parse_args()
 component = args.component
 args.objects_dir = (args.objects_dir or
-                    ROOT / ('build/native-ufs' if component == 'NativeUfs' else 'build/native-ram-block'))
+                    ROOT / ('build/sheng-ufs' if component == 'NativeUfs' else 'build/ram-block'))
 
 KERNELCACHE_SHA256 = 'f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7'
 SOURCE_REVISION = 'e45fbe30a7879e0b16e26dddb78538f1b00e0bff'

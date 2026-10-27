@@ -698,7 +698,7 @@ if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ] && [ "$BOOTSTRAP" = 0 ]; then
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ARMCPU_ARCHIVE"
   fi
   if [ "${XNU_NATIVE_UFS:-0}" = 1 ]; then
-    UFS_ARCHIVE=$ROOT/build/native-ufs/libNativeUfs.a
+    UFS_ARCHIVE=$ROOT/build/sheng-ufs/libShengUfs.a
     test -f "$UFS_ARCHIVE"
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$UFS_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $UFS_ARCHIVE"
@@ -706,7 +706,7 @@ if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ] && [ "$BOOTSTRAP" = 0 ]; then
   if [ "${XNU_NATIVE_ADRENO:-0}" = 1 ]; then
     # NativeAdreno plus its kits (scripts/build-native-adreno-kits.py). No personality is installed: the
     # board probe calls NativeAdrenoGmuContextBringup directly once it has powered the GPU CX domain.
-    ADRENO_ARCHIVE=$ROOT/build/native-adreno/libNativeAdreno.a
+    ADRENO_ARCHIVE=$ROOT/build/adreno740/libAdreno740.a
     test -f "$ADRENO_ARCHIVE"
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ADRENO_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ADRENO_ARCHIVE"
@@ -742,13 +742,13 @@ PY_LEGACY_DISPLAY
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $LEGACY_DISPLAY_ARCHIVE"
   fi
   if [ "${XNU_NATIVE_AES:-0}" = 1 ]; then
-    AES_ARCHIVE=${XNU_NATIVE_AES_ARCHIVE:-$ROOT/build/native-aes/libNativeAES.a}
+    AES_ARCHIVE=${XNU_NATIVE_AES_ARCHIVE:-$ROOT/build/software-aes/libSoftwareAES.a}
     test -f "$AES_ARCHIVE"
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$AES_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $AES_ARCHIVE"
   fi
   if [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" = 1 ]; then
-    VIRTIO_ARCHIVE=${XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE:-$ROOT/build/native-virtio-block/libNativeVirtioBlock.a}
+    VIRTIO_ARCHIVE=${XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE:-$ROOT/build/virtio-mmio-block/libVirtioMmioBlock.a}
     test -f "$VIRTIO_ARCHIVE"
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$VIRTIO_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $VIRTIO_ARCHIVE"
@@ -765,20 +765,20 @@ if hashlib.sha256(archive.read_bytes()).hexdigest()!=report['archive_sha256']:
 for name,digest in report['source_sha256'].items():
     if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
         raise SystemExit('Rebuild the GPU broker after changing '+name)
-if hashlib.sha256((root/'build/native-virtio-console/libNativeVirtioConsole.a').read_bytes()).hexdigest()!=report['console_archive_sha256']:
+if hashlib.sha256((root/'build/virtio-mmio-console/libVirtioMmioConsole.a').read_bytes()).hexdigest()!=report['console_archive_sha256']:
     raise SystemExit('Rebuild the GPU broker against the actual byte-transport archive')
 PY_GPU_BROKER
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$GPU_BROKER_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $GPU_BROKER_ARCHIVE"
   fi
   if [ "$NATIVE_VIRTIO_CONSOLE" = 1 ]; then
-    CONSOLE_ARCHIVE=$ROOT/build/native-virtio-console/libNativeVirtioConsole.a
+    CONSOLE_ARCHIVE=$ROOT/build/virtio-mmio-console/libVirtioMmioConsole.a
     test -f "$CONSOLE_ARCHIVE"
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$CONSOLE_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $CONSOLE_ARCHIVE"
   fi
   if [ "$NATIVE_RAM_BLOCK" = 1 ]; then
-    RAM_BLOCK_ARCHIVE=$ROOT/build/native-ram-block/libNativeRamBlock.a
+    RAM_BLOCK_ARCHIVE=$ROOT/build/ram-block/libRamBlock.a
     test -f "$RAM_BLOCK_ARCHIVE"
     if [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" = 1 ]; then
       # Both transports import the same original class. Keep one exact alias
@@ -798,7 +798,7 @@ first, second = [record['bindings'] for record in records]
 if any(first.get(name) != value for name, value in second.items()):
     raise SystemExit('RAM transport imports must match the already linked original storage bindings')
 PY_BINDINGS
-      RAM_BLOCK_OBJECT=$ROOT/build/native-ram-block/NativeRamBlock.o
+      RAM_BLOCK_OBJECT=$ROOT/build/ram-block/NativeRamBlock.o
       test -f "$RAM_BLOCK_OBJECT"
       KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES $RAM_BLOCK_OBJECT"
     else
@@ -851,18 +851,18 @@ PY_BINDINGS
   EXTRA_MAKE_ARGS+=("LD_KERNEL_ARCHIVES=$KERNEL_EXTRA_ARCHIVES")
   EXTRA_MAKE_ARGS+=("XNU_EXTERNAL_KERNEL_ARCHIVES=$KERNEL_ARCHIVE_DEPENDENCIES")
 fi
-python3 - "${XNU_NATIVE_AES:-0}" "${XNU_NATIVE_AES_ARCHIVE:-$ROOT/build/native-aes/libNativeAES.a}" \
-  "${XNU_NATIVE_VIRTIO_BLOCK:-0}" "${XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE:-$ROOT/build/native-virtio-block/libNativeVirtioBlock.a}" \
+python3 - "${XNU_NATIVE_AES:-0}" "${XNU_NATIVE_AES_ARCHIVE:-$ROOT/build/software-aes/libSoftwareAES.a}" \
+  "${XNU_NATIVE_VIRTIO_BLOCK:-0}" "${XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE:-$ROOT/build/virtio-mmio-block/libVirtioMmioBlock.a}" \
   "$OWNER_ROOT_PROBE" "${XNU_VERIFIED_ROOT_ARCHIVE:-$ROOT/build/verified-root-xnu/libVerifiedRootProbe.a}" \
-  "$NATIVE_RAM_BLOCK" "$ROOT/build/native-ram-block/libNativeRamBlock.a" \
+  "$NATIVE_RAM_BLOCK" "$ROOT/build/ram-block/libRamBlock.a" \
   "$ADRENO_FIRMWARE_PROBE" "$ROOT/build/adreno-firmware-probe/libAdrenoFirmwareProbe.a" \
   "$ADRENO_PM4_PROBE" "$ROOT/build/adreno-pm4-probe/libAdrenoPM4Probe.a" \
   "$SMMU4K_PROBE" "$ROOT/build/smmu4k-probe/libArmSmmu4KProbe.a" \
   "$CONSTANT_UPLOADS_PROBE" "$ROOT/build/constant-uploads-probe/libConstantUploadsProbe.a" \
-  "$NATIVE_VIRTIO_CONSOLE" "$ROOT/build/native-virtio-console/libNativeVirtioConsole.a" \
+  "$NATIVE_VIRTIO_CONSOLE" "$ROOT/build/virtio-mmio-console/libVirtioMmioConsole.a" \
   "$NATIVE_OFFLINE_GPU" "$ROOT/build/native-offline-gpu/libNativeOfflineGPU.late.a" \
   "$SHENG_PMGR" "$ROOT/build/sheng-platform-power/libShengPlatformPower.a" \
-  "${XNU_NATIVE_ADRENO:-0}" "$ROOT/build/native-adreno/libNativeAdreno.a" <<'PY'
+  "${XNU_NATIVE_ADRENO:-0}" "$ROOT/build/adreno740/libAdreno740.a" <<'PY'
 import hashlib
 from pathlib import Path
 import sys

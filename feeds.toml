@@ -1,8 +1,45 @@
 # Extra sources of the uke build tree; the base feeds.toml supplies the rest.
-
 [[source]]
 name = "IOStorageFamily"
 kind = "refer"
 git = "https://github.com/apple-oss-distributions/IOStorageFamily.git"
 ref = "main"
 commit = "e45fbe30a7879e0b16e26dddb78538f1b00e0bff"
+
+# The SM7675 (cliffs) SoC layer, shared with future boards. Local until the
+# repository is published; the commit pin replaces the local override then.
+[[source]]
+name = "sm7675"
+kind = "soc"
+git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
+local = "../UniXNU-sm7675-common"
+
+# Board-pinned component variants: the A732 GPU fork and the overlay-present
+# display fork keep the uke bring-up pins, and the UFS and touch sources are
+# the board's own copies. Everything else resolves through the catalog.
+[[source]]
+name = "Adreno740"
+kind = "driver"
+git = "https://github.com/Allenwdk/NativeAdreno.git"
+commit = "f1a2aeed0efa50dbb9f4db279f2d157114eafddc"
+
+[[source]]
+name = "GopFramebuffer"
+kind = "driver"
+git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
+commit = "33fe049e3507c94e7f36e804818a067187b1ccb1"
+
+[[source]]
+name = "AdrenoMetal"
+kind = "driver"
+local = "../UniXNU/drivers/NativeMetal"
+
+[[source]]
+name = "ShengUfs"
+kind = "driver"
+local = "drivers/NativeUfs"
+
+[[source]]
+name = "ShengNovatekTouch"
+kind = "driver"
+local = "drivers/NativeNovatekTouch"

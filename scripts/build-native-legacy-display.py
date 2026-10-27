@@ -263,10 +263,10 @@ for src in touch_c:
     obj=touch_dir/(src.stem+'.o');touch_objs.append(obj)
     run([str(src) if arg==str(process_source) else str(obj) if arg==str(process_obj) else arg for arg in process_cmd],cwd=pr['directory'])
 archive=OUT/'libNativeLegacyDisplay.late.a';archive.unlink(missing_ok=True)
-print(run(['python3',ROOT/'scripts/build-native-hid-input.py'],text=True),end='')
-hid_dir=ROOT/'build/native-hid-input'
+print(run(['python3',ROOT/'scripts/build-sheng-hid-input.py'],text=True),end='')
+hid_dir=ROOT/'build/sheng-hid-input'
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeKeyStoreEvents'],text=True),end='')
-keyevents=ROOT/'build/native-keystore-events'
+keyevents=ROOT/'build/apple-key-store-state'
 keyevents_late=keyevents/'NativeKeyStoreEvents.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',
      '--globalize-symbol=__GLOBAL__sub_I_NativeKeyStoreEvents.cpp',
@@ -278,7 +278,7 @@ run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDispla
      *([gpupower_obj] if gpupower_obj else []),*touch_objs])
 sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          ROOT/'drivers/NativeMobileDisplay/NativeLegacyRequest.h',source,hid_source,keystore_source,process_source,trace_source,ROOT/'kits/uke/BootUiTraceCore.h',ROOT/'kits/uke/BootUiTraceDetails.h',
-         ROOT/'drivers/NativeHidInput/NativeHidInput.cpp',ROOT/'scripts/build-native-hid-input.py',
+         ROOT/'drivers/NativeHidInput/NativeHidInput.cpp',ROOT/'scripts/build-sheng-hid-input.py',
          ROOT/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp',touch_cpp,cpufreq_cpp,ROOT/'kits/uke/TouchBoard.h',stub_source,
          ROOT/'drivers/NativeGeniSpi/GeniSpi.c',ROOT/'drivers/NativeGeniSpi/GeniSpi.h',
          ROOT/'drivers/NativeNovatekTouch/NvtProtocol.c',
