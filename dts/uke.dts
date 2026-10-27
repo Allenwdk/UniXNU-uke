@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Xiaomi Pad 7 (uke, SM7675): board memory, CPUs and the hand-off nodes the
+// common ADT generator turns into the Apple device tree. Shared controllers
+// come from the SoC layer. Values follow the validated make-uke-adt.py output
+// and the stock uke vendor_boot device tree.
+/dts-v1/;
+/include/ "sm7675.dtsi"
+
+/ {
+    // The generator prepends the OS identity's compatible (J120AP); these stay
+    // matchable after it.
+    compatible = "xiaomi,uke", "qcom,sm7675";
+    model = "Xiaomi Pad 7";
+    #address-cells = <2>;
+    #size-cells = <2>;
+
+    // The high DRAM window the kernel owns: base 0x8C0000000, 9 GiB. One
+    // contiguous range: the ADT hand-off requires it.
+    memory@8c0000000 {
+        device_type = "memory";
+        reg = <0x00000008 0xC0000000 0x00000002 0x40000000>;
+    };
+
+    cpus {
+        #address-cells = <2>;
+        #size-cells = <0>;
+        timebase-frequency = <19200000>;
+        // Eight Kryo cores at Affinity 0..7. The kernel's CPU topology reads
+        // the compatibility string of each node.
+        cpu0: cpu@0 { device_type = "cpu"; compatible = "arm,cortex-a720"; reg = <0 0>; };
+        cpu1: cpu@100 { device_type = "cpu"; compatible = "arm,cortex-a720"; reg = <0 0x100>; };
+        cpu2: cpu@200 { device_type = "cpu"; compatible = "arm,cortex-a720"; reg = <0 0x200>; };
+        cpu3: cpu@300 { device_type = "cpu"; compatible = "arm,cortex-a720"; reg = <0 0x300>; };
+        cpu4: cpu@400 { device_type = "cpu"; compatible = "arm,cortex-a720"; reg = <0 0x400>; };
+        cpu5: cpu@500 { device_type = "cpu"; compatible = "arm,cortex-a720"; reg = <0 0x500>; };
+        cpu6: cpu@600 { device_type = "cpu"; compatible = "arm,cortex-a720"; reg = <0 0x600>; };
+        cpu7: cpu@700 { device_type = "cpu"; compatible = "arm,cortex-a720"; reg = <0 0x700>; };
+    };
+
+    psci {
+        compatible = "arm,psci-1.0";
+        method = "smc";
+    };
+};

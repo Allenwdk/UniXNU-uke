@@ -328,3 +328,41 @@ props = [
   { name = "linux,initrd-start", type = "x", value = ["0x1000000"] },
   { name = "linux,initrd-end", type = "x", value = ["0x6000000"] },
 ]
+
+[device_tree]
+source = "device:dts/uke.dts"
+include_dirs = ["soc:dts"]
+
+# Board ADT overrides on top of the OS profile identity (the make-uke-adt.py
+# baseline). The panic log and the GMU pool ride as top-level nodes.
+[adt.chosen.u32]
+embedded-panic-log-size = 0x380000
+
+[adt.chosen.bytes]
+boot-manifest-hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5139ec7b580d63ca9319e218962a2236f23faca"
+
+[adt.defaults.u32]
+sleep-disabled = 1
+"kern.maxvnodes" = 0x13400
+
+[adt.product.string]
+model = "xiaomi,uke"
+
+[adt.product.u32]
+thin-bezel = 1
+
+[adt.buttons.string]
+compatible = "buttons"
+device_type = "buttons"
+
+[adt.buttons.strings]
+button-names = ["hold", "voldown", "volup"]
+
+[adt.buttons.u32]
+home-button-type = 2
+
+[adt.pram.bytes]
+reg = "000080ff000000000000380000000000"
+
+[adt.gmu-memory.bytes]
+reg = "000000c8000000000000000200000000"
