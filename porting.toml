@@ -4,7 +4,7 @@ schema_version = 1
 name = "uke"
 soc = "SM7675"
 os_profile = "ipados-17.7.11-21H461"
-summary = "Xiaomi Pad 7 (SM7675/cliffs) port: format-2 repository migration verified by a from-scratch kernel build; the bring-up runs through GPU mode 9, a real on-screen UI and touch scanning, with host-only migration verification on 2026-10-28."
+summary = "Xiaomi Pad 7 (SM7675/cliffs) port: format-2 repository migration verified by from-scratch kernel builds; the shared patch set is fully upstream-aligned (73 patches, four-layer chain); the bring-up runs through GPU mode 9, a real on-screen UI and touch scanning, with host-only migration verification on 2026-10-28."
 
 [[area]]
 id = "configuration"
@@ -23,8 +23,8 @@ procedure = ["./unixnu defconfig uke-gpu-userland_defconfig -D ../UniXNU-uke-for
 findings = ["The format-1 patch path never applied the shared patches from a cold tree (the board module shadowed them); the format-2 series replays the set statelessly.",
   "Catalog archive recipes equal the board's legacy builder commands; the component aliases keep the old script names working."]
 completion = ["Status resolves arch, soc, os and device layers with the intended pins; the patch order lists 68 unique patches; the output path is out/uke/ipados-17.7.11-21H461/<config>/."]
-limits = ["The five shared patches that the board series predates stay at their validated content; adopting the upstream evolutions needs a device-series rebase."]
-next_action = ["Adopt the upstream shared-patch evolutions with a rebased device series and re-run the kernel comparison."]
+limits = ["The adopted shared patches (five evolutions and seven additions) are host-verified only; their userland behavior is unproven on hardware."]
+next_action = ["Flash and run the boot ladder; watch the cryptex view, staged app copy and launch-constraint skip on first boot."]
 evidence = [
   { kind = "host", reference = "board.toml", result = "schema_version 2 resolves with 23 component specs, 37 modules and a 68-entry patch order", command = "./unixnu status --json -D ../UniXNU-uke-format2", revision = "23c2926941405e7df8097a6bca6ee8348a39c787" },
   { kind = "source", reference = "patches/xnu/series", result = "the validated patch set in application order, shared entries prefixed arch:" },
