@@ -1,0 +1,25 @@
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1163,9 +1163,21 @@
+ 	}
+ 
+ 	/* Turn off I/O tracing once we've panicked */
+ 	iotrace_disable();
+ 
++	/* Best effort: put the panic title in msgbuf and write the owner log
++	 * window now, before the machine layer halts. */
++	{
++		extern void uke_panic_flush(const char *);
++		char uke_panic_text[512];
++		va_list uke_copy;
++		va_copy(uke_copy, *panic_args);
++		vsnprintf(uke_panic_text, sizeof uke_panic_text, panic_format_str, uke_copy);
++		va_end(uke_copy);
++		uke_panic_flush(uke_panic_text);
++	}
++
+ 	/* call machine-layer panic handler */
+ 	ml_panic_trap_to_debugger(panic_format_str, panic_args, reason, ctx, panic_options_mask, panic_caller);
+ 
+ 	/* track depth of debugger/panic entry */

@@ -27,6 +27,7 @@ extern unsigned int gPanicSize;
 extern int desiredvnodes;
 extern uint64_t sane_size;
 extern void uke_crash_log_start(void);
+extern void pe_print_last_panic_again(void);
 
 #define UKE_LAST_LOG_INTERVAL_MS 500
 
@@ -337,6 +338,34 @@ uke_ufs_publish(void)
 	ukeUfsCursor -= ukeUfsCursor % UKE_UFS_RECORD_BLOCKS;
 }
 
+void
+uke_panic_flush(const char *message)
+{
+	static volatile int flushing;
+	size_t capacity = gPanicSize > sizeof(struct embedded_panic_header) ?
+	    gPanicSize - sizeof(struct embedded_panic_header) : 0;
+	const char prefix[] = "UKE PANIC: ";
+	size_t used = sizeof(prefix) - 1;
+	if (flushing || message == NULL || gPanicBase == 0 || capacity <= used) {
+		return;
+	}
+	flushing = 1;
+	size_t length = strlen(message);
+	if (length > capacity - used) {
+		length = capacity - used;
+	}
+	struct embedded_panic_header *header = (struct embedded_panic_header *)gPanicBase;
+	memset((void *)gPanicBase, 0, gPanicSize);
+	header->eph_magic = EMBEDDED_PANIC_MAGIC;
+	header->eph_version = EMBEDDED_PANIC_HEADER_CURRENT_VERSION;
+	header->eph_panic_log_offset = (uint32_t)sizeof(struct embedded_panic_header);
+	header->eph_panic_log_len = (uint32_t)(used + length);
+	memcpy((void *)(gPanicBase + sizeof(struct embedded_panic_header)), prefix, used);
+	memcpy((void *)(gPanicBase + sizeof(struct embedded_panic_header) + used), message, length);
+	__asm__ volatile("dsb sy" ::: "memory");
+	flushing = 0;
+}
+
 static void
 uke_last_log_writer(void *arg, wait_result_t result)
 {
@@ -350,6 +379,11 @@ uke_last_log_writer(void *arg, wait_result_t result)
 		if (tick == 240) {
 			IOLog("UkeLastLog: vnodes desired=%d sane=%llu\n",
 			    desiredvnodes, (unsigned long long)sane_size);
+		}
+		if (tick == 4) {
+			/* Now that kprintf output reaches msgbuf, repeat the previous
+			 * boot's panic text so it lands in the userdata window. */
+			pe_print_last_panic_again();
 		}
 		uke_last_log_write();
 		// The userdata copy is paced separately: the 32 MiB window only holds

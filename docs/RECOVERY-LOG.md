@@ -119,7 +119,8 @@ for i in range(len(a) // 16384):
 - addon2 修复了首版补丁的 scratch 冲突：bindfs 挂载参数原先在 `scratch+0x400/+0x600`，会覆盖 cache 阶段留给 launchd 的环境串/向量（+0x400/+0x600，向量 +0x500），init exec 会把 `/private...` 当 envp；现在两处挂载都用 `+0x800`（mkdir 仍 +0xc00）。addon3 又修复了内核 zlib 的分配器：本内核以 `KERNEL` 编译、强制 `NO_ZCFUNCS`，`inflateInit` 不装默认 `zalloc/zfree`，旧 blob 补丁会在首启 `native_owner_data_prepare` 里空指针调用；addon3 自带 `kalloc_data`/`kfree_data` 分配器。addon4 另把 GPU7/GPU8 宽行（插件 R/T）变更写入日志。旧 addon1–addon3 镜像不要再刷。
 - 探针镜像（tag `addon5p`）：blob 不含 `NativeAdrenoMetal.publish`，插件只跑 stage-1 用户态测试并返回 nil，软件渲染保持不变。建议先刷 `vendor_boot_uke_addon5_probe.img` 验证 `UKE GPU addon:`、`M a5.0/5.0`、`o>0`、`K6…` 与 daemon，通过后再刷发布版 `vendor_boot_uke_addon5.img`，看 `K68xx`/`R`/`T` 与 backboardd 的原生设备。
 - 若 `M a5.0`、`o>0`、`K68xx` 表明原生设备已注册但画面黑/停留旧帧，换 `vendor_boot_uke_addon5_fbgpu.img`（tag `addon5f`，`sheng-fb-gpu=1`：帧交给插件的 scanout client 做 GPU 拷贝，offer 被拒时自动回退 CPU 拷贝）。
-- addon5 的 clients 名单补上 `WidgetRenderer_Default`（驱动 int-196/200：缺它时小组件白块），与 `iconservicesagent`、`PosterBoard` 一并允许；三个共享 GPU 窗口之外的进程得到 busy 并回退软件渲染。
+- addon5 的 clients 名单补上 `WidgetRenderer_Default`（驱动 int-196/200：缺它时小组块白块），与 `iconservicesagent`、`PosterBoard` 一并允许；三个共享 GPU 窗口之外的进程得到 busy 并回退软件渲染。
+- panic 捕获（addon6fix）：`panic()` 现在把 `UKE PANIC: <标题>` 写进 PRAM（panic 上下文里 UFS 写不可用），下一次启动由 UkeLastLog 在 tick 4 打进 msgbuf→userdata；抓取时 grep `UKE PANIC:`。addon6fix 镜像（kernel `ab7bfafa…`/payload `fc969bfb…`/vendor_boot `81b19cdc…`，995 B）已构建校验，未刷。
 - 日志行号：屏幕第 5/6/7 行在 decode 出的日志里分别是 `UKE GPU2:`/`UKE GPU3:`/`UKE GPU4:`（`setRow` 打印 slot-3）；宽行是 `UKE GPU7:`（`R` 报告）与 `UKE GPU8:`（`T`/`W`）。取证：`grep -aE "UKE GPU addon:|UKE GPU[0-9]+: (M|K|S|R|T|W)|UKE: display surface|UKE: surface mapping|UKeCrash:" boot.log`。
 - 刷完 addon5 后直接跑 `scripts/check-gpu-addon-boot.py <log>`：它把上面这些判据一次跑完（`--mode probe` 要求探针的 `K` 行非空；`--mode stable` 另外拒绝 68f1/68f2/68f3）。
 

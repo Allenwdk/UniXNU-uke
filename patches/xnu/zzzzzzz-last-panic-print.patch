@@ -46,7 +46,7 @@ index f3532cc..8176034 100644
  	/* Check if a shared memory console is running in the panic buffer */
  	if (panic_info->eph_magic == 'SHMC') {
  		panic_console_available = TRUE;
-@@ -197,6 +214,15 @@ check_for_panic_log(void)
+@@ -197,6 +214,21 @@ check_for_panic_log(void)
  	bzero((void *)gPanicBase, gPanicSize);
  }
  
@@ -57,6 +57,12 @@ index f3532cc..8176034 100644
 +	    (void *)gPanicBase, gPanicSize, last_panic_text_valid ? 1 : 0,
 +	    last_panic_text_valid ? last_panic_text : "(no previous log captured)");
 +	last_panic_text_valid = FALSE;
++}
++
++void
++pe_print_last_panic_again(void)
++{
++	printf("PREVIOUS XNU LOG (msgbuf):\n%s\n", last_panic_text);
 +}
 +
  int

@@ -675,6 +675,10 @@ static void native_legacy_default_surface_state(IOService *display,unsigned mode
     uint64_t tempDescriptorBytes=0,tempRegionBytes=0;
     if(tempDescriptor) tempDescriptorBytes=reinterpret_cast<IOMemoryDescriptor *>(tempDescriptor)->getLength();
     if(tempRegion) tempRegionBytes=reinterpret_cast<IOMemoryDescriptor *>(tempRegion)->getLength();
+    // The adopted surface outlives the legacy display's stop: hold its memory descriptors so the compositor's
+    // user mapping never points at freed pages (pmap_assert_free at the boot-log -> UI hand-off).
+    if(tempRegion) reinterpret_cast<OSObject *>(tempRegion)->retain();
+    if(tempDescriptor) reinterpret_cast<OSObject *>(tempDescriptor)->retain();
     IOLog("UKE: display surface root=%p gate=%p wl=%p surface=%p temp=%p region=%p flag=%u dims=%ux%u mode=%08x/%u/%u sid=%u mem=%p desc=%p descbytes=%llu regionbytes=%llu debugger=%u\n",
         root,gate,workloop,surface,temp,region,(unsigned)flag,(unsigned)width,(unsigned)height,
         (unsigned)format,(unsigned)planes,(unsigned)bpp,(unsigned)sid,tempRegion,tempDescriptor,
@@ -794,6 +798,10 @@ void native_legacy_display_late_probe(void) {
                             memcpy(fb+0x1708,&bpp,sizeof(bpp));
                             fb[0x1748]=0;
                             if(region) {
+                                // The original display's stop clears +0x1618 and drops its region reference when the
+                                // UI takes over, while the compositor still maps the surface built over this region:
+                                // keep our own reference so those pages are never freed under the mapping.
+                                region->retain();
                                 memcpy(fb+0x17c0,&region,sizeof(region));
                                 fb[0x1780]|=1;
                                 IOLog("UKE: default surface region=%p bytes=%llu\n",

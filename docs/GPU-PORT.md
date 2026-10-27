@@ -671,6 +671,18 @@ the mount switch.
   has a job in flight at `setScope` gets `kIOReturnBusy`; both leave the plugin
   at `device = nil` (marker 0x68f2) with the software renderer kept. The
   `adrenoprobed` one-shot test also occupies a slot while it runs.
+- Boot-log→UI hand-off panic (2026-10-27, addon6fix): the panic fires exactly
+  when the text console should hand over to the graphical UI (80–236 s,
+  deterministic in the transition but not the time). The original
+  `IOMobileFramebufferLegacy.stop` clears `+0x1618` and releases the surface at
+  that moment; the surface is the temp surface built over the 32 MiB
+  `IOBufferMemoryDescriptor` seeded at `+0x17c0`, and the compositor still holds
+  user PTEs over those pages → `pmap_assert_free`. The fix retains the region at
+  creation and the temp surface's `+0x28`/`+0x30` descriptors when it is adopted
+  (deliberately boot-lifetime), so the mapped pages are never returned to the
+  VM. `panic()` now also writes the panic title into pram (UFS writes are
+  unusable in panic context); the next boot's UkeLastLog prints it into the
+  userdata window at tick 4.
 - zlib allocator fix (addon3): this kernel builds zlib with `KERNEL`, which
   defines `NO_ZCFUNCS`, so `inflateInit` installs no default allocator and the
   first `ZALLOC` calls a NULL function pointer — the addon2 image would panic in
