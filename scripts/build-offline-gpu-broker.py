@@ -13,7 +13,7 @@ def run(cmd,**kwargs):return subprocess.check_output([str(x) for x in cmd],timeo
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeVirtioConsole'],text=True),end='')
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeOfflineGPU'],text=True),end='')
-llvm=Path(run(['brew','--prefix','llvm'],text=True).strip())/'bin';obj=OUT/'NativeOfflineGPU.o';late=OUT/'NativeOfflineGPU.late.o'
+llvm=next((p for p in (Path(__import__('os').environ.get('UNIXNU_TOOLCHAIN','/opt/unixnu-linux'))/'llvm/bin',Path('/usr/local/bin'),Path('/usr/bin')) if (p/'llvm-objcopy').is_file()),None) or Path(run(['brew','--prefix','llvm'],text=True).strip())/'bin';obj=OUT/'NativeOfflineGPU.o';late=OUT/'NativeOfflineGPU.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeOfflineGPU.cpp',obj,late])
 sys.path.insert(0,str(ROOT/'kits/NativePrelink'))
 from native_prelink import macho

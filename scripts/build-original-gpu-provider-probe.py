@@ -45,7 +45,7 @@ for i in [84,*plan['pure_virtual_slots']]:
  elif words[15]!=0x52800000|(i<<5) or words[16]!=0x910003e1 or words[17]!=0x94000000 or words[18]!=0xd4200020:raise SystemExit('Actual naked frame/slot/helper/trap encoding differs: '+str(i))
 asm=OUT/'original-bindings.S';asm.write_text(''.join(f'.globl {name}\n.set {name}, {address:#x}\n' for name,address in sorted(bindings.items())))
 sdk=run(['xcrun','--sdk','iphoneos','--show-sdk-path'],text=True).strip();run(['xcrun','clang','-target','arm64-apple-ios17.0','-isysroot',sdk,'-c',asm,'-o',OUT/'original-bindings.o'])
-llvm=Path(run(['brew','--prefix','llvm'],text=True).strip())/'bin';late=OUT/'NativeIOGPUProviderProbe.late.o';run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeIOGPUProviderProbe.cpp',obj,late])
+llvm=next((p for p in (Path(__import__('os').environ.get('UNIXNU_TOOLCHAIN','/opt/unixnu-linux'))/'llvm/bin',Path('/usr/local/bin'),Path('/usr/bin')) if (p/'llvm-objcopy').is_file()),None) or Path(run(['brew','--prefix','llvm'],text=True).strip())/'bin';late=OUT/'NativeIOGPUProviderProbe.late.o';run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeIOGPUProviderProbe.cpp',obj,late])
 def code(p):
  b=p.read_bytes();s=next(s for g in macho(b)['segments'] for s in g['sections'] if s['name']=='__text');return b[s['fileoff']:s['fileoff']+s['size']]
 if code(obj)!=code(late):raise SystemExit('Only own initializer registration may change')

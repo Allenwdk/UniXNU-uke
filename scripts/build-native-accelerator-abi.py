@@ -30,7 +30,7 @@ entries=[relocations.get(vtable+16+i*8) for i in range(168)]
 if not all(entries) or vtable+16+168*8 in relocations or [i for i,n in enumerate(entries) if 'NativeOfflineAccelerator' in n]!=[0,1,7]:raise SystemExit('Exact 168-entry own table may override only destructor/metaclass entries')
 asm=OUT/'original-bindings.S';asm.write_text(''.join(f'.globl {n}\n.set {n}, {a:#x}\n' for n,a in sorted(bindings.items())))
 sdk=run(['xcrun','--sdk','iphoneos','--show-sdk-path'],text=True).strip();run(['xcrun','clang','-target','arm64-apple-ios17.0','-isysroot',sdk,'-c',asm,'-o',OUT/'original-bindings.o'])
-llvm=Path(run(['brew','--prefix','llvm'],text=True).strip())/'bin';late=OUT/'NativeOfflineAccelerator.late.o'
+llvm=next((p for p in (Path(__import__('os').environ.get('UNIXNU_TOOLCHAIN','/opt/unixnu-linux'))/'llvm/bin',Path('/usr/local/bin'),Path('/usr/bin')) if (p/'llvm-objcopy').is_file()),None) or Path(run(['brew','--prefix','llvm'],text=True).strip())/'bin';late=OUT/'NativeOfflineAccelerator.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeOfflineAccelerator.cpp',obj,late])
 def code(p):
  b=p.read_bytes();s=next(s for g in macho(b)['segments'] for s in g['sections'] if s['name']=='__text');return b[s['fileoff']:s['fileoff']+s['size']]

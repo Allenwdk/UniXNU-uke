@@ -68,7 +68,7 @@ require(undefined==set(bindings),'No unqualified original-family imports')
 asm=OUT/'original-bindings.S';asm.write_text(''.join(f'.globl {n}\n.set {n}, {v:#x}\n' for n,v in bindings.items()))
 sdk=run(['xcrun','--sdk','iphoneos','--show-sdk-path'],text=True).strip()
 run(['xcrun','clang','-target','arm64-apple-ios17.0','-isysroot',sdk,'-Werror','-c',asm,'-o',OUT/'original-bindings.o'])
-llvm=Path(run(['brew','--prefix','llvm'],text=True).strip())/'bin'
+llvm=next((p for p in (Path(__import__('os').environ.get('UNIXNU_TOOLCHAIN','/opt/unixnu-linux'))/'llvm/bin',Path('/usr/local/bin'),Path('/usr/bin')) if (p/'llvm-objcopy').is_file()),None) or Path(run(['brew','--prefix','llvm'],text=True).strip())/'bin'
 late=OUT/'NativeMobileDisplay.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',
      '--globalize-symbol=__GLOBAL__sub_I_NativeMobileDisplay.cpp',obj,late])
