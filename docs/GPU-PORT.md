@@ -823,3 +823,96 @@ the recorded runtime-observation hash when the QEMU checkpoint was pruned).
 Next: boot the image, read `UKE GPU addon:` and the heartbeat, then decide
 whether the CA SIGBUS/About problems move with the render server's Metal device
 or remain the separate display-surface/VM issues.
+
+## 2026-10-27 device state: the addon is up, the plugin loop is the open bug
+
+The addon pipeline now works end to end on hardware: the blob stages into
+`/private/var/ngpu`, both bindfs views report `a5.0/5.0`, `AGXAccelerator` is
+published and registered, `AGXDeviceUserClient` is opened by the render server
+(`o4/0/2` in the heartbeat), and Turnip's raw user test passes. What remains is
+entirely on the Metal frontend side.
+
+### The blocker: CA pipelines fail to compile, and the failure loops
+
+Every render attempt in the stable image ends with the same pair of plugin
+markers in the `K` ring (see `drivers/NativeMetal/CacheExport.h:303` for
+`0x69f3`):
+
+- `0x6a3c` — a render-server framebuffer diagnostic emitted per attempt;
+- `0x69f3` — the cache export was not sent this round and is retried on the
+  next change or period. The ring alternates `6a3c 69f3 6a3c 69f3 …` for the
+  whole boot.
+
+The accompanying `UKE GPU8` row names the validation failure:
+`Compile(InvalidDescriptor(ColorAttachment { … }))` (sometimes
+`VertexAttribute { attribute: 0 }`). metal2vulkan's validation refuses the
+render-pipeline descriptor before any GPU work; the bridge turns that into a
+failed compile, CA retries, and the retry loop is what keeps allocating.
+
+The consequence is visible in `UKE MEM`: in the last 10 s before the panic,
+free pages went from 13754 to 2471 (4 KiB pages, ~54 MiB → ~10 MiB) with **no
+kernel error line** in between. Under that pressure the VM reclaim path hit a
+page that still had a live user PTE and asserted in `pmap_assert_free`.
+
+### What the panic proves (and what it does not)
+
+`addon8r` printed the first real values (3x font, `%#llx` fixed):
+
+```
+pmap_assert_free: Found at least one mapping to 0x9a5231000.
+First PTEP (0xfffffff0a3963868) is a User CPU mapping
+(pmap: 0xfffffff812c1b048)
+TCR=0x00000022a51a251a SCTLR=0x000000003454599d
+pages=0x0000000000126232 free=0x00000000000009a7
+```
+
+So: a live user pmap still maps the page while the VM frees it, during reclaim,
+at ~80–236 s (i.e. when the compositor starts using Metal), not randomly. It
+does **not** name the owning process or the VA, but it does not need to: the
+only code in this stack that maps user pages into a task and then frees the
+backing memory is the GPU client path (`NativeAdrenoUserClient::cpuMap` token →
+`clientMemoryForType` mapping, and `importBo` → `importTask`), together with the
+IOSurface sharing it sits on. The two previous hypotheses (keep the seeded
+display region alive: addon6fix; gate the scanout memory: addon7) both failed
+to move the panic, so the display hand-off is not the owner.
+
+### Addon generations and what each one settled
+
+| tag | change | result |
+|---|---|---|
+| addon5 | plugin + trust + blob staging | addon stages, both views 5.0/5.0, 40 opens, Turnip smoke passes; stable still panics |
+| addon6fix | retain the seeded 32 MiB region and the temp surface descriptors | panic unchanged |
+| addon7 | `sheng-fb-gpu=0` refuses the scanout memory type | panic unchanged; GPU7 `R` still reports P2 |
+| addon8/8p | panic screen `%#` flag + normal-size font, full text staged to pram | first true `pa/PTEP/pmap` values |
+| addon8r | 3x font restored; staging kept | panic text readable; free-page collapse timed |
+| addon9 | `pmap_assert_free` names the owning pid/procname, the PTE, the mapped VA and the caller | built, host-checked, **not yet flashed** |
+
+`addon8q` (1x font) is superseded by `addon8r`; `addon8r` is the image whose
+panic values are quoted above.
+
+### Next fix, in this order
+
+1. **Stop the retry loop and fix the descriptor translation.** The cache
+   export must not be retried every frame after a hard failure, and the
+   `ColorAttachment`/`VertexAttribute` descriptors CA actually uses must be
+   accepted. This is the primary GPU defect; it is also the memory source.
+2. **Make the GPU client's mapping lifetime strict.** A BO that userland has
+   mapped through `clientMemoryForType` must not be released while that mapping
+   exists: hold an `IOMemoryMap` per mapping (or revoke the mapping) on
+   `freeBo`/`close`, and do not clear `mapping_leases` in `releaseAll` before
+   the mappings are gone. `importBo` uses `kIOMemoryPersistent` so the owner may
+   drop its range first; that is correct, but the *mapping* accounting has to
+   match.
+3. Only if both still end in the same assert is the owner/VA from addon9
+   needed; it is already built for that case.
+
+### Current artifacts
+
+- addon9: kernel `ca6b220d…`, payload `9e814016…` (tag `addon9`, 992 B),
+  `vendor_boot_uke_addon9.img` `1d8dce5a…`; `check-gpu-addon-host.py` passes
+  every check. Not flashed.
+- Panic screen: 3x glyphs (`SCALE 3`), `%#llx` supported, text up to ~1 KiB
+  staged to pram at panic time, `UkeLastLog` restores it as `UKE PANIC: …` on
+  the next boot (see `docs/RECOVERY-LOG.md`).
+- host-side disk housekeeping: screenshots moved to `panic-shots/`, DT dumps to
+  `dts-reference/`; `/tmp` is no longer used for build intermediates.
