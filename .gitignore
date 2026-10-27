@@ -43,3 +43,6 @@ __pycache__/
 *.key
 .env
 local.toml
+
+# Local build inputs (unixnu.local.toml lives in the UniXNU checkout).
+local.toml

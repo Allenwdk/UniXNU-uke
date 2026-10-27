@@ -1,0 +1,5 @@
+# Copy to local.toml (ignored by Git) to point whole categories at local directories. Each
+# subdirectory is one module. The command line (--local, --local-drivers, ...) takes precedence.
+[local]
+drivers = "~/Code/dev/drivers"
+kits = "~/Code/dev/kits"

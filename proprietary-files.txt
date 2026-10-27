@@ -1,0 +1,13 @@
+# uke proprietary firmware inputs. Format: path|sha256. Prefix a path with - for
+# an optional file. Files land in .cache/firmware/ (scripts/extract-files.py).
+# No @fetch base: these come from the device partitions (/vendor/firmware and
+# /odm/firmware for the GPU triplet) or from the recorded build inputs; the GPU
+# triplet is also pinned by board.toml [gpu.firmware_pins] and seeded in CI from
+# the UKE_GPU_FIRMWARE_B64_* secrets.
+uke-gpu/gen71100_gmu.bin|435c7bac9a328b8a100df930b84b65b4d579e42be44785d0e60e3729291bb864
+uke-gpu/gen71100_sqe.fw|b6df660d109504dbea5a266910b037a33d893a11c6de52f524a5fd112008c401
+uke-gpu/gen71100_zap.mbn|1294992888e8c7c7fcd8a6d0a672cc666eff3c95e666ce5840db7e03edcc500d
+novatek/novatek_nt36532_o82_fw_csot.bin|a4f949fb89c7eaad9da85a5885cd2dcc1fffbf08bc1e7ffe9f0bb97c1769b310
+novatek/novatek_nt36532_o82_fw_tm.bin|12ce2693b965a35e3469984fd95afebb4c0a740ca908159b0a5e6bdad5968619
+target-volumes/static-trustcache.bin|da88460e6e513438d5307e5c526f76497a74754476a24da29f239f0c90120fc2
+-uke/uefiplat.cfg|-

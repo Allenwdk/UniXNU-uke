@@ -1,0 +1,17 @@
+name: porting-record
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: device
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          path: unixnu
+      - run: python3 unixnu/scripts/porting-record.py check --device device

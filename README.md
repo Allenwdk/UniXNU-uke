@@ -2,6 +2,10 @@
 
 Device repository for the Xiaomi Pad 7 / POCO Pad X1 (`uke`, SM7675).
 
+Format 2: the board pins the sm7675 SoC layer in feeds.toml and the
+`ipados-17.7.11-21H461` OS profile; see `porting.toml` for the recorded
+state of each area and `AGENTS.md` for the editing rules.
+
 Stages 1–5 are reached: the UEFI firmware, the UniXNU menu, the payload,
 DarwinBoot and the XNU kernel entry (green bar) work on the stock ABL. After
 the green bar XNU waits for the root device; `SecurityLock ...
