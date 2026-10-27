@@ -38,11 +38,12 @@ MANIFEST = Path('.cache/sources/xnu-header-restore.json')
 
 
 def find_feed():
-    """The xnu feed checkout: out/feeds/xnu-<hash>, two levels above the tree."""
+    """The xnu feed checkout: out/feeds/xnu-<hash>, above the tree at any nesting depth."""
     if not Path('.cache/xnu-work').is_dir():
         sys.exit('Create the local XNU work source before preparing headers')
-    for candidate in ('../../feeds', 'out/feeds', 'feeds'):
-        feeds = sorted(Path(candidate).glob('xnu-*'))
+    here = Path.cwd()
+    for base in (here, *here.parents):
+        feeds = sorted((base / 'feeds').glob('xnu-*'))
         if feeds:
             return feeds[0]
     sys.exit('no xnu feed checkout found')
