@@ -59,7 +59,7 @@ while i<len(args):
  i+=1
 cmd+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unnecessary-virtual-specifier','-Wno-c99-designator','-Wno-reorder-init-list','-Wno-deprecated-enum-enum-conversion','-I',str(ROOT/'.cache/xnu-work/osfmk')];run(cmd,cwd=record['directory'])
 archive=OUT/'libNativeIOGPUProviderProbe.late.a';archive.unlink(missing_ok=True);run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'OriginalGPUProviderProbe.o'])
-sources=[source,*(ROOT/'drivers/NativeMetal'/name for name in ('OriginalGPUProviderABI.h','OriginalAcceleratorABI.h','NativeIOGPUProviderProbe.cpp'))]
+sources=[source,*(ROOT/'drivers/AdrenoMetal'/name for name in ('OriginalGPUProviderABI.h','OriginalAcceleratorABI.h','NativeIOGPUProviderProbe.cpp'))]
 (OUT/'build-report.json').write_text(json.dumps(dict(source_sha256={str(p.relative_to(ROOT)):sha(p) for p in sources},archive_sha256=sha(archive),abi_sha256=sha(abi),bindings={name:hex(va) for name,va in bindings.items()},virtual_entries=215,own_entries=owned,vtable_source_symbols=entries,pure_source_signatures_qualified=False,original_methods_modified=False,normal_publication_blocked=True,runtime_qualified=False,original_desktop=False,adreno_execution=False),indent=2)+'\n')
 print('PASS: exact original 215-slot inherited entry bindings and 736-byte storage; all ten required hooks and registration save actual registers and NEVER return success')
 print('Unpublished introspection only: opaque tail source signatures, successful original start, normal device/client authorization and GPU execution remain unqualified')

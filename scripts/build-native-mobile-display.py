@@ -93,9 +93,9 @@ cmd+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unnecessary-virt
 run(cmd,cwd=r['directory'])
 archive=OUT/'libNativeMobileDisplay.late.a';archive.unlink(missing_ok=True)
 run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'MobileDisplayProviderProbe.o'])
-sources=[ROOT/'drivers/NativeMobileDisplay/NativeMobileDisplay.cpp',ROOT/'drivers/NativeMobileDisplay/OriginalMobileFramebufferABI.h',source]
+sources=[ROOT/'drivers/GopFramebuffer/NativeMobileDisplay.cpp',ROOT/'drivers/GopFramebuffer/OriginalMobileFramebufferABI.h',source]
 (OUT/'build-report.json').write_text(json.dumps(dict(
-    kit_revision=run(['git','-C',ROOT/'drivers/NativeMobileDisplay','rev-parse','HEAD'],text=True).strip(),
+    kit_revision=run(['git','-C',ROOT/'drivers/GopFramebuffer','rev-parse','HEAD'],text=True).strip(),
     source_sha256={str(p.relative_to(ROOT)):sha(p) for p in sources},
     original_parent_candidate_sha256=sha(candidate),compiled_object_sha256=sha(obj),
     late_object_sha256=sha(late),archive_sha256=sha(archive),

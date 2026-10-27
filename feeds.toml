@@ -22,12 +22,14 @@ name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
 commit = "f1a2aeed0efa50dbb9f4db279f2d157114eafddc"
+local = "../UniXNU/drivers/NativeAdreno"
 
 [[source]]
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
 commit = "33fe049e3507c94e7f36e804818a067187b1ccb1"
+local = "../UniXNU/drivers/NativeMobileDisplay"
 
 [[source]]
 name = "AdrenoMetal"

@@ -17,9 +17,9 @@
 #include <kern/clock.h>
 #include <pexpert/pexpert.h>
 extern "C" {
-#include "../../drivers/NativeGeniSpi/GeniSpi.h"
-#include "../../drivers/NativeNovatekTouch/NvtProtocol.h"
-#include "../../drivers/NativeNovatekTouch/NvtTouchCore.h"
+#include "../../drivers/QcomGeniSpi/GeniSpi.h"
+#include "../../drivers/ShengNovatekTouch/NvtProtocol.h"
+#include "../../drivers/ShengNovatekTouch/NvtTouchCore.h"
 #include "TouchBoard.h"
 #include "SmmuBypass.h"
 extern const uint8_t native_touch_firmware[] __attribute__((weak_import));
