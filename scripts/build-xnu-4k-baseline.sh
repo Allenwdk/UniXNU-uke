@@ -149,9 +149,13 @@ if [ ! -d refer/libplatform/.git ]; then
 fi
 export KERNEL_SDKROOT=$ROOT/.cache/fakeroot
 mkdir -p "$KERNEL_SDKROOT/usr/local/include/kernel" "$ROOT/build/xnu/obj/EXPORT_HDRS/libsa"
-ditto refer/libplatform/include "$KERNEL_SDKROOT/usr/local/include"
-ditto refer/libplatform/private "$KERNEL_SDKROOT/usr/local/include"
-ditto refer/libplatform/private/platform "$KERNEL_SDKROOT/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform"
+copy_tree() {
+  mkdir -p "$2"
+  cp -R "$1/." "$2/"
+}
+copy_tree refer/libplatform/include "$KERNEL_SDKROOT/usr/local/include"
+copy_tree refer/libplatform/private "$KERNEL_SDKROOT/usr/local/include"
+copy_tree refer/libplatform/private/platform "$KERNEL_SDKROOT/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform"
 if [ ! -d refer/libdispatch/.git ]; then
   git clone --depth 1 --branch "$LIBDISPATCH_TAG" https://github.com/apple-oss-distributions/libdispatch.git refer/libdispatch
 fi
