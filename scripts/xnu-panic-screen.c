@@ -9,7 +9,7 @@
  * panic(fmt, ...) is variadic and the Darwin arm64 ABI passes every variadic
  * argument in an 8-byte stack slot, starting at the stack pointer on entry.
  * A small printf walks the format string over those slots (%s %x %p, with
- * 0-flag, width, precision and l/ll/z). Kernel strings are checked with an
+ * # flag, 0-flag, width, precision and l/ll/z). Kernel strings are checked with an
  * active hardware translation query before reading each byte;
  * unmapped/device/user pointers print as pointers. VINFO names that mapping prefix.
  */
@@ -22,7 +22,9 @@ struct vc_info {
   u64 v_baseaddr;
 };
 
-#define SCALE   1
+/* 3x cells: at 1x the panic text is unreadable on this panel. The full text does
+ * not have to fit on screen -- it is staged to the pram and lands in userdata. */
+#define SCALE   3
 
 extern const u64 gFont[];
 

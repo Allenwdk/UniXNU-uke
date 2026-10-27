@@ -18,6 +18,10 @@
    fastboot reboot recovery
    ```
 
+   > 读完日志后 `boot_a` 已经是原厂 Android 镜像。回到 UniXNU 时**必须连 boot 一起刷**
+   > `fastboot flash boot_a /home/allenwdk/UniXNU/uke-port/data/boot_uke_usbdal2.img`；
+   > 只换 vendor_boot 会直接起 Android（addon8q 首轮就踩了这个）。
+
 2. 最多等 10 s，然后重启 adb server（TWRP 的 adb 经常这时才枚举）：
 
    ```bash
@@ -60,8 +64,9 @@
 
 `--panic-screen` 会把 `panic()` 和公共 panic 漏斗都重定向到 panic 屏，XNU 自己的
 `SavePanicInfo` 因此不会跑，pram 里也没有标准 panic log。带 addon8q 起的实现是：panic 屏
-先用正常字号（`SCALE 1`，并支持 `%#llx`）画完，把完整消息 + `TCR/SCTLR/pages/free`（最多约
-1 KiB）收进栈缓冲，置好首-panic 标记后调用内核里的 `uke_panic_flush`，写成
+先画屏（3 倍字，超出一屏会被截断，但 `%#llx` 已能打出真实地址），把**完整**消息 +
+`TCR/SCTLR/pages/free`（最多约 1 KiB）收进栈缓冲，置好首-panic 标记后调用内核里的
+`uke_panic_flush`，写成
 `[SAV1 0x31564153][len][text]`；`UkeLastLog` 的两个 pram 快照在此之后不再覆盖该块。
 
 下一次启动时写者线程开头会把它取出来，以 `UKE PANIC: …` 打进 msgbuf，并随下一条 16 KiB 记录
