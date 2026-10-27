@@ -49,6 +49,9 @@ struct uke_ramoops_buffer {
 
 static uint32_t uke_ramoops_last_write;
 static int uke_ramoops_initialized;
+/* Set by the panic screen before it stages its text at gPanicBase; the two pram
+ * writers below must leave that block alone once it is set. */
+static volatile int ukePanicStaged;
 
 static void
 uke_ramoops_append(struct uke_ramoops_buffer *buffer, size_t capacity,
@@ -99,7 +102,8 @@ uke_ramoops_write(struct msgbuf *m)
 	size_t capacity, size, start, first, tail;
 	int write;
 
-	if (gPanicBase == 0 || gPanicSize < UKE_RAMOOPS_OFFSET + UKE_RAMOOPS_SIZE) {
+	if (gPanicBase == 0 || ukePanicStaged ||
+	    gPanicSize < UKE_RAMOOPS_OFFSET + UKE_RAMOOPS_SIZE) {
 		return;
 	}
 	buffer = (struct uke_ramoops_buffer *)(uintptr_t)(gPanicBase + UKE_RAMOOPS_OFFSET);
@@ -164,7 +168,8 @@ uke_last_log_write(void)
 	size_t size, cap, start, first;
 	int write;
 
-	if (gPanicBase == 0 || gPanicSize <= sizeof(struct embedded_panic_header) + 1) {
+	if (gPanicBase == 0 || ukePanicStaged ||
+	    gPanicSize <= sizeof(struct embedded_panic_header) + 1) {
 		return;
 	}
 	if (m == NULL || m->msg_bufc == NULL || m->msg_size <= 1 || m->msg_magic != MSG_MAGIC) {
@@ -338,32 +343,74 @@ uke_ufs_publish(void)
 	ukeUfsCursor -= ukeUfsCursor % UKE_UFS_RECORD_BLOCKS;
 }
 
+/* Panic-time staging in the pram: [magic][length][text]. It is only a hand-off:
+ * the next boot's writer copies the text into the userdata log window (disk). */
+#define UKE_PANIC_SAVE_MAGIC 0x31564153u
+static char ukePanicText[1024];
+static boolean_t ukePanicTextValid = FALSE;
+
+/* The writers run on other CPUs while the panic screen is parked; let a
+ * snapshot that started before the staging flag retire before overwriting
+ * the block it is about to keep. */
+static void
+uke_panic_settle(void)
+{
+	uint64_t start, now;
+	__asm__ volatile("mrs %0, cntvct_el0" : "=r" (start));
+	do {
+		__asm__ volatile("mrs %0, cntvct_el0" : "=r" (now));
+	} while (now - start < 1000000);
+}
+
 void
 uke_panic_flush(const char *message)
 {
 	static volatile int flushing;
-	size_t capacity = gPanicSize > sizeof(struct embedded_panic_header) ?
-	    gPanicSize - sizeof(struct embedded_panic_header) : 0;
 	const char prefix[] = "UKE PANIC: ";
 	size_t used = sizeof(prefix) - 1;
-	if (flushing || message == NULL || gPanicBase == 0 || capacity <= used) {
+	if (flushing || message == NULL || gPanicBase == 0 || gPanicSize < 8 + used) {
 		return;
 	}
 	flushing = 1;
+	ukePanicStaged = 1;
+	__asm__ volatile("dsb sy" ::: "memory");
+	uke_panic_settle();
+	const size_t capacity = (size_t)gPanicSize - 8;
 	size_t length = strlen(message);
 	if (length > capacity - used) {
 		length = capacity - used;
 	}
-	struct embedded_panic_header *header = (struct embedded_panic_header *)gPanicBase;
-	memset((void *)gPanicBase, 0, gPanicSize);
-	header->eph_magic = EMBEDDED_PANIC_MAGIC;
-	header->eph_version = EMBEDDED_PANIC_HEADER_CURRENT_VERSION;
-	header->eph_panic_log_offset = (uint32_t)sizeof(struct embedded_panic_header);
-	header->eph_panic_log_len = (uint32_t)(used + length);
-	memcpy((void *)(gPanicBase + sizeof(struct embedded_panic_header)), prefix, used);
-	memcpy((void *)(gPanicBase + sizeof(struct embedded_panic_header) + used), message, length);
+	uint32_t *header = (uint32_t *)(uintptr_t)gPanicBase;
+	memcpy((char *)(header + 2), prefix, used);
+	memcpy((char *)(header + 2) + used, message, length);
+	header[1] = (uint32_t)(used + length);
+	__asm__ volatile("dsb sy" ::: "memory");
+	header[0] = UKE_PANIC_SAVE_MAGIC;
 	__asm__ volatile("dsb sy" ::: "memory");
 	flushing = 0;
+}
+
+static void
+uke_panic_restore(void)
+{
+	if (gPanicBase == 0 || gPanicSize < 8) {
+		return;
+	}
+	uint32_t *header = (uint32_t *)(uintptr_t)gPanicBase;
+	if (header[0] != UKE_PANIC_SAVE_MAGIC) {
+		return;
+	}
+	const uint32_t length = header[1];
+	if (length == 0 || (uint64_t)length > (uint64_t)gPanicSize - 8) {
+		header[0] = 0;
+		return;
+	}
+	const size_t copy = length < sizeof(ukePanicText) - 1 ? length : sizeof(ukePanicText) - 1;
+	memcpy(ukePanicText, (const char *)(header + 2), copy);
+	ukePanicText[copy] = '\0';
+	ukePanicTextValid = TRUE;
+	header[0] = 0;
+	__asm__ volatile("dsb sy" ::: "memory");
 }
 
 static void
@@ -371,6 +418,12 @@ uke_last_log_writer(void *arg, wait_result_t result)
 {
 	(void)arg;
 	(void)result;
+
+	uke_panic_restore();
+	if (ukePanicTextValid) {
+		IOLog("%s\n", ukePanicText);
+		ukePanicTextValid = FALSE;
+	}
 
 	unsigned tick = 0;
 	for (;;) {

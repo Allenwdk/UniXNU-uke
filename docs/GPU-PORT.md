@@ -773,6 +773,13 @@ python3 ../UniXNU-uke/scripts/patch-vendor-boot.py \
   --output vendor_boot_uke_addon2.img
 ```
 
+`UKE_GPU_ADDON_DIR` is not optional: a kernel built without it still links, but
+comes out 12 MiB smaller (no `GpuAddonBlob.o`), never stages the addon, and
+`check-gpu-addon-host.py --kernel` fails with "does not embed this exact blob".
+The scanout gate (addon7+) lives in the local module
+`~/.cache/unixnu-modules/NativeAdreno-gate`, so the kernel build also needs
+`--local-module driver:NativeAdreno=<that path>`.
+
 `--kernel-arg` takes one token per occurrence (quote negative flags as
 `--kernel-arg=-v`); passing the whole boot-args string as one value is rejected
 as unsupported. On this Linux host `/tmp` is a size-limited tmpfs and some tools

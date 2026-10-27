@@ -22,7 +22,7 @@ struct vc_info {
   u64 v_baseaddr;
 };
 
-#define SCALE   3
+#define SCALE   1
 
 extern const u64 gFont[];
 
@@ -31,14 +31,18 @@ extern const u64 gFont[];
 struct ctx {
   u8  *base;
   u32 rb, w, h, x, y;
-  u8  *log;   /* kernel buffer that also receives the formatted message (PANIC_TEXT), 0 = none */
-  u32 logn;
+  u8  *log;   /* buffer that also receives the formatted message, 0 = none */
+  u32 logn, logcap;
 };
 
 #ifndef PANIC_TEXT
 #define PANIC_TEXT 0UL
 #endif
+#ifndef UKE_PANIC_FLUSH
+#define UKE_PANIC_FLUSH 0UL
+#endif
 #define PANIC_TEXT_BYTES 256
+#define PANIC_SAVE_BYTES 1024
 
 __attribute__((noreturn)) static void park (void)
 {
@@ -52,7 +56,7 @@ static void put (struct ctx *g, u8 c)
   const u32 cell = 6 * SCALE, line = 14 * SCALE;
   u32 row, col, dy, dx;
 
-  if (g->log && g->logn < PANIC_TEXT_BYTES - 1 && c >= 9 && c <= 126) {
+  if (g->log && g->logcap && g->logn < g->logcap - 1 && c >= 9 && c <= 126) {
     g->log[g->logn++] = (c < 32) ? ' ' : c;
     g->log[g->logn] = 0;
   }
@@ -135,11 +139,18 @@ static void format (struct ctx *g, const char *fmt, const u64 *args)
       continue;
     }
     u32 width = 0;
-    int zero = 0, longs = 0;
+    int zero = 0, longs = 0, hash = 0;
     c = (u8)fmt[++i];
-    if (c == '0') {
-      zero = 1;
-      c = (u8)fmt[++i];
+    for (;;) {
+      if (c == '#') {
+        hash = 1;
+        c = (u8)fmt[++i];
+      } else if (c == '0') {
+        zero = 1;
+        c = (u8)fmt[++i];
+      } else {
+        break;
+      }
     }
     while (c >= '0' && c <= '9') {
       width = width * 10 + (c - '0');
@@ -188,6 +199,10 @@ static void format (struct ctx *g, const char *fmt, const u64 *args)
         put (g, ch);
       }
     } else if (c == 'x' || c == 'X') {
+      if (hash) {
+        put (g, '0');
+        put (g, 'x');
+      }
       number (g, longs ? v : (v & 0xFFFFFFFFu), 16, width, zero);
     } else if (c == 'u' || c == 'd') {
       number (g, longs ? v : (v & 0xFFFFFFFFu), 10, width, zero);
@@ -219,7 +234,9 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
 {
   volatile struct vc_info *v = (volatile struct vc_info *)VINFO;
   struct ctx g;
-  u32 row, col;
+  u32 row, col, saved;
+  u8 save[PANIC_SAVE_BYTES];
+  u8 *banner = 0;
 
   __asm__ volatile ("msr daifset, #15");
   g.base = (u8 *)v->v_baseaddr;
@@ -240,6 +257,8 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   g.y = g.h / 8;
   g.log = 0;
   g.logn = 0;
+  g.logcap = 0;
+  save[0] = 0;
   for (row = g.y; row < g.h; row++) {
     for (col = 0; col < g.w; col++) {
       *(volatile u32 *)(g.base + (u64)row * g.rb + (u64)col * 4) = 0;
@@ -249,10 +268,21 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   /* The board's live banner keeps showing this text after the next swap paints over the screen (BootProgress.c,
    * boot_progress_panic_text). The first panic's text is kept: a buffer that already holds one is left alone. */
   if (PANIC_TEXT && *(volatile u8 *)PANIC_TEXT == 0) {
-    g.log = (u8 *)PANIC_TEXT;
+    banner = (u8 *)PANIC_TEXT;
   }
+  g.log = save;
+  g.logn = 0;
+  g.logcap = sizeof(save);
   format (&g, fmt, args);
-  g.log = 0;
+  saved = g.logn;
+  if (banner) {
+    u32 n = saved < PANIC_TEXT_BYTES - 1 ? saved : PANIC_TEXT_BYTES - 1;
+    u32 i;
+    for (i = 0; i < n; i++) {
+      banner[i] = save[i];
+    }
+    banner[n] = 0;
+  }
   __asm__ volatile ("dsb sy");
   /* Sample the active CPU translation regime, without changing it. This is
    * panic-time evidence only; it does not establish early mappings or EL0 ABI. */
@@ -268,10 +298,19 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   (void)MAX_MEM;
   hex (&g, "\npages=", *(volatile const u32 *)PAGE_TOTAL);
   hex (&g, "\nfree=", *(volatile const u32 *)PAGE_FREE);
-  /* The raw argument slots are not dumped: the formatted message above already carries them (room for the PANIC_TEXT copy). */
+  g.log = 0;
+  /* The raw argument slots are not dumped: the formatted message above already carries them. */
   mark[0] = 0xC0FFEE11u;
   mark[1] = 0x5CEEDA7Au;
   __asm__ volatile ("dsb sy");
+  /* Hand the saved text to the boot-log writer's pram staging block. The marker
+   * above is already set, so a fault here parks a nested panic instead of
+   * repainting over this one. */
+#if UKE_PANIC_FLUSH
+  if (saved) {
+    ((void (*)(const char *))UKE_PANIC_FLUSH)((const char *)save);
+  }
+#endif
   park ();
 }
 

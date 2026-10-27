@@ -203,6 +203,13 @@ def assemble_c(source, va, workdir, symbols):
         if not any(base <= text and text + 256 <= base + size for base, size, _, _ in SEGMENTS):
             raise SystemExit('Invalid _boot_progress_panic_text')
         definitions.append(f'-DPANIC_TEXT={text:#x}UL')
+    # Optional: UkeLastLog's pram staging, called from the panic screen because the
+    # normal panic funnel (which used to call it) is redirected to this screen.
+    flush = symbols.get('_uke_panic_flush')
+    if flush is not None:
+        if flush % 4 or not any(base <= flush < base + size for base, size, _, _ in SEGMENTS):
+            raise SystemExit('Invalid _uke_panic_flush')
+        definitions.append(f'-DUKE_PANIC_FLUSH={flush:#x}UL')
     subprocess.run([clang, '--target=aarch64-none-elf', '-ffreestanding', '-fno-builtin', '-fno-stack-protector',
                     '-mgeneral-regs-only', '-fno-pic', '-mcmodel=tiny', '-Oz', f'-DVINFO={VINFO_VA:#x}UL',
                     *definitions, f'-I{font_dir}', '-c', source, '-o', obj], check=True)

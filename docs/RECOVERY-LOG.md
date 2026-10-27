@@ -56,6 +56,24 @@
    addon stage、两个视图（`a5.0/5.0`）、`o>0`、插件 marker 与 68f1/68f2/68f3 失败原因，自动区分
    probe/stable，并以退出码 1 表示有必须修复的项。
 
+## panic 文本（panic 屏 → pram 暂存 → 下次启动落盘）
+
+`--panic-screen` 会把 `panic()` 和公共 panic 漏斗都重定向到 panic 屏，XNU 自己的
+`SavePanicInfo` 因此不会跑，pram 里也没有标准 panic log。带 addon8q 起的实现是：panic 屏
+先用正常字号（`SCALE 1`，并支持 `%#llx`）画完，把完整消息 + `TCR/SCTLR/pages/free`（最多约
+1 KiB）收进栈缓冲，置好首-panic 标记后调用内核里的 `uke_panic_flush`，写成
+`[SAV1 0x31564153][len][text]`；`UkeLastLog` 的两个 pram 快照在此之后不再覆盖该块。
+
+下一次启动时写者线程开头会把它取出来，以 `UKE PANIC: …` 打进 msgbuf，并随下一条 16 KiB 记录
+进入 userdata。取法：panic 后**再启动一次 UniXNU**（不用进桌面），然后按上面的步骤 dump 窗口：
+
+```bash
+grep -a "UKE PANIC:" /home/allenwdk/UniXNU/boot-new.log
+```
+
+如果第二次启动在写者线程跑起来之前又 panic，文本仍留在 pram，等再下一次启动取；pram 只在
+热复位后可靠，掉电或以 panic 屏照片为准。
+
 ## 记录格式
 
 每条 16 KiB：

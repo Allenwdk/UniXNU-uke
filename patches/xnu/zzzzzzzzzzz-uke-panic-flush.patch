@@ -7,8 +7,8 @@ diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
  	/* Turn off I/O tracing once we've panicked */
  	iotrace_disable();
  
-+	/* Best effort: put the panic title in msgbuf and write the owner log
-+	 * window now, before the machine layer halts. */
++	/* Only reached when the payload leaves this funnel alone: the panic screen
++	 * redirects it and stages the text itself. Stage the title for the next boot. */
 +	{
 +		extern void uke_panic_flush(const char *);
 +		char uke_panic_text[512];
@@ -23,3 +23,15 @@ diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
  	ml_panic_trap_to_debugger(panic_format_str, panic_args, reason, ctx, panic_options_mask, panic_caller);
  
  	/* track depth of debugger/panic entry */
+diff --git a/pexpert/arm/pe_init.c b/pexpert/arm/pe_init.c
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -188,3 +188,8 @@
+ #endif
++	/* A panic-time staging block (UkeLastLog's UKE_PANIC_SAVE_MAGIC) is consumed
++	 * by the log writer: keep it instead of clearing the pram. */
++	if (((const uint32_t *)(uintptr_t)gPanicBase)[0] == 0x31564153u) {
++		return;
++	}
+ 	panic_info = (struct embedded_panic_header *)gPanicBase;
+ 
