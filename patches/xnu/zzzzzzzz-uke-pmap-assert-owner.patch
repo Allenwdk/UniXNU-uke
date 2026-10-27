@@ -1,0 +1,25 @@
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -2892,9 +2892,19 @@
+ 		pmap_t pmap = ptep_get_pmap(first_ptep);
+ 		const char *type = (pmap == kernel_pmap) ? "Kernel" : "User";
+ 
++		/* UKE: this panic never reaches a stack trace (the payload replaces the panic
++		 * funnel with the panic screen), so name the owner, the VA the PTE maps and
++		 * the freeing code path: that identifies who left the mapping behind.
++		 * pmap_pid/pmap_procname exist only under MACH_ASSERT, like this block. */
++		pt_desc_t *ptdp = ptep_get_ptd(first_ptep);
++		const vm_map_address_t mapped_va = (ptdp->va != NULL) ?
++		    ptdp->va[ptd_get_index(ptdp, first_ptep)] : (vm_map_address_t)-1;
++
+ 		panic("%s: Found at least one mapping to %#llx. First PTEP (%p) is a "
+-		    "%s CPU mapping (pmap: %p)",
+-		    __func__, (uint64_t)pa, first_ptep, type, pmap);
++		    "%s CPU mapping (pmap: %p pid %d name %s) PTE %#llx VA %#lx caller %p",
++		    __func__, (uint64_t)pa, first_ptep, type, pmap, pmap->pmap_pid,
++		    pmap->pmap_procname, (uint64_t)*first_ptep, (unsigned long)mapped_va,
++		    __builtin_return_address(0));
+ 	}
+ }
+ #endif
