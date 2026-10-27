@@ -131,7 +131,7 @@ if not args.candidate.is_file() and recorded.is_file() and component == 'NativeU
     subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror',
                     '-Wno-incompatible-sysroot', '-c', recorded,
                     '-o', out / 'original-bindings.o'], check=True)
-    archive = out / ('lib' + component + '.a')
+    archive = out / ('lib' + {'NativeUfs':'ShengUfs','NativeRamBlock':'RamBlock','NativeVirtioBlock':'VirtioMmioBlock','NativeVirtioConsole':'VirtioMmioConsole'}.get(component, component) + '.a')
     archive.unlink(missing_ok=True)
     subprocess.run(['xcrun', 'ar', 'rcs', archive, object_path, out / 'original-bindings.o'], check=True)
     print(f'PASS: {component} bound with the recorded original-kernelcache addresses')
@@ -198,7 +198,7 @@ assembly = out / 'original-bindings.S'
 assembly.write_text(''.join(f'.globl {name}\n.set {name}, {value:#x}\n' for name, value in sorted(bindings.items())))
 subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror', '-Wno-incompatible-sysroot',
                 '-c', assembly, '-o', out / 'original-bindings.o'], check=True)
-archive = out / ('lib' + component + '.a')
+archive = out / ('lib' + {'NativeUfs':'ShengUfs','NativeRamBlock':'RamBlock','NativeVirtioBlock':'VirtioMmioBlock','NativeVirtioConsole':'VirtioMmioConsole'}.get(component, component) + '.a')
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, object_path, out / 'original-bindings.o'], check=True)
 (out / 'bindings.json').write_text(json.dumps(dict(
