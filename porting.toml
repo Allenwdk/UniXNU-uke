@@ -118,10 +118,12 @@ configuration = ["Kernel arguments offline-legacy-* (register, gop, phase 4), of
   "The default-surface fallback is disabled so only resolved overlay surfaces present."]
 procedure = ["Build the legacy display archive and boot with the offline-legacy arguments."]
 findings = ["The present chain resolved the overlay layer and put real UI on screen (white lock screen, home indicator, swipe prompt).",
-  "A blank after a few seconds was the blank/idle transaction falling back to the pure-black default surface; v3 presents only resolved overlay surfaces."]
+  "A blank after a few seconds was the blank/idle transaction falling back to the pure-black default surface; v3 presents only resolved overlay surfaces.",
+  "2026-10-28 fmt2 boot: the swap path rejects every frame (UKE: swap accepted=0 reason=2 surface=0) and the screen stays on the boot console while the system runs fully in userland; identical to the 2026-10-27 session, so the patch adoption is not the cause.",
+  "The Data seed handoff is closed out: the scratch Data mount panic (ENOENT at kern_exec.c:8196) was a missing PackedRAMDisk/TrustCache handoff in the test payload, fixed by wiring data-seed-200/owner-data-200.dbr and the owner trust cache into unixnu.local.toml."]
 completion = ["A known frame appears with correct geometry and colors and stays up."]
-limits = ["Host-only verification after the migration; the present chain result is from the pre-migration kernel."]
-next_action = ["Flash and re-check the v3 present behavior; then move to async/GPU present (the synchronous copy runs 150-300 ms on the compositor thread)."]
+limits = ["The surface never resolves in the own-present path (surface=0 on every swap), so no frame reaches the panel; IOSurfaceLookup is not exported by the kernelcache symbol table."]
+next_action = ["Implement the own-present path: parse the swap record's per-frame surface IDs (the 1200/1288-byte record) and copy the resolved surface to the scanout buffer after each SwapEnd, without IOSurfaceLookup."]
 evidence = [
   { kind = "device", reference = "docs/GPU-PORT.md", result = "real UI on screen: white lock screen, home indicator and the swipe prompt; then v3 presents only resolved overlay surfaces", command = "fastboot boot boot.img", revision = "c77d613dc91fb54479242aa5d5902c48662b80d7" },
 ]
@@ -230,6 +232,7 @@ limits = ["Host-only verification; the platform seed is not stored in any reposi
 next_action = ["Build with the real unique_chip_id and flash the inactive slot."]
 evidence = [
   { kind = "host", reference = "board.toml", result = "payload.img 80 MiB with the UKEESP volume and boot.img 1,515,520 bytes over the stock vendor_boot DTB", command = "./unixnu build payload && ./unixnu bootimg --uefi ../uefi-uke --dtb ../uke-port/data/vendor_boot.dtb --ramdisk none", revision = "4f4bf7e1f4ad56743562777becd7ac7d6714216c" },
+  { kind = "device", reference = "docs/GPU-PORT.md", result = "the fmt2 test image booted to userland on hardware with the recovered platform seed and the Data seed handoff", command = "fastboot flash boot_a vendor_boot_a && fastboot set_active a && fastboot reboot", revision = "bdb1af9a7100367cde283ff5408681de8fbbcfe3" },
 ]
 
 [[area]]

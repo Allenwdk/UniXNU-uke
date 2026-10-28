@@ -30,6 +30,10 @@
 
 3. 按 live GPT 计算窗口偏移。不要用 board.toml 的 `last_lba`：实际分区比它大 7168 个 4K 块。
 
+   > **写入窗口（清零/回写）时 `dd` 的跳过参数必须用 `seek=`**（作用于输出）；`skip=` 只作用于
+   > 输入（读取时才用），用错会把数据写到分区头部。任何块设备写操作先单块读回验证再放量。
+   > 清零窗口后重启再读：窗口头 `UKELLOG1` 重现即本 boot 有写入。
+
    ```bash
    adb shell 'size=$(blockdev --getsz /dev/block/by-name/userdata); \
               skip=$((size/8-8192)); \

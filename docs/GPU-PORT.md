@@ -916,3 +916,21 @@ panic values are quoted above.
   the next boot (see `docs/RECOVERY-LOG.md`).
 - host-side disk housekeeping: screenshots moved to `panic-shots/`, DT dumps to
   `dts-reference/`; `/tmp` is no longer used for build intermediates.
+
+## 2026-10-28 fmt2 迁移镜像上机（uke，fmt2 tag）
+
+- 镜像：`boot_uke_fmt2.img` + `vendor_boot_uke_fmt2.img`（内核 `56245a7c…` = 采纳上游
+  5 演进 + 7 新增补丁后的迁移内核；payload 含 PackedRAMDisk（Data seed
+  `owner-data-200.dbr`）与 TrustCache 交接，平台 seed 恢复为 `7252a8b07f8cb8f9`）。
+- **系统健康，"卡开机"系屏幕冻结**：完整启动进用户态——SpringBoard[26]、backboardd[55]
+  在跑，`Gunyah watchdog pets` 稳定 pet 至 t=257s+，UKEVMA/路由/IO 正常；屏幕停在开机
+  文本帧（GPU 探针日志那屏），UI 未接管显示。
+- **显示链与采纳前逐字一致（非补丁回归）**：每次 `UKE: swap 1 accepted=0 reason=2 surface=0`
+  （surface 解析为 0、交换被拒）。与 2026-10-27 会话环对比：swap 形态相同、沙箱拒绝表同签名
+  （`IOPlatformDevice:canvas`、`NativeLegacyDisplay:GainMapVersion` 等为既有噪音）。
+  即本节前述 surface=0 / own-present（IOSurfaceLookup 不在 kernelcache 符号表）未决项。
+- **Data seed 交接已闭环**：首次 fmt2 无 Data seed 时 panic `offline scratch Data mount failed: 2`
+  （kern_exec.c:8196，ENOENT）；补齐 PackedRAMDisk/TrustCache 交接后 mount 正常、用户态可达。
+- 取证方法（可复用）：清零 UkeLastLog 窗口（userdata 尾 32 MiB，**dd 写入必须用 `seek=`**，
+  `skip=` 只作用于输入）→ 启动 → TWRP `dd` 读回 → `tools/decode-ukelog.py`。窗口头
+  `UKELLOG1` 重现即本 boot 有写入；记录按序号取"最新连续段"，多 boot 序号各自从 0 计。
