@@ -17,7 +17,10 @@ and _native_gpu_addon_blob_cookie."""
 import argparse
 import hashlib
 import json
+import os
+import shutil
 import struct
+import subprocess
 import sys
 import zlib
 from pathlib import Path
@@ -36,6 +39,25 @@ def fnv1a(data):
     return value
 
 
+def ensure_inputs(plugin: Path):
+    """The blob packs the owner-built plugin bundle; build it (and refresh the
+    owner trust module that admits its CDHashes) when it is not there yet.
+    The plugin build script lives beside the artifact root the bundle is
+    packed from (the workspace core checkout)."""
+    if (plugin / 'NativeAdrenoMetal.bundle' / 'NativeAdrenoMetal').is_file():
+        pass
+    else:
+        build = plugin.parent.parent / 'scripts/build-adreno-metal-plugin.py'
+        if not build.is_file():
+            sys.exit('missing plugin input and no build script at ' + str(build))
+        subprocess.run(['python3', str(build)], check=True)
+    trust = plugin.parent.parent / 'scripts/make-owner-trust-bundle.py'
+    if trust.is_file():
+        subprocess.run(['python3', str(trust)], check=True)
+        owner = Path(os.environ.get('UKE_OWNER_TRUST', '/home/allenwdk/UniXNU/uke-port/data/owner-trust-cache.bin'))
+        shutil.copyfile(plugin.parent.parent / 'build/adreno-metal-plugin/owner-trust.bundle', owner)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--plugin-dir', type=Path, default=DEFAULT_PLUGIN)
@@ -45,6 +67,7 @@ def main():
                         help='probe image: omit the .publish marker so the plugin runs its shared user test and returns nil (software rendering kept)')
     args = parser.parse_args()
     plugin = args.plugin_dir.resolve()
+    ensure_inputs(plugin)
     bundle = plugin / 'NativeAdrenoMetal.bundle'
     executable = bundle / 'NativeAdrenoMetal'
     turnip = bundle / 'libvulkan_freedreno.dylib'

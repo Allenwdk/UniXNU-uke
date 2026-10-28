@@ -242,6 +242,10 @@ run([str(stub_source) if arg==str(process_source) else str(stub_obj) if arg==str
 touch_dir=OUT/'touch';touch_dir.mkdir(exist_ok=True)
 touch_cpp=ROOT/'kits/uke/TouchProbe.cpp';touch_cpp_obj=touch_dir/'TouchProbe.o'
 cpufreq_cpp=ROOT/'kits/uke/CpuFreqProbe.cpp';cpufreq_obj=touch_dir/'CpuFreqProbe.o'
+# DPU track (A3/C1/C2): read-only live register snapshot (uke-dpu) and the
+# bounded controlled-pipe test (uke-dpu-test). Always compiled into the display
+# archive so every build carries the snapshot; both boot arguments default off.
+dpu_cpp=ROOT/'kits/uke/DpuProbe.cpp';dpu_obj=touch_dir/'DpuProbe.o'
 # The GPU power/bring-up probe compiles only when NativeAdreno is linked: its
 # Adreno and GPU-addon imports are otherwise undefined. The GPU configuration
 # enables both, so this is the runtime path a device boot exercises.
@@ -255,6 +259,7 @@ if os.environ.get('XNU_NATIVE_ADRENO','0')=='1':
     run(gpupower_cmd,cwd=r['directory'])
 run([str(touch_cpp) if str(arg)==str(source) else str(touch_cpp_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
 run([str(cpufreq_cpp) if str(arg)==str(source) else str(cpufreq_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
+run([str(dpu_cpp) if str(arg)==str(source) else str(dpu_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
 print(run(['python3',ROOT/'scripts/gen-touch-firmware.py'],text=True),end='')
 touch_c=[ROOT/'drivers/QcomGeniSpi/GeniSpi.c',ROOT/'drivers/ShengNovatekTouch/NvtProtocol.c',
          ROOT/'drivers/ShengNovatekTouch/NvtTouchCore.c',ROOT/'build/native-touch/NvtFirmware.c']
@@ -274,12 +279,12 @@ run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',
 require(code((keyevents/'NativeKeyStoreEvents.o').read_bytes(),macho((keyevents/'NativeKeyStoreEvents.o').read_bytes()))==
         code(keyevents_late.read_bytes(),macho(keyevents_late.read_bytes())),'Owned event-service instructions unchanged by late init staging')
 run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDisplayProbe.o',hid_obj,keystore_obj,process_obj,trace_obj,
-     hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,touch_cpp_obj,cpufreq_obj,stub_obj,
+     hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,touch_cpp_obj,cpufreq_obj,dpu_obj,stub_obj,
      *([gpupower_obj] if gpupower_obj else []),*touch_objs])
 sources=[ROOT/'drivers/GopFramebuffer/NativeLegacyDisplay.cpp',
          ROOT/'drivers/GopFramebuffer/NativeLegacyRequest.h',source,hid_source,keystore_source,process_source,trace_source,ROOT/'kits/uke/BootUiTraceCore.h',ROOT/'kits/uke/BootUiTraceDetails.h',
          ROOT/'drivers/ShengHidInput/NativeHidInput.cpp',ROOT/'scripts/build-sheng-hid-input.py',
-         ROOT/'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',touch_cpp,cpufreq_cpp,ROOT/'kits/uke/TouchBoard.h',stub_source,
+         ROOT/'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',touch_cpp,cpufreq_cpp,dpu_cpp,ROOT/'kits/uke/TouchBoard.h',stub_source,
          ROOT/'drivers/QcomGeniSpi/GeniSpi.c',ROOT/'drivers/QcomGeniSpi/GeniSpi.h',
          ROOT/'drivers/ShengNovatekTouch/NvtProtocol.c',
          ROOT/'drivers/ShengNovatekTouch/NvtProtocol.h',ROOT/'drivers/ShengNovatekTouch/NvtTouchCore.c',ROOT/'drivers/ShengNovatekTouch/NvtTouchCore.h']

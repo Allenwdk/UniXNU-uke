@@ -110,22 +110,42 @@ evidence = [
 [[area]]
 id = "display"
 status = "device-verified"
-components = ["GopFramebuffer"]
-paths = ["package/LegacyDisplayProbe.cpp", "package/OfflineGOP*.mm", "scripts/build-native-legacy-display.py"]
+components = ["GopFramebuffer", "NativeUfs"]
+paths = ["package/LegacyDisplayProbe.cpp", "package/OfflineGOP*.mm", "package/DpuProbe.cpp", "drivers/NativeUfs/NativeUfs.cpp", "scripts/build-native-legacy-display.py", "scripts/check-dpu-probe-host.py", "docs/dts-reference/mdss-cliffs-map.md"]
 inputs = ["UEFI GOP framebuffer; panel O82 3200x2136 with the splash at 0xe3940000/0x2b00000.",
-  "Overlay-present Legacy driver and the recorded mobile-graphics ABI candidates."]
+  "Overlay-present Legacy driver and the recorded mobile-graphics ABI candidates.",
+  "DPU track: cliffs DTB mdss_mdp@0xae00000 (sde-off 0x1000, VIG 0x5000/0x7000, CTL0 0x16000, INTF1/2 0x36000/0x37000, PP0 0x6a000, LM0 0x45000), apps_smmu 0x15000000 display streams SID 0x1c00 mask 0x02."]
 configuration = ["Kernel arguments offline-legacy-* (register, gop, phase 4), offline-mobile-graphics-load=1.",
-  "The default-surface fallback is disabled so only resolved overlay surfaces present."]
+  "offline-legacy-base-present=1 and offline-legacy-noconsole=1 gate the own-present path (the gpu-framepresent v2/v3 verified set); without base-present presentBase returns at its first line and the screen stays on the boot frame.",
+  "The GPU track arguments (sheng-gpu-power=9, sheng-gpu-metal=1, offline-mobile-graphics-client=1, sheng-gpu-pool=0, sheng-fb-gpu=0) restore the compositor's 1200-byte overlay records whose layer 6 frame the own-present path resolves.",
+  "The default-surface fallback is disabled so only resolved overlay surfaces present.",
+  "DPU track: uke-dpu=<1|2> runs the read-only live DPU snapshot (default off); uke-dpu-test=<1..4> runs the bounded controlled-pipe test (default off); uke-dpu-scanout>=1 builds the display bank's stage-1 window in NativeUfs (default off)."]
 procedure = ["Build the legacy display archive and boot with the offline-legacy arguments."]
 findings = ["The present chain resolved the overlay layer and put real UI on screen (white lock screen, home indicator, swipe prompt).",
   "A blank after a few seconds was the blank/idle transaction falling back to the pure-black default surface; v3 presents only resolved overlay surfaces.",
   "2026-10-28 fmt2 boot: the swap path rejects every frame (UKE: swap accepted=0 reason=2 surface=0) and the screen stays on the boot console while the system runs fully in userland; identical to the 2026-10-27 session, so the patch adoption is not the cause.",
-  "The Data seed handoff is closed out: the scratch Data mount panic (ENOENT at kern_exec.c:8196) was a missing PackedRAMDisk/TrustCache handoff in the test payload, fixed by wiring data-seed-200/owner-data-200.dbr and the owner trust cache into unixnu.local.toml."]
+  "2026-10-28 root cause: those frozen-screen runs never set offline-legacy-base-present=1, so presentBase returned before doing anything and never logged; the accepted=0 reason=2 surface=0 line is the self-kick's pre-translation validation (the request's +2624 surface slots fill only inside the original swap_submit), not an own-present resolution failure.",
+  "presentBase now also honors the family's own second rule from swap_submit: a record ID equal to the default surface's ID names fb+0x1618 directly (the CPU-renderer 1288-byte records name that surface on layer 0).",
+  "The Data seed handoff is closed out: the scratch Data mount panic (ENOENT at kern_exec.c:8196) was a missing PackedRAMDisk/TrustCache handoff in the test payload, fixed by wiring data-seed-200/owner-data-200.dbr and the owner trust cache into unixnu.local.toml.",
+  "DPU archaeology: the cliffs DTS block offsets minus sde-off (0x1000) equal the DPU 9.x anchors sheng's DisplayTimingProbe uses (VIG0/1 0x4000/0x6000, CTL0 0x15000, INTF1/2 0x35000/0x36000, PP0 0x69000, LM0 0x44000); the stock DPU driver in this drop stops at DPU 7.x, so the DTB plus the live firmware snapshot are the register authority.",
+  "DPU surface addressing: the display streams are SID 0x1c00/0x1c02 with qcom,handoff-smrs in the cliffs apps_smmu node; the pipe address registers are 32-bit while XNU memory starts at 0x8C0000000, so scanout needs the ShengUfs display-bank stage-1 window (ported as native_ufs_dpu_map in NativeUfs)."]
 completion = ["A known frame appears with correct geometry and colors and stays up."]
-limits = ["The surface never resolves in the own-present path (surface=0 on every swap), so no frame reaches the panel; IOSurfaceLookup is not exported by the kernelcache symbol table."]
-next_action = ["Implement the own-present path: parse the swap record's per-frame surface IDs (the 1200/1288-byte record) and copy the resolved surface to the scanout buffer after each SwapEnd, without IOSurfaceLookup."]
+limits = ["D1b direct BGRA scanout is on device: ~10 fps, mostly correct; the remaining rate is the software compositor (UKE GPU3 shows o=0, no AGX client), not the DPU (latch 1.2 ms, INTF 120 Hz).",
+  "b3a8 two-plane surfaces still take the CPU decode path (150-300 ms/frame); DPU does not advertise RGB10A8_2P_XR10 in the available format tables.",
+  "Some D1b scenes show artifacts, suspected GPU in-flight surface reuse without a fence."]
+next_action = ["60/120 plan (docs/DPU-TASKS.md §8): P1 make the compositor use the native Metal device (o>0, K68xx), P2 add a GPU b3a8->linear BGRA decode pass, P3 port sheng-vsync=120, P4 move the CTL flush wait to a workloop timer, P5 vote qcom,sde-data-bus0/ebi (120 Hz needs the 3.31 GB/s high point), P6 confirm the 600 MHz MDP clock.",
+  "P0 first: add per-frame `UKE DPU: flip n fps=` counters so the next device run distinguishes compositor submit rate from display-path loss."]
 evidence = [
   { kind = "device", reference = "docs/GPU-PORT.md", result = "real UI on screen: white lock screen, home indicator and the swipe prompt; then v3 presents only resolved overlay surfaces", command = "fastboot boot boot.img", revision = "c77d613dc91fb54479242aa5d5902c48662b80d7" },
+  { kind = "device", reference = "docs/GPU-PORT.md", result = "the verified gpu-framepresent v2/v3 argument set (recorded from uke-port/releases/2026-10-24-gpu-framepresent-v3/README.md), now restored in board.toml", command = "fastboot boot boot.img", revision = "ad87339f293a0e55c4a5be25188bdfca8ecea700" },
+  { kind = "source", reference = "board.toml", result = "kernel_args carry that set; the joined boot-args string is 881 bytes, under the 1000-byte limit" },
+  { kind = "source", reference = "docs/dts-reference/mdss-cliffs-map.md", result = "A1/A2 register map: DTS block offsets, MDP-relative anchors, SSPP/CTL/INTF/PP/LM registers, dispcc/GCC clocks, GDSC, apps_smmu SIDs, stock init sequence with source lines" },
+  { kind = "source", reference = "scripts/check-dpu-probe-host.py", result = "M1 gate: DTS anchors, stock register defines, NativeUfs window symbols and the built DpuProbe.o all pass (source-only and archive checks); a deliberately wrong kVig constant turns it red" },
+  { kind = "source", reference = "docs/DPU-PORT.md", result = "A3/C1/B2/C2/C3 implementation and the test ladder; boot identical to framepresent4" },
+  { kind = "device", reference = "docs/DPU-PORT.md", result = "M1 PASS: UKE DPU probe=1 snapshot shows GOP e3940000 3200x2136, VIG0/VIG1 1600x2136, 120 Hz, display SMMU bank 2 CBAR type 1 / SCTLR 0xe0", command = "fastboot boot vendor_boot_uke_dpu_a3.img", revision = "3c65101d7ce614a3c2520c4fb5c2b5ac2dd42657" },
+  { kind = "device", reference = "docs/DPU-PORT.md", result = "M2/C3 PASS: redirecting VIG0/VIG1 to gop+0x800000 (1600x1068, stride 0x3200) drew red/green/blue/checker correctly for 2 s each, src0 readback e4140000, auto-restore; low-DRAM e5400000 shows gray (outside the display-readable GOP range)", command = "fastboot boot vendor_boot_uke_dpu_c3c.img", revision = "3c65101d7ce614a3c2520c4fb5c2b5ac2dd42657" },
+  { kind = "device", reference = "docs/DPU-PORT.md", result = "B2 PASS: stage-1 window state=80000002 on bank 2; test=3 mapped a 27.3 MB BGRA buffer at IOVA 0x10000000 and the DPU scanned it (latch 1196 us); fix was Linux arm-smmu SCTLR 0x10e7 / TCR 0x803519 / TCR2 0x38015 with a 4xL2 2MB-block table; the S2CR bypass experiment b2v4 crashed and was reverted", command = "fastboot boot vendor_boot_uke_dpu_b2v8.img", revision = "3c65101d7ce614a3c2520c4fb5c2b5ac2dd42657" },
+  { kind = "device", reference = "docs/DPU-PORT.md", result = "D1b PASS: presentBase maps each BGRA IOSurface into a stage-1 window slot and flips VIG0/VIG1 with no CPU copy; user reports clearly smoother ~10 fps and mostly correct output, with artifacts in some scenes (suspect GPU in-flight surface reuse; next: fence or one-swap delay)", command = "fastboot boot vendor_boot_uke_dpu_d1b.img", revision = "3c65101d7ce614a3c2520c4fb5c2b5ac2dd42657" },
 ]
 
 [[area]]

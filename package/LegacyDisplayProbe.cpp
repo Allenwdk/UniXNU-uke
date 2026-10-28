@@ -640,6 +640,10 @@ extern void native_qemu_metal_publish(void);
 extern void sheng_cpufreq_probe(void);
 extern void sheng_gpu_power_probe(void);
 extern void native_touch_probe(void);
+// The DPU track's read-only snapshot and controlled-pipe test (package/DpuProbe.cpp):
+// a thread that waits for the firmware's scanout and then reads or (only with
+// uke-dpu-test=<n>) briefly writes the live pipes. Default off.
+extern "C" void native_dpu_probe(void);
 // Default framebuffer surface bring-up (offline-legacy-default-surface=1).
 // The original Legacy class reads the platform enable byte at +0x1780 and,
 // when set, creates a temporary surface at +0x1620 in slot 299. Only the absent
@@ -728,6 +732,7 @@ void native_legacy_display_late_probe(void) {
     native_keystore_probe();
     sheng_cpufreq_probe();
     sheng_gpu_power_probe();
+    native_dpu_probe();
     native_touch_probe();
     native_hid_input_probe();
     native_virtio_input_probe();

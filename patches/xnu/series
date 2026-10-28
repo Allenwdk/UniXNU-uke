@@ -11,3 +11,4 @@ zzzzzzzzzzz-uke-panic-flush.patch
 zzzzzzzzzzz-uke-trustcache-headers.patch
 zzzzzzzzzzz-uke-vm-alloc-log.patch
 zzzzzzzzzzzz-uke-gpu-sandbox-client-grant.patch
+zzzzzzzzzzzz-uke-gpu-addon-stage-log.patch

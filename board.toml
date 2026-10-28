@@ -81,6 +81,9 @@ archives = [
   "component:ShengHidInput",
   "component:AppleKeyStoreState",
   "build-native-legacy-display.py",
+  # The addon blob packs the owner-built Metal plugin bundle; the script builds
+  # it (and the owner trust module that admits it) when it is not on disk yet.
+  "build-gpu-addon-blob.py",
   "build-boot-log.py",
 ]
 
@@ -248,10 +251,40 @@ kernel_args = [
   "offline-legacy-transfer=1",
   "offline-legacy-cpu-present=1",
   "offline-legacy-default-surface=1",
+  # own-present (the gpu-framepresent v2/v3 verified set): presentBase resolves
+  # the swap record's overlay surface after each SwapEnd and copies it to the
+  # GOP. Without this the path is silent and the screen stays on the boot frame
+  # (the 2026-10-27/28 frozen-screen runs never set it).
+  "offline-legacy-base-present=1",
+  # the screen console must not draw over presented frames; it is muted only
+  # after the first successful copy, so logs survive until the UI takes over.
+  "offline-legacy-noconsole=1",
   "offline-hid-home=1",
   "offline-hid-input=1",
+  # Touch bring-up (docs/TOUCH-PORT.md on-screen set): stage 4 = firmware
+  # download + frame loop; sheng-touch-hid=1 publishes digitizer reports
+  # (required); poll mode is the device-proven frame path (the interrupt path
+  # is not yet verified on hardware and falls back to polling by itself).
+  "sheng-touch=4",
+  "sheng-touch-hid=1",
+  "sheng-touch-poll=1",
   "offline-legacy-phase=4",
-  "offline-mobile-graphics-client=0",
+  # GPU track (same values as gpu-framepresent v2/v3): the staged A732 bring-up
+  # publishes the Metal device and the compositor submits the 1200-byte overlay
+  # records whose layer 6 frame the own-present path resolves.
+  "sheng-gpu-power=9",
+  "sheng-gpu-metal=1",
+  # GPU scanout hand-off (upstream GpuScanoutClient path): the addon plugin's
+  # scanout client blits the offered frame into the scanout on the GPU; a
+  # refused offer or failed copy falls back to the CPU copy (fail-safe).
+  "sheng-fb-gpu=1",
+  "sheng-gpu-pool=0",
+  # stage the owner-built NativeAdrenoMetal bundle (addon blob) into Data so the
+  # render server opens a native Metal device; iconservicesagent then keeps
+  # CoreImage on that device instead of the null-GL crash loop.
+  "sheng-gpu-addon=1",
+  "sheng-iconservices=1",
+  "offline-mobile-graphics-client=1",
   "offline-mobile-graphics-load=1",
   "offline-apfs-load=1",
   "boot-progress=2",

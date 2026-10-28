@@ -267,6 +267,227 @@ static void zero32 (void *start, size_t length)
   }
 }
 
+// ---- The display bank's stage 1 window (uke-dpu-scanout) --------------------------------------------
+// Ported from ShengUfs f2d6a4a "feat(smmu): give the display bank a stage 1 window on request".
+// The DPU's pipe address registers are 32 bits and every XNU allocation is above 4 GiB, so a
+// compositor surface can only be scanned out through a stage-1 mapping. The display's streams
+// (SID 0x1c00 mask 0x02, `qcom,handoff-smrs = <0x1c00 0x02>` in the cliffs apps_smmu node) keep the
+// bank the boot loader gave them: CBAR type 1 (stage 1 translation off, stage 2 bypass) and
+// SCTLR 0xe0. The table keeps 0x80000000..0xffffffff as two 1 GiB identity blocks (the firmware's
+// GOP scanout at 0xe3940000 keeps working) and adds kDpuSlots windows of kDpuSlotBytes at
+// kDpuWindow, filled by native_ufs_dpu_map. Undone at once when the bank refuses the table or
+// the display's own fetches fault during the 50 ms watch.
+extern "C" volatile uint32_t native_ufs_dpu_smmu[24];
+extern "C" volatile uint32_t native_ufs_dpu_state;
+extern "C" volatile uint32_t native_ufs_dpu_check[8];
+extern "C" volatile uint32_t native_ufs_dpu_atos[4];
+extern "C" volatile uint32_t native_ufs_dpu_fault_sid;
+constexpr uint32_t kDpuWindow = 0x10000000U, kDpuSlots = 4, kDpuSlotBytes = 32U << 20;
+constexpr uint32_t kDpuSlotTables = kDpuSlotBytes >> 21;
+static uint64_t *gDpuTables;
+static OSSharedPtr<IOMemoryMap> gDpuSmmuMap;
+static uintptr_t gDpuCb;
+static IOLock *gDpuLock;
+static uintptr_t gDpuLiveCb;
+// FSR fault bits (TF .. UUT, SS, MULTI); 0x600 is the format field.
+constexpr uint32_t kDpuFaults = 0xc00001feU;
+static void dpuClean (const void *start, size_t length)
+{
+  for (size_t off = 0; off < length; off += 64)
+    __asm__ volatile ("dc civac, %0" :: "r" (static_cast<const uint8_t *> (start) + off) : "memory");
+  __asm__ volatile ("dsb sy" ::: "memory");
+}
+static bool dpuTlbFlush (uintptr_t cb)
+{
+  write32 (cb, 0x618, 0); write32 (cb, 0x7f0, 0);   // TLBIALL, TLBSYNC
+  __asm__ volatile ("dsb sy" ::: "memory");
+  for (unsigned spin = 0; spin < 100000; ++spin) if (!(read32 (cb, 0x7f4) & 1)) return true;
+  return false;
+}
+static void dpuEnable (uintptr_t smmu, uintptr_t cb, uint32_t bank, uint32_t oldSctlr)
+{
+  (void) smmu;
+  constexpr uint32_t kL2Pages = 4;                    // one L2 page per 1 GiB, 2 MiB blocks
+  const size_t bytes = (1 + kL2Pages + kDpuSlots * kDpuSlotTables) * 4096;
+  IOBufferMemoryDescriptor *tables = IOBufferMemoryDescriptor::inTaskWithOptions (
+    kernel_task, static_cast<IOOptionBits> (kIODirectionInOut) | static_cast<IOOptionBits> (kIOMemoryPhysicallyContiguous) |
+    static_cast<IOOptionBits> (kIOMemoryMapperNone), bytes, 4096);
+  gDpuLock = IOLockAlloc ();
+  if (!tables || !gDpuLock) {native_ufs_dpu_state = 0xdead0002U; return;}
+  uint64_t *l1 = static_cast<uint64_t *> (tables->getBytesNoCopy ());
+  const uint64_t pa = tables->getPhysicalSegment (0, nullptr, kIOMemoryMapperNone);
+  bzero (l1, bytes);
+  // Table shape from ShengUfs WiFi (f2d6a4a) extended to the whole 32-bit space: one L1 page with
+  // four table descriptors, then one L2 page per 1 GiB filled with 2 MiB identity blocks; the four
+  // 32 MiB window slots inside the first GiB point at L3 pages filled by native_ufs_dpu_map.
+  // No 1 GiB blocks are used anywhere (the block level that faults on this SMMU).
+  const uint64_t attrs = (1ULL << 11) | (1ULL << 10) | (3ULL << 8) | (1ULL << 6);
+  const uint32_t windowFirst = kDpuWindow >> 21, windowBlocks = kDpuSlots * kDpuSlotTables;
+  for (uint32_t i = 0; i < kL2Pages; ++i) l1[i] = (pa + (1 + i) * 4096ULL) | 3;
+  for (uint32_t i = 0; i < kL2Pages; ++i) {
+    uint64_t *l2 = l1 + (1 + i) * 512;
+    for (uint32_t j = 0; j < 512; ++j) {
+      if (i == 0 && j >= windowFirst && j < windowFirst + windowBlocks)
+        l2[j] = (pa + (1 + kL2Pages + (j - windowFirst)) * 4096ULL) | 3;
+      else
+        l2[j] = ((static_cast<uint64_t> (i) << 30) | (static_cast<uint64_t> (j) << 21)) | attrs | 1;
+    }
+  }
+  dpuClean (l1, bytes);
+  const uint32_t old[5] = {read32 (cb, 0x20), read32 (cb, 0x24), read32 (cb, 0x10), read32 (cb, 0x30), read32 (cb, 0x38)};
+  gDpuLiveCb = cb;
+  write32 (cb, 0x20, static_cast<uint32_t> (pa)); write32 (cb, 0x24, static_cast<uint32_t> (pa >> 32));
+  write32 (cb, 0x10, 0x38015U);                       // TCR2: SEP 7, AS, PASIZE 48-bit (Linux lpae_tcr2)
+  // The cliffs apps_smmu declares qcom,use-3-lvl-tables, so Linux caps the stage-1 input
+  // address at 39 bits (T0SZ 25), not 32: the arm-smmu S1 domain uses ias = min(va_size, 39)
+  // and io-pgtable then builds a level-1 table. T0SZ 32 made the walk fault on the first
+  // display fetch (level mismatch); match Linux's 39-bit 3-level shape here.
+  // Linux arm_smmu_lpae_tcr/tcr2/sctlr for a coherent 39-bit stage-1 context (apps_smmu has
+  // dma-coherent): SH0=IS, IRGN0/ORGN0=WBWA, EPD1; TCR2 SEP=7 + AS + PASIZE 48-bit; SCTLR with
+  // S1_ASIDPNE/AFE/TRE/CFCFG/CFIE/CFRE/M. sheng's minimal SCTLR/TCR worked on SM8550, not here.
+  constexpr uint32_t kDpuTcr = 25U | (1U << 23) | (3U << 12) | (1U << 10) | (1U << 8);
+  write32 (cb, 0x30, kDpuTcr);
+  write32 (cb, 0x38, 0x44);                           // MAIR attribute 0: normal non-cacheable
+  __asm__ volatile ("dsb sy" ::: "memory");
+  volatile uint32_t *c = native_ufs_dpu_check;
+  c[0] = read32 (cb, 0x20); c[1] = read32 (cb, 0x30); c[2] = read32 (cb, 0x58);
+  const auto undo = [&] (uint32_t why) {
+    write32 (cb, 0x0, oldSctlr);
+    __asm__ volatile ("dsb sy; isb" ::: "memory");
+    write32 (cb, 0x20, old[0]); write32 (cb, 0x24, old[1]); write32 (cb, 0x10, old[2]); write32 (cb, 0x30, old[3]); write32 (cb, 0x38, old[4]);
+    const uint32_t fsr = read32 (cb, 0x58);
+    if (fsr & (1U << 30)) write32 (cb, 0x8, 1);        // RESUME: terminate a stalled transaction
+    if (fsr & kDpuFaults) write32 (cb, 0x58, fsr);     // write one to clear
+    dpuTlbFlush (cb);
+    native_ufs_dpu_state = why;
+  };
+  if (c[0] != static_cast<uint32_t> (pa) || c[1] != kDpuTcr) {undo (0xdead0003U); return;}   // the bank ignores our writes
+  if (!dpuTlbFlush (cb)) {undo (0xdead0004U); return;}
+  write32 (cb, 0x0, 0x10e7U);                         // SCTLR: M, CFRE, CFIE, AFE, TRE, CFCFG, S1_ASIDPNE
+  __asm__ volatile ("dsb sy; isb" ::: "memory");
+  // Address translation operation (ATOS, CB 0x800 + ATSR 0x8f0) with translation on: translate the
+  // GOP's fetch address through the new table so a bad walk is named here before the panel sees it.
+  native_ufs_dpu_fault_sid = 0;
+  if (read32 (smmu, 0x20) & (1U << 26)) {
+    write32 (cb, 0x800, 0xe39acc00U); write32 (cb, 0x804, 0);
+    unsigned spin = 0;
+    while ((read32 (cb, 0x8f0) & 1) && ++spin < 100000) { }
+    native_ufs_dpu_atos[0] = 0xe39acc00U;
+    native_ufs_dpu_atos[1] = read32 (cb, 0x50);
+    native_ufs_dpu_atos[2] = read32 (cb, 0x54);
+    native_ufs_dpu_atos[3] = spin;
+  } else {
+    native_ufs_dpu_atos[0] = 0xffffffffU;
+  }
+  // No check translation here (the SMMU has no ATOS on sheng), so watch the display's own fetches
+  // for 50 ms and turn translation off again at the first fault.
+  uint32_t fsr = 0, us = 0;
+  for (; us < 50000; us += 500) {
+    fsr = read32 (cb, 0x58);
+    if (fsr & kDpuFaults) break;
+    IODelay (500);
+  }
+  c[3] = fsr; c[7] = us;
+  if (fsr & kDpuFaults) {
+    c[4] = read32 (cb, 0x60); c[5] = read32 (cb, 0x64); c[6] = read32 (cb, 0x68);
+    native_ufs_dpu_fault_sid = read32 (smmu, 0x1400 + 4 * bank) & 0xffffU;   // GR1 CBFRSYNRA(bank)
+    undo (0xdead0005U); return;
+  }
+  gDpuTables = l1; gDpuCb = cb;
+  native_ufs_dpu_state = 0x80000000U | bank;
+}
+// Called from start() on the root-device personality when uke-dpu-scanout is non-zero. Read-only
+// until the bank shape matches what the firmware left; 0xdead000n in native_ufs_dpu_state names the
+// step that refused it (1 bank not as expected, 2 no memory, 3 the bank ignored the table registers,
+// 4 TLB sync timeout, 5 the display's fetches faulted with translation on).
+static void dpuWindowInit (void)
+{
+  if (native_ufs_dpu_state) return;
+  uintptr_t smmu = mapPhys (0x15000000ULL, 0xd0000, gDpuSmmuMap);
+  if (!smmu) {native_ufs_dpu_state = 0xdead0002U; return;}
+  const uint32_t idr0 = read32 (smmu, 0x20), idr1 = read32 (smmu, 0x24);
+  const unsigned groups = (idr0 & 255) > 128 ? 128 : (idr0 & 255), banks = idr1 & 255;
+  const unsigned pages = 1U << (((idr1 >> 28) & 7) + 1);
+  native_ufs_dpu_smmu[1] = read32 (smmu, 0x0); native_ufs_dpu_smmu[2] = idr0; native_ufs_dpu_smmu[3] = idr1;
+  unsigned valid = 0;
+  for (unsigned k = 0; k < 2; ++k) native_ufs_dpu_smmu[4 + 9 * k] = 0xffffffffU;
+  for (unsigned i = 0; i < groups; ++i) {
+    const uint32_t smr = read32 (smmu, 0x800 + 4 * i);
+    if (!(smr & 0x80000000U)) continue;
+    ++valid;
+    const uint32_t mask = (smr >> 16) & 0x7fff;
+    for (unsigned k = 0; k < 2; ++k) {
+      volatile uint32_t *r = &native_ufs_dpu_smmu[4 + 9 * k];
+      if (r[0] != 0xffffffffU || ((smr ^ (0x1c00U + 2 * k)) & 0x7fff & ~mask)) continue;
+      const uint32_t s2cr = read32 (smmu, 0xc00 + 4 * i), bank = s2cr & 255;
+      r[0] = i | (bank << 16); r[1] = smr; r[2] = s2cr;
+      if (((s2cr >> 16) & 3) == 0 && bank < banks && (pages + banks) * 4096 <= 0xd0000) {
+        const uintptr_t cb = smmu + (pages + bank) * 4096;
+        r[3] = read32 (smmu, 0x1000 + 4 * bank); r[4] = read32 (smmu, 0x1800 + 4 * bank);
+        r[5] = read32 (cb, 0x0); r[6] = read32 (cb, 0x20); r[7] = read32 (cb, 0x24); r[8] = read32 (cb, 0x30);
+        native_ufs_dpu_smmu[22 + k] = read32 (cb, 0x58);
+      }
+    }
+  }
+  native_ufs_dpu_smmu[0] = 0x80000000U | groups | (valid << 8) | (banks << 16);
+  const uint32_t found = native_ufs_dpu_smmu[4], bank = found >> 16;
+  if (found != 0xffffffffU && bank < banks && ((native_ufs_dpu_smmu[6] >> 16) & 3) == 0 && !(native_ufs_dpu_smmu[9] & 1) &&
+      ((native_ufs_dpu_smmu[7] >> 16) & 3) == 1) {
+    dpuEnable (smmu, smmu + (pages + bank) * 4096, bank, native_ufs_dpu_smmu[9]);
+  } else {
+    native_ufs_dpu_state = 0xdead0001U;
+  }
+}
+
+// The display streams' state as the boot loader left it (uke-dpu=2): [0] bit 31 read,
+// stream-match groups | valid ones << 8 | context banks << 16; [1] sCR0, [2] IDR0, [3] IDR1; for
+// 0x1c00 at [4] and 0x1c02 at [13]: group | bank << 16 (all ones: no match), SMR, S2CR, CBAR, CBA2R,
+// SCTLR, TTBR0 low, high, TCR; [22], [23] the two banks' FSR.
+extern "C" volatile uint32_t native_ufs_dpu_smmu[24] = {};
+// The display bank's stage 1 (uke-dpu-scanout): bit 31 on, low bits the bank; 0xdead000n the step
+// that refused it.
+extern "C" volatile uint32_t native_ufs_dpu_state = 0;
+// TTBR0 low and TCR read back, FSR before and after the 50 ms watch, FAR low and high and FSYNR0 of
+// the first fault, us watched.
+extern "C" volatile uint32_t native_ufs_dpu_check[8] = {};
+// ATOS result of the GOP address before translation was enabled: [0] IOVA, [1] PAR low, [2] PAR high,
+// [3] poll spins (0 = completed); [0] 0xffffffff when the SMMU has no ATOS.
+extern "C" volatile uint32_t native_ufs_dpu_atos[4] = {};
+extern "C" volatile uint32_t native_ufs_dpu_fault_sid = 0;
+// One entry of the stage-1 L1 table (0..3 identity blocks, 0 is the L2 table descriptor); 0xffffffff before setup.
+extern "C" uint32_t native_ufs_dpu_table (unsigned index)
+{
+  return gDpuTables && index < 512 ? static_cast<uint32_t> (gDpuTables[index]) : 0xffffffffU;
+}
+// One entry of the L2 page (identity 2 MiB blocks and the window's L3 descriptors).
+extern "C" uint32_t native_ufs_dpu_l2 (unsigned index)
+{
+  return gDpuTables && index < 512 ? static_cast<uint32_t> (gDpuTables[512 + index]) : 0xffffffffU;
+}
+// The display bank's SCTLR (reg 0) or FSR (reg 1) now, for the log; all ones before the bank was touched.
+extern "C" uint32_t native_ufs_dpu_live (unsigned reg)
+{
+  return gDpuLiveCb ? read32 (gDpuLiveCb, reg ? 0x58 : 0x0) : 0xffffffffU;
+}
+
+// Points slot (0 .. kDpuSlots-1) of the display's window at count 4 KiB pages and returns the
+// slot's address for the display, 0 when translation is off or the pages do not fit. The caller
+// makes sure the display is not fetching from the slot while it changes.
+extern "C" uint32_t native_ufs_dpu_map (unsigned slot, const uint64_t *pages, unsigned count)
+{
+  if (!gDpuTables || slot >= kDpuSlots || count > kDpuSlotBytes / 4096) return 0;
+  uint64_t *l3 = gDpuTables + (1 + 4) * 512 + static_cast<size_t> (slot) * kDpuSlotTables * 512;
+  const uint64_t attrs = (1ULL << 10) | (1ULL << 6);
+  for (unsigned i = 0; i < kDpuSlotTables * 512; ++i) {
+    if (i < count && (pages[i] & 0xfff)) return 0;
+    l3[i] = i < count ? (pages[i] | attrs | 3) : 0;
+  }
+  dpuClean (l3, kDpuSlotTables * 4096);
+  IOLockLock (gDpuLock);
+  const bool synced = dpuTlbFlush (gDpuCb);
+  IOLockUnlock (gDpuLock);
+  return synced ? kDpuWindow + slot * kDpuSlotBytes : 0;
+}
 
 // Give the UFS stream a pass-through mapping the way Linux does on this firmware.
 // Hardware 2026-10-17: after hand-off apps_smmu has sCR0 = 0x002f0406 (USFCFG=1, unmatched
@@ -1827,6 +2048,17 @@ bool NativeUfs::start (IOService *provider)
   PE_parse_boot_argn ("native-ufs-allow-unverified", &allowUnverified, sizeof (allowUnverified));
   gAllowUnverifiedRoot = allowUnverified == 1;
   native_ufs_probe_requested = probe != 0;
+  // The display bank's stage 1 window (uke-dpu-scanout, the ShengUfs mechanism). It belongs to the
+  // root-device personality, which runs before the userland that presents, and it is independent of
+  // whether the storage root itself is being used; the argument is off in every normal boot.
+  if (OSDynamicCast (IOPlatformExpertDevice, provider)) {
+    unsigned scanout = 0, dpuTest = 0;
+    PE_parse_boot_argn ("uke-dpu-scanout", &scanout, sizeof (scanout));
+    // The C2 ladder's address test (uke-dpu-test>=3) needs the window too; keeping the
+    // dependency here means the test image carries one argument less (boot-args ceiling).
+    PE_parse_boot_argn ("uke-dpu-test", &dpuTest, sizeof (dpuTest));
+    if (scanout >= 1 || dpuTest >= 3) dpuWindowInit ();
+  }
   // Default: match for observability only, never touch the controller. Hardware work runs once,
   // from the root-device personality; the ufshc nub match stays observation-only.
   if ((!probe && !rootMode) || !OSDynamicCast (IOPlatformExpertDevice, provider)) {

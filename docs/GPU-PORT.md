@@ -934,3 +934,43 @@ panic values are quoted above.
 - 取证方法（可复用）：清零 UkeLastLog 窗口（userdata 尾 32 MiB，**dd 写入必须用 `seek=`**，
   `skip=` 只作用于输入）→ 启动 → TWRP `dd` 读回 → `tools/decode-ukelog.py`。窗口头
   `UKELLOG1` 重现即本 boot 有写入；记录按序号取"最新连续段"，多 boot 序号各自从 0 计。
+
+## 2026-10-28 own-present 修复（gpu-framepresent 配置复位）
+
+- **根因是配置，不是代码回归**：`offline-legacy-base-present=1` 从测试参数集里消失后，
+  `presentBase` 第一行（boot-arg 门）就静默返回——10-27/10-28 两次"屏幕冻结"会话的环日志里
+  没有任何 `UKE: frame surface`/`copy`/`transfer` 行，own-present 从未运行。此前把
+  `UKE: swap accepted=0 reason=2 surface=0` 解读为"surface 解析失败"是误判：那行来自 self-kick
+  在 sel-5 进入时的提前验证，此刻原厂 `swap_submit` 还没把记录层 ID 翻译进 request+2624，
+  surface 槽必然为空（10-24 上屏成功的 v2 会话同样是 accepted=0）。
+- **修复**（照 `uke-port/releases/2026-10-24-gpu-framepresent-v3/README.md` 的 v2/v3 实证参数集）：
+  - `board.toml` kernel_args 补齐 `offline-legacy-base-present=1`、`offline-legacy-noconsole=1`，
+    并恢复 GPU 合成器参数 `sheng-gpu-power=9 sheng-gpu-metal=1 sheng-fb-gpu=0
+    offline-mobile-graphics-client=1 sheng-gpu-pool=0`（合成器 1200 字节 overlay 记录、
+    frame 在 layer 6——v2 看到锁屏 UI 的记录形态）。boot-args 全串 881 B（< 1000 B 上限）。
+  - `presentBase` 补上原厂 `swap_submit` 的第二条规则：记录 ID 等于默认 surface 的 ID
+    （对象 +0x10 字段）时直接用 `fb+0x1618`，不经 root lookup（覆盖 CPU 渲染器 1288 字节
+    记录 layer 0 命名默认 surface 的形态）。v3 语义不变：记录没有命名 surface 就保留上一帧。
+  - `boot-diag-resume` 不加：它在 5 s 无扫描后把面板收归诊断页，与"看屏幕"判定互相干扰；
+    v2 "几秒后 UI 消失"与它的时序也吻合——本次把两个嫌疑（黑回落、诊断页回收）都关掉。
+- 内核 `41154fee…`（52,203,520 B，与迁移内核同结构）；显示归档（NativeLegacyDisplay
+  presentBase 改动）随 kernel 构建重编。
+- **上机判定项**：UI 出现并保持（v2 的几秒黑屏不得复现）；日志应出现 `UKE: frame surface …`
+  或 `UKE: frame surface id=… default sid=…` 与 `UKE: copy 1 nonblack=…`；`noconsole=1` 在
+  首帧拷贝成功后静音屏幕控制台（msgbuf/pram 日志继续）。若 lookup 落空，日志会带
+  `lookup=0x0 root=…`，那是记录 ID 形态问题，不是门控问题。
+
+## DPU 直扫轨（2026-10-28，交叉引用）
+
+DPU 硬件直扫是 GPU 呈现之后的下一段：把合成器 surface 直接交给 DPU 扫出，替代 presentBase 的
+150–300 ms CPU 拷贝。任务清单 `docs/DPU-TASKS.md`，当前实现与判定 `docs/DPU-PORT.md`，
+寄存器考古 `docs/dts-reference/mdss-cliffs-map.md`。
+
+- 两轨的合流点：D1-b（GPU 解码到线性 BGRA 再直扫）。当前 `'b3a8'`（RGB10A8_2P_XR10 双平面）
+  DPU 大概率不认，先用 GPU 轨的 GpuScanoutClient/AdrenoMetal 解码到线性 BGRA，再由 DPU 扫出。
+- `GopFramebuffer@33e941a` 的 `sheng-dpu-scanout=2` 结构（VIG0/VIG1 + CTL0 flush + 失败回退）
+  已作为本轨样板；uke 侧 boot-arg 命名为 `uke-dpu=*`（A3 探针）、`uke-dpu-test=*`（C2 阶梯）、
+  `uke-dpu-scanout=*`（B2 窗口 / D2 集成）。
+- 现有 GPU/显示链保持默认不变；DPU 代码全部默认关，仅在测试镜像的启动参数中开启。
+- 实测后的 60/120 帧率路线（GPU 合成器 `o>0` → b3a8 GPU 解码 → vsync 120 → 非阻塞 flip →
+  带宽投票 → 600 MHz MDP）见 `docs/DPU-PORT.md` §8 与 `docs/DPU-TASKS.md` §8。

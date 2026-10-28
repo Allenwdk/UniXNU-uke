@@ -1,0 +1,22 @@
+From: uke bring-up <uke@local>
+Subject: [PATCH] uke: log the GPU addon staging result
+
+The addon staging's counters are already kept (zzy-native-gpu-addon-mount);
+this restores the one-line result log the working addon images carried
+(check-gpu-addon-host.py requires it as evidence that staging ran).
+
+---
+ bsd/kern/kern_exec.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7483,6 +7483,8 @@ native_gpu_addon_install(proc_t p, user_addr_t scratch)
+ 		}
+ 		at += (packed + 7) & ~7ULL;
+ 	}
++	printf("UKE GPU addon: stage=%d files=%d bytes=%llu error=%d\n", native_gpu_addon_stage,
++	    native_gpu_addon_files, (unsigned long long)native_gpu_addon_written, native_gpu_addon_error);
+ }
+ /* The OS cryptex where iPadOS looks for it. The root volume's entries for cryptex content are links into /System/Cryptexes/OS, which
+  * leads to /private/preboot/Cryptexes/OS; WebKit's processes are ExtensionKit extensions reached that way
