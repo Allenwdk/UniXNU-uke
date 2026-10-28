@@ -233,6 +233,10 @@ panic_screen = true                  # native XNU panic output; Font.h is vendor
 trust_cache_sha256 = [
   "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
 ]
+# The owner-built Metal addon (build-gpu-addon-blob.py, produced by the kernel
+# archives above): payloads/kernel.macho.gpuaddon, placed by the DarwinBoot
+# loader after the trust caches and staged into Data by kern_exec.c.
+gpu_addon = "build/uke-gpu-addon/gpu-addon.z"
 kernel_args = [
   "-v",
   "serial=3",
@@ -278,7 +282,13 @@ kernel_args = [
   # scanout client blits the offered frame into the scanout on the GPU; a
   # refused offer or failed copy falls back to the CPU copy (fail-safe).
   "sheng-fb-gpu=1",
-  "sheng-gpu-pool=0",
+  # DPU direct scanout: map the compositor's plain BGRA surface into the display bank's stage-1
+  # window and flip VIG0/VIG1, instead of the 27 MB CPU copy per frame.
+  "uke-dpu-scanout=3",
+  "sheng-gpu-pool=1536",
+  # The display refresh tick (upstream display port): 120 Hz vsync messages from the family's own sender, so the render
+  # server paces to the panel instead of its 1/60 s heartbeat, and IOMFBDisplayRefresh reports the panel rate.
+  "sheng-vsync=120",
   # stage the owner-built NativeAdrenoMetal bundle (addon blob) into Data so the
   # render server opens a native Metal device; iconservicesagent then keeps
   # CoreImage on that device instead of the null-GL crash loop.
@@ -298,7 +308,6 @@ kernel_args = [
   "sheng-pmgr=2",
   "sheng-lite=1",
   "sheng-aks=1",
-  "armcpu-diagnostics=1",
   "sheng-disable-watchdogd=1",
   "sheng-smp=1",
   "armcpu-spi-ipi=1",

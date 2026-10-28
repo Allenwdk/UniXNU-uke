@@ -38,6 +38,12 @@ uint32_t lutKHz(uint32_t row) {return (row >> 30) ? kXoKHz * (row & 0xff) : kGpl
 extern "C" void sheng_cpufreq_probe(void) {
     unsigned mode = 0;
     PE_parse_boot_argn("sheng-cpufreq", &mode, sizeof(mode));
+    // The read-only report also runs on the GPU track (sheng-gpu-power >= 9): it writes no register, it fills the row the
+    // boot page shows and the log carries, which is the only place this port's CPU levels are visible.
+    if (!mode) {
+        unsigned gpu = 0;
+        if (PE_parse_boot_argn("sheng-gpu-power", &gpu, sizeof(gpu)) && gpu >= 9) mode = 1;
+    }
     if (!mode) return;
     native_cpufreq_stage = 1;
     char *out = native_cpufreq_row;
@@ -67,8 +73,10 @@ extern "C" void sheng_cpufreq_probe(void) {
             if (dcvs & 1) for (unsigned c = 1; c < 4; ++c) wr32(va, kRegPerfState + c * 4, (uint32_t)best);
             rc = 1;
         }
-        n += (unsigned)snprintf(out + n, sizeof(native_cpufreq_row) - n, " d%u:e%u c%u p%u m%d@%u%s",
-                                d, enable & 1, state * kXoKHz / 1000, perf, best, bestKHz / 1000, rc ? " SET" : "");
+        uint32_t nowKHz = perf < kLutEntries ? lutKHz(rd32(va, kRegFreqLut + perf * 4)) : 0;
+        n += (unsigned)snprintf(out + n, sizeof(native_cpufreq_row) - n, " d%u:e%u c%u p%u f%u m%d@%u%s",
+                                d, enable & 1, state * kXoKHz / 1000, perf, nowKHz / 1000, best, bestKHz / 1000, rc ? " SET" : "");
     }
     native_cpufreq_stage = 2;
+    IOLog("UKE CPU: %s\n", out);
 }

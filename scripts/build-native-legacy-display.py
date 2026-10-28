@@ -85,6 +85,7 @@ for i in range(168,358):
     elif i==296:header+=' virtual bool validateSwap(const OriginalLegacySwapRequest *);\n'
     elif i==295:header+=' virtual void completeCurrentSwap();\n'
     elif i==337:header+=' virtual IOReturn collectCompletionReports(uint32_t,void *,uint32_t *,uint32_t)=0;\n'
+    elif i==301:header+=' virtual bool getRefreshAttributes(uint64_t *,bool);\n'
     elif i==288:header+=' virtual bool startHardware();\n'
     elif i in pure:header+=f' virtual __attribute__((noreturn)) void opaque{i}()=0;\n'
     else:header+=f' virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque{i}();\n'
@@ -130,12 +131,12 @@ owned=[];native=[]
 for i,name in enumerate(compiled):
     expected=int(methods[i]['address'],16)
     if name.startswith(('__ZN19NativeLegacyDisplay','__ZNK19NativeLegacyDisplay')):
-        owned.append(i);require(i in (0,1,7,14,84,86,87,141,155,184,188,242,288,290,296) or i in pure,'Only qualified own methods and guarded leaves override')
+        owned.append(i);require(i in (0,1,7,14,84,86,87,141,155,184,188,242,288,290,296,301) or i in pure,'Only qualified own methods and guarded leaves override')
     elif '25IOMobileFramebufferLegacy' in name:
         require(i not in pure,'No unresolved original abstract backend target');bindings[name]=expected
     else:
         require(i<168 and (old is None or names.get(name)==expected),'Actual inherited native base symbol '+str(i));native.append(i)
-require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,242,288,290,296]+pure),'Exact owned method set')
+require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,242,288,290,296,301]+pure),'Exact owned method set')
 undefined={n for n,_,k in symbols if k==1 and 'IOMobileFramebufferLegacy' in n}
 require(undefined==set(bindings),'All and only actual original-class imports qualified')
 # The default-surface port fallback calls the original slot242 and the original
@@ -146,6 +147,30 @@ bindings['_uke_surface_copy_port_name']=0xfffffff004baa90c
 # The family's own surface-ID lookup pair, exactly as swap_submit calls them: the IOSurfaceRoot
 # (framebuffer+0x1600) lookup stub with its third-argument helper (the submitting task). Both are
 # kext PLT stubs fixed in this image; the GOT slot behind each is bound at kext load.
+# The original display-refresh notification sender (self, timestamp, continuous host time, frame interval): it sends the six-word
+# vsync message (type 5) to every client entry queued at +5592, the tail queue that selector 72's registration fills at
+# +5512 + type*16. The platform subclass that normally calls it on each panel vblank is not part of this port.
+if old is not None:
+    require(read(0xfffffff005796720,16)==bytes.fromhex('ff0302d1fd7b07a9fdc30191a0831ff8') and
+            read(0xfffffff005796830,4)==bytes.fromhex('08ed4af9') and
+            read(0xfffffff00579685c,16)==bytes.fromhex('e2230091c3008052240080521684ff97') and
+            read(0xfffffff005795fbc,4)==bytes.fromhex('0ab182d2'),
+            'Original vsync sender, its +5592 queue and six-word drop-allowed async send')
+bindings['_native_legacy_vsync_notify']=0xfffffff005796720
+# Slot 301 fills the six refresh words that setDisplayRefreshProperties publishes as IOMFBDisplayRefresh (minimum interval, its mach
+# time, maximum interval, its mach time, step, its mach time; intervals in 32.32 seconds): the generic body fixes the minimum at
+# 0x04444444 (1/60 s), and the render server paces its display timer by it.
+if old is not None:
+    require(int(methods[301]['address'],16)==0xfffffff00579ea5c and read(0xfffffff00579ea68,8)==bytes.fromhex('888888d28888a0f2') and
+            read(0xfffffff00579ec54,4)==bytes.fromhex('08b544f9'),
+            'Original slot-301 refresh words with the 1/60 s minimum, called by setDisplayRefreshProperties')
+# setDisplayRefreshProperties itself (self): fills the six words through slot 301 and publishes them as IOMFBDisplayRefresh. Nothing in
+# the family calls it (the platform subclass does), so without it the render server falls back to its own 1/60 s heartbeat.
+if old is not None:
+    require(read(0xfffffff00579ebb8,16)==bytes.fromhex('ff0302d1fd7b07a9fdc30191a0031ff8') and
+            read(0xfffffff00579ed54,16)==bytes.fromhex('086540f90173ff90218c0c9100013fd6'),
+            'Original setDisplayRefreshProperties publishing IOMFBDisplayRefresh through setProperty')
+bindings['_native_legacy_set_refresh_properties']=0xfffffff00579ebb8
 bindings['_uke_surface_root_lookup']=0xfffffff0057a28c0
 bindings['_uke_surface_lookup_task']=0xfffffff0057a2e84
 if old is not None:

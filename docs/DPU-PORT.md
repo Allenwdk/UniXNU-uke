@@ -128,3 +128,62 @@ AGX/Metal 设备**，UI 仍是软件渲染。
 - 3200×2136×4 B = **27.34 MB/帧**；
 - 60 Hz = **1.64 GB/s**，120 Hz = **3.28 GB/s**；
 - DPU latch 目标 < **8.3 ms/帧**（120 Hz 周期）；当前 test=3 为 1.2 ms。
+
+## 9. 2026-10-29 晚：主线对齐后的 GPU 合成器与 120 fps 差距
+
+### 9.1 主线对齐（已完成）
+
+- `drivers/Adreno740`：A732 分支 rebase 到上游 `UniXNU/NativeAdreno` 的 `5c8c145`
+  （TLB 不再每帧清、VM 映射去 alias 扫描、handle index 16384、stall 恢复/总线 drain、
+  WPTR fenced 写、单提交 128 IB、BR/BV 上下文按 client 重置）；A732 profile、GMU pool adopt
+  和 BO view 拆除/延迟释放保留在顶部。kit `ArmSmmu4K` 同步到 `3ba9245`（新 VM API 依赖）。
+- `drivers/AdrenoMetal`：重置到上游 `ce5e19e`（prime list、tile 内存、设备答案缓存、tile store
+  行内等），只保留 iOS 17 SDK shared-event 声明。Turnip 用新驱动 ABI 重编（旧 Turnip 在
+  `vkCreateDevice` 返回 `VK_ERROR_INITIALIZATION_FAILED`，日志 `K4 6800 6801 6a3c 68f2`）。
+- 结果：GPU 合成器真正工作（`o6`、`UKE GPU8 PUB tex`），不再 DeviceLost/硬卡死；
+  `uke-dpu-scanout=3` 直扫 BGRA + 延迟一帧，约 **15 fps**。
+
+### 9.2 实测（gpucomp19，约 15 分钟）
+
+- GPU 提交 **8892 次 / 910 s ≈ 9.7 次/s**；`commit-to-complete` 平均 **51 ms**，最长 1.1 s。
+- 失败提交 6 次；stall 时 `STATUS3` bit24（SMMU stalled），进程 `KaleidoscopePoster`
+  `l6/2d6`（waitFence Busy）——壁纸动态模糊/特效触发；上游 stall handler 每次约 1 s 自动恢复
+  （下一个心跳回到 `R1 I0 F0`）。
+- `L bk` 累计 100 GB、surface cache 累计 498 GB（约 11 MB/帧的桥接 copy/shadow）。
+- b3a8 主 surface（`format=62336138`）仍是 `presentable=0`（被 BGRA 的 stride/bounds 检查拒绝）；
+  只有 BGRA 帧被直扫，命中率取决于合成器输出格式。
+
+### 9.3 120 fps 差距与顺序
+
+120 Hz 每帧预算 **8.3 ms**；当前 51 ms，差约 6 倍，且每次 stall 归零 1 s。
+
+1. **S1 修 stall（阻塞项）**：把上游 `native_adreno_stall_mem`（FSR/FAR/IB words/映射 handle）
+   从探针打到 `UKE GPUFLT:`，确认是 blur 访问了已释放/复用 BO，还是管线/描述符错误；
+   临时禁用 KaleidoscopePoster 做对照。
+2. **S2 GPU 频率/带宽**：确认主线同步后 perf vote 仍生效（950 MHz）与显示/DRAM 带宽 high 档
+   （120 Hz 需 3.28 GB/s）；旧 mode 8 只验证过老驱动。
+3. **S3 每帧分解**：`presentBase`/`dpuPresentBgra`/插件分别记录 GPU commit、present、
+   `CTL_FLUSH` 等待；定位 51 ms 与 11 MB/帧 copy 的占比。
+4. **P3 vsync 120**：移植 `startVsync/vsyncTick/getRefreshAttributes`，`sheng-vsync=120`。
+5. **P4 非阻塞 flip**：`CTL_FLUSH` 轮询（最坏 100 ms）改 workloop timer/异步 retire，
+   presentBase 立即返回；一帧延迟在 fence 可用后去掉。
+6. **P2 b3a8**：GPU 解码到 BGRA（或 CA 直接出 BGRA）；否则 b3a8 帧被丢弃，120 fps 无意义。
+7. **P6/P5**：`mdp_clk` 600 MHz + 显示带宽投票，保证 120 Hz 余量。
+
+### 9.4 判定
+
+- S1：stall 不再出现，或 `UKE GPUFLT` 能指出确定的 VA/BO；Kaleidoscope 对照消失。
+- S2：GPU 在负载下 950 MHz；带宽 high 档。
+- S3：单帧时间分解表；GPU/显示各占多少。
+- 之后按 P3→P4→P2→P5/P6 收口；目标 60 fps 先稳定，再 120 fps。
+
+## 10. 2026-10-29：P2 实装（gpucomp26）
+
+b3a8（RGB10A8_2P_XR10）不再被跳过：它的颜色平面（plane 0，4 B/texel，行距 `4*width`）就是 VIG 管线支持的
+`XRGB2101010`，`SRC_FORMAT` 由 firmware 的 ARGB8888 值 `0x000237ff` 推出 `0x000276ff`（清 alpha 位 8、
+置 DX 位 14，`UNPACK=0x03020001` 不变），与 reference 里 SM7675 原厂 `dpu_hw_sspp.c`/`dpu_formats.c` 一致。
+`dpuSlot` 改为映射所需前缀（34 MB 的帧只映射 plane 0 的 27,340,800 B），`dpuPresentFrame` 每次 flip 同时写
+源格式并随帧保存 ten-bit 标记；BGRA 与 b3a8 共用“延迟一帧 + 直扫”路径，CPU 逐像素解码降为 DPU 不可用时的 fallback。
+镜像：kernel `3e06e971…`、payload `94cfdcf7…`、vendor_boot `1d0294cf…`、boot `0220bc5a…`
+（`uke-port/releases/2026-10-29-gpu-dpu-tenbit/`）。判定项：闪烁消失、颜色顺序、`UKE DPU: tenbit sample` 的
+alpha 实测值、`direct slot … bytes=27340800`。

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Host check for the embedded GPU addon artifact.
+"""Host check for the GPU addon artifact.
 
-Parses build/uke-gpu-addon/gpu-addon.z the way kern_exec.c's
-native_gpu_addon_install does (header, zlib stream, per-entry bounds), validates
-the tree the kernel will write against the packer report and the current plugin
-build, derives each Mach-O's ldid CDHash from its CodeDirectory, and optionally
-confirms the owner trust module carries those CDHashes, that a flashable kernel
-embeds this exact blob, that a payload's unixnu.toml carries the Metal addon
+Parses build/uke-gpu-addon/gpu-addon.z the way the DarwinBoot loader and
+kern_exec.c's native_gpu_addon_install do (NGPUADD2 header, per-file zlib
+streams, bounds), validates the tree the kernel will write against the packer
+report and the current plugin build, derives each Mach-O's ldid CDHash from
+its CodeDirectory, and optionally confirms the owner trust module carries
+those CDHashes, that a payload carries this exact blob as
+Payloads/kernel.macho.gpuaddon with the ADT GpuAddon entry and the Metal addon
 boot arguments, and that a vendor_boot image carries that payload at 0x1000.
 Nothing here touches hardware.
 
@@ -27,10 +28,9 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HEADER = struct.Struct('<8sIIQQ')     # magic, version, count, raw bytes, cookie
-ENTRY = struct.Struct('<IIQ')         # path length, mode, data length
+HEADER = struct.Struct('<8sIIQ')      # magic, entry count, reserved, total file bytes
+ENTRY = struct.Struct('<IIQQ')        # path bytes (with NUL), mode, data length, compressed length
 MAGIC = b'NGPUADD2'
-VERSION = 2
 PATH_MAX = 1024
 EXPECTED = {
     'addons/NativeAdrenoMetal.bundle/NativeAdrenoMetal': 0o755,
@@ -89,39 +89,48 @@ def cdhash(macho):
 
 
 def parse_blob(blob):
+    """Parse the NGPUADD2 stream exactly as DarwinBoot checks it and
+    kern_exec.c's native_gpu_addon_install validates it: a fixed 24-byte
+    header, then per entry u32 path bytes (with NUL), u32 mode, u64 size,
+    u64 compressed size, the path padded to 8 and one zlib stream padded to
+    8. The header's total size is the whole file."""
     if len(blob) < HEADER.size:
         fail('blob is shorter than its header')
-    magic, version, count, raw_size, cookie = HEADER.unpack_from(blob)
-    if magic != MAGIC:
-        fail('blob magic %r is not %r' % (magic, MAGIC))
-    if version != VERSION:
-        fail('blob version %u is not %u' % (version, VERSION))
-    try:
-        body = zlib.decompress(blob[HEADER.size:])
-    except zlib.error as error:
-        fail('zlib stream does not inflate: %s' % error)
-    if len(body) != raw_size:
-        fail('inflated %u bytes, header says %u' % (len(body), raw_size))
-    if fnv1a(body) != cookie:
-        fail('body cookie %08x does not match the header %08x' % (fnv1a(body), cookie))
+    if blob[:8] != MAGIC:
+        fail('blob magic %r is not %r' % (blob[:8], MAGIC))
+    count, reserved = struct.unpack_from('<II', blob, 8)
+    raw_size = struct.unpack_from('<Q', blob, 16)[0]
+    if raw_size != len(blob):
+        fail('header total %u differs from the file size %u' % (raw_size, len(blob)))
+    if not 0 < count <= 4096:
+        fail('entry count %u is outside 1..4096' % count)
     entries = {}
-    at = 0
+    at = HEADER.size
     for index in range(count):
-        if at + ENTRY.size > len(body):
+        if at + ENTRY.size > len(blob):
             fail('entry %u header is truncated' % index)
-        path_len, mode, data_len = ENTRY.unpack_from(body, at)
+        path_len, mode, data_len, packed_len = ENTRY.unpack_from(blob, at)
         at += ENTRY.size
-        if not 0 < path_len <= PATH_MAX or at + path_len > len(body) or data_len > len(body) - at - path_len:
+        name_padded = (path_len + 7) & ~7
+        data_padded = (packed_len + 7) & ~7
+        if not 0 < path_len <= PATH_MAX or not data_len <= 0x7fffffff or not packed_len or packed_len > 0x7fffffff:
             fail('entry %u lengths are invalid' % index)
-        name = body[at:at + path_len].decode('utf-8', 'strict')
-        at += path_len
+        if at + name_padded + data_padded > len(blob):
+            fail('entry %u runs past the blob' % index)
+        name = blob[at:at + path_len].split(b'\0', 1)[0].decode('utf-8', 'strict')
         if name in entries:
             fail('duplicate entry ' + name)
-        entries[name] = {'mode': mode, 'data': body[at:at + data_len]}
-        at += data_len
-    if at != len(body):
-        fail('%u trailing bytes after %u entries' % (len(body) - at, count))
-    return entries, raw_size, cookie, len(blob)
+        try:
+            data = zlib.decompress(blob[at + name_padded:at + name_padded + packed_len])
+        except zlib.error as error:
+            fail(name + ': zlib stream does not inflate: %s' % error)
+        if len(data) != data_len:
+            fail('%s: inflated %u bytes, header says %u' % (name, len(data), data_len))
+        entries[name] = {'mode': mode, 'data': data}
+        at += name_padded + data_padded
+    if at != len(blob):
+        fail('%u trailing bytes after %u entries' % (len(blob) - at, count))
+    return entries, raw_size, 0, len(blob)
 
 
 def main():
@@ -136,15 +145,15 @@ def main():
 
     blob = (args.blob_dir / 'gpu-addon.z').read_bytes()
     entries, raw_size, cookie, blob_size = parse_blob(blob)
-    print('PASS: blob %u bytes, %u raw, cookie %08x, %u entries' % (blob_size, raw_size, cookie, len(entries)))
+    print('PASS: blob %u bytes, header total %u, %u entries' % (blob_size, raw_size, len(entries)))
 
     report_path = args.blob_dir / 'gpu-addon.json'
     if report_path.is_file():
         report = json.loads(report_path.read_text())
         if report.get('blob_sha256') != hashlib.sha256(blob).hexdigest():
             fail('gpu-addon.json blob_sha256 does not match the blob')
-        if report.get('raw_bytes') != raw_size or report.get('cookie') != cookie:
-            fail('gpu-addon.json header fields do not match the blob')
+        if report.get('bytes') != len(blob):
+            fail('gpu-addon.json byte count does not match the blob')
         reported = {entry['path']: entry for entry in report.get('entries', [])}
         if set(reported) != set(entries):
             fail('gpu-addon.json entry list does not match the blob')
@@ -157,13 +166,19 @@ def main():
     expected = dict(EXPECTED)
     if probe:
         del expected['addons/NativeAdrenoMetal.publish']
-    if set(entries) != set(expected):
-        fail('entry set differs: %s' % sorted(set(entries) ^ set(expected)))
+    wallpaper = {name for name in entries if name.startswith('wallpaper/')}
+    extras = wallpaper | ({'addons/NativeAdrenoMetal.generic'} & set(entries))
+    if set(entries) - extras != set(expected):
+        fail('entry set differs: %s' % sorted((set(entries) - extras) ^ set(expected)))
     for name, mode in expected.items():
         if entries[name]['mode'] & 0o7777 != mode:
             fail('%s: mode %04o, expected %04o' % (name, entries[name]['mode'] & 0o7777, mode))
-    print('PASS: the %u expected entries with the expected modes%s' % (
-        len(expected), ' (probe, no publish marker)' if probe else ''))
+    for name in wallpaper:
+        if entries[name]['mode'] & 0o7777 != 0o644:
+            fail('%s: wallpaper file mode %04o, expected 0644' % (name, entries[name]['mode'] & 0o7777))
+    print('PASS: the %u expected entries with the expected modes%s%s' % (
+        len(expected), ' (probe, no publish marker)' if probe else '',
+        ' + %u wallpaper files' % len(wallpaper) if wallpaper else ''))
 
     if not probe:
         publish = entries['addons/NativeAdrenoMetal.publish']['data'].strip()
@@ -228,13 +243,13 @@ def main():
 
     if args.kernel:
         kernel = args.kernel.read_bytes()
-        if kernel.find(blob) < 0:
-            fail(str(args.kernel) + ': does not embed this exact blob')
         if b'UKE GPU addon: stage=' not in kernel:
-            fail(str(args.kernel) + ': has the blob but not the staging log')
+            fail(str(args.kernel) + ': lacks the staging log')
         if b'native_gpu_addon_zalloc' not in kernel:
             fail(str(args.kernel) + ': lacks the zlib allocator wrapper; inflateInit would call NULL on the first boot')
-        print('PASS: %s embeds this blob (%u bytes) and the zlib allocator wrapper' % (args.kernel, blob_size))
+        if kernel.find(blob) >= 0:
+            fail(str(args.kernel) + ': still embeds the addon; the loader carries it instead (payload would not fit)')
+        print('PASS: %s carries the addon installer (not the blob; the loader hands it over)' % args.kernel)
 
     if args.payload:
         mcopy = shutil.which('mcopy')
@@ -261,6 +276,20 @@ def main():
         print('PASS: %s boot args %u bytes, tag %s, surface %s, fb-gpu %s, iconservices %s' % (
             args.payload, len(boot_args.encode()), tag, surface, fbgpu,
             'on' if 'sheng-iconservices=1' in tokens else 'off'))
+        try:
+            packaged_addon = subprocess.run(
+                [mcopy, '-i', str(args.payload), '::/EFI/UniXNU/Payloads/kernel.macho.gpuaddon', '-'],
+                capture_output=True, check=True).stdout
+            adt = subprocess.run(
+                [mcopy, '-i', str(args.payload), '::/EFI/UniXNU/Payloads/kernel.macho.adt', '-'],
+                capture_output=True, check=True).stdout
+        except subprocess.CalledProcessError as error:
+            fail('%s: cannot read the GPU addon files: %s' % (args.payload, error.stderr.decode().strip()))
+        if hashlib.sha256(packaged_addon).hexdigest() != hashlib.sha256(blob).hexdigest():
+            fail('%s: kernel.macho.gpuaddon differs from %s/gpu-addon.z' % (args.payload, args.blob_dir))
+        if b'GpuAddon' not in adt:
+            fail('%s: the ADT has no GpuAddon memory-map entry; the loader has nowhere to record the range' % args.payload)
+        print('PASS: %s carries this addon (%u bytes) and the ADT GpuAddon entry' % (args.payload, len(blob)))
 
     if args.vendor_boot:
         if not args.payload:

@@ -245,6 +245,19 @@ void native_legacy_copy_timing_observed(uint64_t ticks,uint64_t bytes) {
     native_legacy_copy_n=native_legacy_copy_n+1;native_legacy_copy_last=ticks;native_legacy_copy_sum=native_legacy_copy_sum+ticks;
     if(ticks>native_legacy_copy_max)native_legacy_copy_max=ticks;
 }
+// The display refresh tick (NativeLegacyDisplay, sheng-vsync): vsync messages sent, arms, idle stops, late ticks, starts and refresh
+// properties reported at that rate, and the rate. The banner shows the totals with the other display counters.
+static volatile uint64_t vsyncEvents[6];
+static volatile unsigned vsyncHz;
+void native_legacy_vsync_observed(unsigned event,unsigned hz) {
+    if(event<6)vsyncEvents[event]=vsyncEvents[event]+1;
+    vsyncHz=hz;
+}
+extern "C" unsigned native_legacy_vsync_report(char *out,unsigned cap) {
+    return snprintf(out,cap,"vsync hz=%u sent=%llu arms=%llu idle=%llu late=%llu start=%llu refresh=%llu",vsyncHz,
+        (unsigned long long)vsyncEvents[1],(unsigned long long)vsyncEvents[0],(unsigned long long)vsyncEvents[2],
+        (unsigned long long)vsyncEvents[3],(unsigned long long)vsyncEvents[4],(unsigned long long)vsyncEvents[5]);
+}
 // XNU's console switch keeps drawing text into the firmware frame buffer that
 // the display stack now presents over. Once launchd starts a daemon storm the
 // 3200x2136 scroll work can wedge the console and stop every later log line;

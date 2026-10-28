@@ -50,6 +50,21 @@ sheng_gpu_power_probe (void)
 }
 
 /*
+ * The Adreno driver's BO-release check asks this hook which user mappings still cover a page (the host fixtures define it). The
+ * kernel has no such helper, so it answers none and the check skips itself; without a definition the weak import keeps the
+ * kernel link open.
+ */
+unsigned int
+native_pmap_user_mappings (unsigned int page, void **pmap, uint64_t *va, char *name)
+{
+  (void)page;
+  (void)pmap;
+  (void)va;
+  (void)name;
+  return 0;
+}
+
+/*
  * NativeLegacyDisplay always references the GPU hand-off hooks, even when
  * CONFIG_XNU_NATIVE_ADRENO is off and GpuPowerProbe.cpp is not compiled.
  * The weak definitions keep the display-only kernel linkable; the Adreno
