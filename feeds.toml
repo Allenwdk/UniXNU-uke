@@ -12,6 +12,7 @@ commit = "e45fbe30a7879e0b16e26dddb78538f1b00e0bff"
 name = "sm7675"
 kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
+commit = "98618c197e789acfd7ac6755ad23bf7e04881780"
 local = "../UniXNU-sm7675-common"
 
 # Board-pinned component variants: the A732 GPU fork and the overlay-present
