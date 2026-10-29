@@ -1809,6 +1809,9 @@ void probeThread(void *, wait_result_t) {
 // everything the render server had submitted by then, the frame about to be scanned included, has been consumed. Evidence
 // for now (the display counts idle and busy flips); weak there, so a configuration without this probe keeps its own path.
 extern "C" bool native_gpu_idle(void) {
+    /* The display's direct path can ask before sheng_gpu_power_probe has installed the MMIO callbacks:
+     * gColdDevice.io.read32 is null then, and calling it jumps to pc=0. Treat an unstarted probe as "not idle". */
+    if (!gColdDevice.io.read32) return false;
     if (!gxOn()) return false;
     return gpuRd(A740_CP_RB_RPTR) == gpuRd(A740_CP_RB_WPTR);
 }
