@@ -48,6 +48,11 @@ struct ctx {
 #ifndef PANIC_QUIET
 #define PANIC_QUIET 0UL
 #endif
+/* The kernel's printf (kern/printf.c): the message also goes into the message buffer, which UkeLastLog writes to userdata every two
+ * seconds, so the panic text survives a parked screen and a reboot. */
+#ifndef PANIC_PRINTF
+#define PANIC_PRINTF 0UL
+#endif
 #define PANIC_TEXT_BYTES 256
 #define PANIC_SAVE_BYTES 1024
 
@@ -330,6 +335,13 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   mark[0] = 0xC0FFEE11u;
   mark[1] = 0x5CEEDA7Au;
   __asm__ volatile ("dsb sy");
+#if PANIC_PRINTF
+  /* Straight into the kernel log, one line: this is the copy that reaches userdata even when the pram hand-off does not. */
+  if (saved) {
+    typedef int (*panic_printf_t)(const char *, ...);
+    ((panic_printf_t)PANIC_PRINTF)("UKE PANIC: %s\n", (const char *)save);
+  }
+#endif
   /* Hand the saved text to the boot-log writer's pram staging block. The marker
    * above is already set, so a fault here parks a nested panic instead of
    * repainting over this one. */

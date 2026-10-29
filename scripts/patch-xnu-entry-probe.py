@@ -210,6 +210,13 @@ def assemble_c(source, va, workdir, symbols):
         if quiet % 4 or not any(base <= quiet and quiet + 4 <= base + size for base, size, _, _ in SEGMENTS):
             raise SystemExit('Invalid _disableConsoleOutput')
         definitions.append(f'-DPANIC_QUIET={quiet:#x}UL')
+    # Optional: the kernel's printf, so the panic text also reaches the message buffer (and therefore the userdata log) instead of
+    # living only on the parked screen and in the pram.
+    kprintf = symbols.get('_printf')
+    if kprintf is not None:
+        if not any(base <= kprintf < base + size for base, size, _, _ in SEGMENTS):
+            raise SystemExit('Invalid _printf')
+        definitions.append(f'-DPANIC_PRINTF={kprintf:#x}UL')
     # Optional: UkeLastLog's pram staging, called from the panic screen because the
     # normal panic funnel (which used to call it) is redirected to this screen.
     flush = symbols.get('_uke_panic_flush')
