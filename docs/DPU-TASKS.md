@@ -595,3 +595,13 @@ gpucomp47（"可开机基线"）能进系统，但**明显是 CPU 渲染**——
 
 `feeds.toml` 的 commit 与“本地构建实际用的工作区”是两回事。回退镜像时必须查**驱动仓 reflog 的时间点**，
 不能只信 pin；对比构建产物时，符号表差异是最快的证据（比逐行读代码快得多）。
+
+### 结论（2026-10-29 深夜，设备已验证）
+
+gpucomp49 上机正常：**GPU 渲染恢复**，行为与 gpucomp37 一致。可开机基线就此定为：
+
+- 驱动 `NativeAdreno` **`c950906`**（分支 `uke-a732-gpu37`，= 本地 A732 提交 + 上游 `perf/gpu-smoothness`），
+  `feeds.toml` 的 pin 同步为它；
+- 显示 `NativeMobileDisplay` `cd8a7b2`、Metal `NativeMetal` `739de5b`；
+- 设备仓 `UniXNU-uke-format2` `7b0f84b`、核心仓 `UniXNU-format2` `27fdaf2`（ArmSmmu4K `3ba9245`）；
+- 五个仓库的 `main` 都指向上述提交；镜像 `uke-port/releases/2026-10-29-gpu-revert/gpucomp49`。
