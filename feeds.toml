@@ -15,32 +15,33 @@ git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
 commit = "98618c197e789acfd7ac6755ad23bf7e04881780"
 local = "../UniXNU-sm7675-common"
 
-# Board-pinned component variants: the A732 GPU fork and the overlay-present
-# display fork keep the uke bring-up pins, and the UFS and touch sources are
-# the board's own copies. Everything else resolves through the catalog.
+# Board-pinned component variants: the canonical GPU modules carry the uke
+# baseline branches (same commit objects as the retired Native* checkouts), and
+# the UFS and touch sources are the board's own copies. Everything else
+# resolves through the catalog. The Native* repositories are kept only as
+# history/fallback; no build reads them.
 [[source]]
 name = "Adreno740"
 kind = "driver"
-git = "https://github.com/Allenwdk/NativeAdreno.git"
-# The branch gpucomp37 was built from: the local A732 commits rebased onto
-# upstream perf/gpu-smoothness (stall handling, retired-BO reaper, WPTR fence
-# checks). f1a2aee is the older m9f-era tip and renders on the CPU here.
+git = "https://github.com/UniXNU/Adreno740.git"
+# uke-a732-baseline: the gpucomp49 driver tree in the canonical repository
+# (upstream perf/gpu-smoothness plus the A732/GMU bring-up commits).
 commit = "c9509066f5cf0f958a22077f214c15837d54191a"
-local = "../UniXNU/drivers/NativeAdreno"
+local = "../UniXNU/drivers/Adreno740"
 
 [[source]]
 name = "GopFramebuffer"
 kind = "driver"
-git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
+git = "https://github.com/UniXNU/GopFramebuffer.git"
 commit = "cd8a7b2d7f73d3e28a69201b5e448c8883c9ce26"
-local = "../UniXNU/drivers/NativeMobileDisplay"
+local = "../UniXNU/drivers/GopFramebuffer"
 
 [[source]]
 name = "AdrenoMetal"
 kind = "driver"
-git = "https://github.com/Allenwdk/AdrenoMetal.git"
+git = "https://github.com/UniXNU/AdrenoMetal.git"
 commit = "739de5b622cee3b441f07826d6d4fface0a1fc19"
-local = "../UniXNU/drivers/NativeMetal"
+local = "../UniXNU/drivers/AdrenoMetal"
 
 [[source]]
 name = "ShengUfs"
