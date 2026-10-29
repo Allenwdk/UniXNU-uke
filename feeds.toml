@@ -22,7 +22,10 @@ local = "../UniXNU-sm7675-common"
 name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
-commit = "f1a2aeed0efa50dbb9f4db279f2d157114eafddc"
+# The branch gpucomp37 was built from: the local A732 commits rebased onto
+# upstream perf/gpu-smoothness (stall handling, retired-BO reaper, WPTR fence
+# checks). f1a2aee is the older m9f-era tip and renders on the CPU here.
+commit = "c9509066f5cf0f958a22077f214c15837d54191a"
 local = "../UniXNU/drivers/NativeAdreno"
 
 [[source]]
