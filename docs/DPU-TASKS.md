@@ -555,3 +555,43 @@ gpucomp47（"可开机基线"）能进系统，但**明显是 CPU 渲染**——
 从"当时能跑的一版"回退，必须核对**未提交工作区里混在同一个提交中的功能性改动**，不能只看名字像遥测的
 （pool/投票这类两行代码决定 GPU 是否以正确档位、正确内存池运行）。以后 feat 的提交里再出现这类混装，
 摘取时按 hunk 逐个判断。
+
+## 31. 2026-10-29 深夜：gpucomp48 仍 CPU 渲染 → 驱动 commit 认错（gpucomp49）
+
+### 真正的根因
+
+`feeds.toml` 里 `Adreno740` 从 format-2 迁移起就写着 `commit = "f1a2aee…"`，但构建实际用的是
+`local = "../UniXNU/drivers/NativeAdreno"` 的**工作区**——pin 只是记录，不参与本地构建。
+驱动仓 reflog 显示 gpucomp37 构建时（03:24）HEAD 是 `uke-a732-single` @ **`c950906`**
+（本地 A732 提交 rebase 到上游 `perf/gpu-smoothness` 的结果），而不是 `f1a2aee`（那是 m9f 时代的旧 tip）。
+
+**用符号表证明**：把 gpucomp37 与 gpucomp48 两个 payload 里的 `kernel.macho` 抽出来对比：
+
+| 符号 | gpucomp37 | gpucomp48(f1a2aee) |
+| --- | --- | --- |
+| `retiredReaper` / `NativeAdrenoRing::kick` / `writeWptr` | 有 | 无 |
+| `native_adreno_stall*` / `ring_window` / `wptr_fence` / `unstick` | 有 | 无 |
+| `AGXDeviceUserClient::dropViewsLocked`、`NativeAdrenoUserClient::publish` | 有 | 无 |
+| `NativeAdrenoVm::peekWordsUncached/rangeAt/handleAt`、`NativeAdrenoHandleIndex` | 有 | 无 |
+
+即 f1a2aee 缺了**整批**上游 `perf/gpu-smoothness` 的提交（stall 处理、retired BO 回收、WPTR 栅栏检查、
+成长表），gpucomp48 等于用了一个老得多的驱动。
+
+### 修复
+
+- 驱动仓：`c950906` 之前只挂在 reflog 上（`uke-a732-single` 已被 feat 的 rebase 覆盖），已救回为分支
+  **`uke-a732-gpu37`**，并把 `main` 指到它。
+- `feeds.toml` 的 Adreno740 commit 改成 `c950906…`（设备仓 `c828941`）；probe 的 `NativeAdrenoRingIo`
+  按这个分支的六个字段初始化（新增的 fence 字段传空，行为与此前一致）。
+- **验证**：新内核与 gpucomp37 的 `kernel.macho` **文件大小完全相同**（52,281,344 B），段表只差
+  `__LINKEDIT` 216 B；符号表差异只剩 6 个，全部是本就不引入的 feat 遥测（metal 行镜像、stall dump、`gpuWalk`）。
+
+### 镜像
+
+`vendor_boot_uke_gpucomp49.img` `8a6acab5…`、`payload_uke_gpucomp49.img` `00f48820…`、
+内核 `431f7761…`、boot 沿用 `0220bc5a…`；addon 校验全 PASS。
+
+### 流程教训
+
+`feeds.toml` 的 commit 与“本地构建实际用的工作区”是两回事。回退镜像时必须查**驱动仓 reflog 的时间点**，
+不能只信 pin；对比构建产物时，符号表差异是最快的证据（比逐行读代码快得多）。
