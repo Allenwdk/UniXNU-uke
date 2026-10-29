@@ -417,3 +417,18 @@ A4 ──┴── B3 ──┘                        (GPU 轨 D1-b 合流)
 - probe 新增 `UKE GPU: maint pool=…/KiB alloc=… map=… sub=… unmap=… cmp=… tab=…`（上游分阶段计数）。
 - 镜像：kernel `f050cf35…`、payload `be3f7cc8…`、vendor_boot `29ddb27b…`、boot `0220bc5a…`（release
   `2026-10-29-gpu-upstream-feat/`），**按要求未刷入**，设备停在 TWRP。
+
+## 26. 2026-10-29：gpucomp38 变 CPU 渲染的根因与 gpucomp39
+
+- 日志：`M … o8/24/4 … d00:0/263`（daemon 未起、24 次 open 被拒），无驱动错误行，显示侧正常。
+- 根因：feat 的**每进程地址空间**（`createVm`）依赖 `ttbr0_switched`；本板未就绪 → 用户连接全被拒 → 插件不工作。
+- 修复：`mount` 在 `createVm` 失败时回退共享内核 VM（feat 前行为），计数 `mount_fail[2]`；
+  新增 `UKE GPU: conn switch=… cp=… mode=… mount=… shared=… tables=…` 遥测。
+- 镜像 gpucomp39：kernel `80483408…`、payload `89f348f2…`、vendor_boot `91b8c352…`（已刷）。
+
+## 27. 2026-10-29：feat 版连接路径未通，设备回到 gpucomp37
+
+- gpucomp39 真实 M 行 `o0/4/0`：0 个客户端成功打开；`conn switch=0 cp=0 mode=1 mount=…/NotReady shared=1 tables=12/0`。
+- 表切换/CP 检查成功、createVm NotReady、共享回退触发，但连接仍失败 ⇒ feat 的每进程地址空间路径在本板未走通。
+- 带宽测量（1.76/3.75 GB/s）来自 gpucomp37（老驱动），结论不受影响。
+- 设备刷回 gpucomp37；feat 合并改为独立任务，先补细粒度失败点遥测（createVm/setScope/core->open/service）。

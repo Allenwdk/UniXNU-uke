@@ -1329,6 +1329,49 @@ void ipiSelfTest() {
     gicRow();
 }
 void startHeartbeatThread();
+// ---- The GPU SMMU aperture (qcom_scm_kgsl_set_smmu_aperture) --------------------------------------------------------
+// The stage-1 input size the GPU's SMMU reports (ID2.UBS) is fused to 32 bits until the secure monitor is told to open a wider
+// aperture for the CP's context bank: SVC_MP 0x0c, command 0x1b, QCOM_SCM_ARGS(4) with {0xffff0000 | (reg << 8) | cb, ~0, ~0, ~0}
+// (drivers/firmware/qcom_scm.c of the stock kernel). The feature branch's per-process address spaces need more than 32 bits of
+// client window, so the call is made before the GPU context reads ID2 and the accepted argument is published.
+extern "C" {extern volatile uint32_t native_adreno_cp_aperture[4];}
+extern "C" {volatile uint32_t native_gpu_scm_aperture[8];}   // per tried bank: the SMC's x0; [6] accepted bank, [7] calls
+struct ScmRes4 {int64_t a0;uint64_t a1;uint32_t ms,resumes;};
+static ScmRes4 scmCall4(uint64_t fn,uint64_t arginfo,uint64_t p0,uint64_t p1,uint64_t p2,uint64_t p3) {
+    uint64_t first=fn,a6=0;
+    const uint64_t start=mach_absolute_time();
+    auto done=[&](int64_t a0,unsigned resumes) {
+        uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time()-start,&ns);
+        return ScmRes4{a0,0,(uint32_t)(ns/1000),resumes};
+    };
+    for (unsigned resume=0,busy=0;resume<10000;) {
+        register uint64_t x0 asm("x0")=first,x1 asm("x1")=arginfo,x2 asm("x2")=p0,x3 asm("x3")=p1;
+        register uint64_t x4 asm("x4")=p2,x5 asm("x5")=p3,x6 asm("x6")=a6,x7 asm("x7")=0;
+        asm volatile("smc #0" : "+r"(x0),"+r"(x1),"+r"(x2),"+r"(x3),"+r"(x4),"+r"(x5),"+r"(x6),"+r"(x7)
+                     :: "x8","x9","x10","x11","x12","x13","x14","x15","x16","x17","memory");
+        if(x0==1) {first=1;a6=x6;++resume;continue;}
+        if(int64_t(x0)==-12 && busy++<20) {first=fn;a6=0;IOSleep(30);continue;}
+        return done(int64_t(x0),resume);
+    }
+    return done(-1000,10000);
+}
+static void scmAperture() {
+    /* arm_smmc CALL_VAL(STD, SMC_64, OWNER_SIP, SVC_MP << 8 | CP_SMMU_APERTURE_ID). */
+    const uint64_t fn=0x42000000ull|(0x0cull<<8)|0x1bu;
+    unsigned accepted=0xff;
+    for(unsigned cb=0;cb<4;++cb) {
+        const ScmRes4 r=scmCall4(fn,4,0xffff0000ull|(cb&0xff),~0ull,~0ull,~0ull);
+        native_gpu_scm_aperture[cb]=uint32_t(r.a0);
+        native_gpu_scm_aperture[7]=native_gpu_scm_aperture[7]+1;
+        if(!r.a0 && accepted==0xff)accepted=cb;
+    }
+    native_gpu_scm_aperture[6]=accepted;
+    if(accepted!=0xff) {native_adreno_cp_aperture[0]=0x80000000u|1u;native_adreno_cp_aperture[1]=0;}
+    IOLog("UKE GPU: aper cb0=%x cb1=%x cb2=%x cb3=%x accepted=%d\n",
+          native_gpu_scm_aperture[0],native_gpu_scm_aperture[1],native_gpu_scm_aperture[2],native_gpu_scm_aperture[3],
+          accepted==0xff?-1:int(accepted));
+}
+
 void gpuStart() {
     char row[64];
     uint32_t *c = native_gpu_cp;
@@ -1336,6 +1379,9 @@ void gpuStart() {
     // The BO pool (one contiguous block, sheng-gpu-pool MiB, sheng's default 1536) is taken inside the bring-up; the driver's
     // NativeAdrenoService reads the same argument only later, after the context is already built, so set it here first.
     native_adreno_pool_mib = bootArg("sheng-gpu-pool", 1536);
+    // The CP's SMMU aperture, before the context reads ID2 (see scmAperture): a widened input size is what the feature branch's
+    // per-process client address spaces need. A refused call leaves the fused 32-bit aperture and the driver's shared fallback.
+    scmAperture();
     // 1. The GPU's own context bank and buffers (arm-smmu-qcom: the GPU always gets bank 0; DT iommus SIDs 0 and 1).
     NativeAdrenoGmuContextReport &q = native_gpu_context;
     const IOReturn ctx = NativeAdrenoGpuContextBringup(reinterpret_cast<volatile uint8_t *>(gSmmuMap->getVirtualAddress()),
@@ -1486,6 +1532,21 @@ void startHeartbeatThread() {
 extern "C" uint32_t native_gpu_revote_now(void);
 extern "C" void sheng_cpufreq_probe(void);
 
+// The driver's connection path: whether the context's table switching came up (feat branch: every user connection takes its own
+// address space and is refused without it), the CP-switch check, and how many connections fell back to the kernel's space.
+extern "C" {extern volatile uint32_t native_adreno_table_switches[8];}
+extern "C" {extern volatile uint32_t native_adreno_mount_fail[4];}
+extern "C" {extern volatile uint32_t native_adreno_cp_aperture[4];}
+extern "C" {extern volatile uint32_t native_adreno_bits[2];}
+static void logConnections()
+{
+    IOLog("UKE GPU: conn switch=%x cp=%x mode=%u mount=%u/%x shared=%u tables=%u/%u in=%u out=%u\n",
+          native_adreno_table_switches[6], native_adreno_cp_aperture[2], native_adreno_cp_aperture[3],
+          native_adreno_mount_fail[0], native_adreno_mount_fail[1], native_adreno_mount_fail[2],
+          native_adreno_table_switches[2], native_adreno_table_switches[4],
+          native_adreno_bits[0], native_adreno_bits[1]);
+}
+
 // The driver's cache-maintenance phases (NativeAdrenoNotePhase): the pool, allocate, map, submit, unmap, complete, table and
 // diagnostic passes, each with the number of runs and the KiB they touched. A frame's cost that is not in the GPU's own time
 // shows up here first.
@@ -1528,6 +1589,7 @@ void heartbeat() {
         if (!(t % 30)) sheng_cpufreq_probe();
         if (!(t % 30)) logGpuClock();
         if (!(t % 30)) logMaintenance();
+        if (!(t % 30)) logConnections();
         if (t && !(t % 10)) {
             const uint32_t again = native_gpu_revote_now();
             if (!(t % 60)) IOLog("UKE GPU: revote %x\n", again);
