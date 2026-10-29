@@ -475,3 +475,50 @@ UKE DPU: flip n=4920 … latch=1285us max=2093us fence=4892/28 gpu=12133us max=1
 - panic 捕获链的结论：pram 交接（`uke_panic_flush`）没有产出 `UKE PANIC` 行；从 panic 屏调用内核 `printf`
   只打出了空前缀（Darwin 变参走栈上约定）；可用方案是 panic 屏把文本拷进 probe 导出的
   `uke_panic_shadow`，由心跳线程打 `UKE PANIC: …`。屏幕侧已改为：进屏关控制台、字体 3×、只画消息本身。
+
+## 29. 2026-10-29 收尾：回到可开机基线（gpucomp47）并把主分支对齐
+
+### 结论
+
+- feat 合并（每进程地址空间 + 按需页表 + 维护改动）在设备上**能跑且更快**（栅栏放行 99.4%、`gpu=12.1 ms`、
+  918 s 无 panic），但**偶发踩坏内核元类链**（`OSMetaClass::applyToInstances` `>maxDepth`），
+  无法作为可交付基线；feat 轨代码保留在驱动仓 `uke-a732-single` / `uke-a732-feat`，测试计划见 §28。
+- 当前基线 = **gpucomp37 的代码**：驱动 `uke-a732-cache`（`f1a2aee`），ArmSmmu4K 钉 `3ba9245`。
+
+### 用 git 还原时遇到的两个事实
+
+1. gpucomp37 当时构建自**未提交工作区**：时钟行（`UKE GPU: clk …`）、每 10 s 的 perf `revote`、
+   `native_gpu_idle` 与 feat 遥测一起被并进了同一个提交 `f4376f8`。因此没有“正好等于 gpucomp37”的提交；
+   用 `git restore --source=f4376f8^` 退到 feat 之前，再把这三段**逐字**摘回（只依赖 GPUCC 窗口与 GMU 句柄）。
+2. `native_gpu_idle` 是显示驱动直接取地址的符号（`weak_import` 在本仓的 kext 链接里仍要求解析），
+   缺了它链接失败，所以它必须留在 probe 里。
+
+同理，显示仓（copy 对照模式）和 Metal 仓（NGP_DIRECT 栅栏 + 吞吐基准）在 gpucomp37 之后也有未提交改动，
+这次一起提交，工作树干净、可由提交复现。
+
+### 相关提交
+
+| 仓库 | 分支 | 提交 | 内容 |
+| --- | --- | --- | --- |
+| NativeAdreno | `uke-a732-cache` | `f1a2aee` | 可开机驱动（池 adopt 修复） |
+| UniXNU-format2 | `uke-gpu-format2` | `27fdaf2` | ArmSmmu4K 钉回 `3ba9245` |
+| UniXNU-uke-format2 | `uke-format2` | `3958bad` / `6316412` / `1621160` | probe 退回 feat 之前 + 补回 idle / clk / revote |
+| NativeMobileDisplay | `uke-display-slot242` | `cd8a7b2` | `sheng-fb-gpu=2` 对照模式 |
+| NativeMetal | `uke-gpu-metal` | `739de5b` | DIRECT 栅栏 + 吞吐基准 |
+
+### 镜像（`uke-port/releases/2026-10-29-gpu-revert/`）
+
+| 文件 | sha256 | 说明 |
+| --- | --- | --- |
+| `vendor_boot_uke_gpucomp47.img` | `8b493ab2…` | base = gpucomp37 的 vendor_boot（DTB/表不变） |
+| `boot_uke_gpucomp47.img` | `0220bc5a…` | UEFI 未变 |
+| `payload_uke_gpucomp47.img` | `654524ba…` | 内含补丁后内核 `af1c349f…`（构建内核 `a4e1f996…`） |
+
+`check-gpu-addon-host.py` 全项 PASS：addon blob 21,179,400 B / 12 项，插件三份 CDHash
+（`2d7300cd`、`61a38565`、`ee022a5f`）与 gpucomp37 完全一致；payload boot-args 987 B，
+`fb-gpu 1`、`surface 1`、`iconservices on`。已刷 `boot_a`/`vendor_boot_a`/`boot_b`/`vendor_boot_b` + `set_active a`。
+
+### 下一步
+
+- 基线验证通过后，feat 轨按 §28 的三步隔离测试推进；性能结论（fill 1.76 GB/s、copy 3.75 GB/s）
+  与显示链（DPU 直扫 + 插件栅栏）不受影响。
