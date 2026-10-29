@@ -41,7 +41,9 @@ local = "../UniXNU/drivers/GopFramebuffer"
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/UniXNU/AdrenoMetal.git"
-commit = "739de5b622cee3b441f07826d6d4fface0a1fc19"
+# uke-metal-upstream: AdrenoMetal feat/ipados27-gpu-parity (148698d) plus the
+# iOS 17 SDK shared-event declaration only.
+commit = "5dbdfc9d6f0eea6ced668d5efd4740576ddc48ad"
 local = "../UniXNU/drivers/AdrenoMetal"
 
 [[source]]
