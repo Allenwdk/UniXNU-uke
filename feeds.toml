@@ -16,17 +16,16 @@ commit = "98618c197e789acfd7ac6755ad23bf7e04881780"
 local = "../UniXNU-sm7675-common"
 
 # Board-pinned component variants: the canonical GPU modules carry the uke
-# baseline branches (same commit objects as the retired Native* checkouts), and
-# the UFS and touch sources are the board's own copies. Everything else
-# resolves through the catalog. The Native* repositories are kept only as
-# history/fallback; no build reads them.
+# integration branches, and the UFS and touch sources are the board's own
+# copies. Everything else resolves through the catalog. The Native*
+# repositories are kept only as history/fallback; no build reads them.
 [[source]]
 name = "Adreno740"
 kind = "driver"
 git = "https://github.com/UniXNU/Adreno740.git"
-# uke-a732-baseline: the gpucomp49 driver tree in the canonical repository
-# (upstream perf/gpu-smoothness plus the A732/GMU bring-up commits).
-commit = "c9509066f5cf0f958a22077f214c15837d54191a"
+# uke-a732-parity: Adreno740 feat/ipados27-gpu-parity (90b52bf) plus the
+# board's A732/GMU/31-bit-window/BO-teardown patches.
+commit = "2f7a15654109b4bc940afacf01a5a15eac119d02"
 local = "../UniXNU/drivers/Adreno740"
 
 [[source]]

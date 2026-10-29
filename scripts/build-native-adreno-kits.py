@@ -48,7 +48,8 @@ for source in sources:
                 '-I', str(ROOT / 'drivers/Adreno740'), '-Wall', '-Wextra', '-Werror',
                 '-Wno-unused-parameter', '-Wno-incompatible-sysroot', '-Wno-c99-designator',
                 '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion',
-                '-Wno-unnecessary-virtual-specifier']
+                '-Wno-unnecessary-virtual-specifier', '-Wno-missing-designated-field-initializers',
+                '-Wno-unused-but-set-global']
     result = subprocess.run(command, cwd=recipe['directory'], capture_output=True, text=True)
     if result.returncode:
         sys.exit(str(source) + ':\n' + result.stderr[-2500:])
@@ -85,7 +86,8 @@ if present:
     objects.append(out / 'firmware.o')
 archive = out / 'libAdreno740.a'
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *objects], check=True)
-defined = subprocess.run(['xcrun', 'nm', '-g', archive], capture_output=True, text=True).stdout
+# GNU nm cannot read Mach-O archives; the build host's xcrun resolves to /usr/bin/nm here.
+defined = subprocess.run(['llvm-nm', '-g', archive], capture_output=True, text=True).stdout
 missing = [s for s in ('_ShengGmuColdStart', '_ShengGmuBuildStartup',
                        '_ShengGmuCommandDbInputs', '_AdrenoFirmwarePlanGmu',
                        '_ArmSmmu4KAttachStreams', '_ArmSmmu4KBindMmio', '_AdrenoPM4Type7',
