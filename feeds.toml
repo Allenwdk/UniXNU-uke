@@ -25,7 +25,7 @@ kind = "driver"
 git = "https://github.com/UniXNU/Adreno740.git"
 # uke-a732-parity: Adreno740 feat/ipados27-gpu-parity (90b52bf) plus the
 # board's A732/GMU/31-bit-window/BO-teardown patches.
-commit = "2f7a15654109b4bc940afacf01a5a15eac119d02"
+commit = "356fc9630e3b1ae542a40756490d4b321ec69f83"
 local = "../UniXNU/drivers/Adreno740"
 
 [[source]]
