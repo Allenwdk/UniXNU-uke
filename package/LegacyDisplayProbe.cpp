@@ -26,8 +26,6 @@ extern "C" void native_legacy_display_static_init(void) __asm__("__GLOBAL__sub_I
 extern "C" IOService *native_legacy_display_allocate(void);
 extern "C" void native_gop_presenter_static_init(void) __asm__("__GLOBAL__sub_I_NativeGOPPresenter.cpp");
 extern "C" IOService *native_gop_presenter_create(void);
-// Present the default framebuffer surface after an overlay-only SwapEnd (offline-legacy-base-present).
-extern "C" void native_legacy_present_base(void *display,unsigned frameSurfaceId);
 static IOService *pendingLegacyDisplay;
 static IOService *activeGOPPresenter,*activeGOPNub;
 // GPU hand-off presenter (sheng-fb-gpu=1, phase 4): lives beside the display driver, which offers it frames instead of copying them.
@@ -448,23 +446,8 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
                 printf("UKE: swap-in size=%u padded to 1288\n",(unsigned)swapSavedSize);}
         }
     }
-    unsigned frameSurfaceId=0;
-    if(stat && selector==5 && args && args->structureInput && args->structureInputSize>=0x150) {
-        // The transaction's real pixels: the first enabled record layer carrying a surface ID.
-        // The family's translation loop only covers layers 0..3, so an overlay layer above it
-        // never resolves inside the original SwapEnd; presentBase resolves it separately.
-        const unsigned char *record=reinterpret_cast<const unsigned char *>(args->structureInput);
-        uint32_t mask=0;memcpy(&mask,record+0x14c,4);
-        for(unsigned layer=0;layer<8 && 0x9c+layer*4+4<=args->structureInputSize;++layer)
-            if(mask&(1u<<layer)) {uint32_t id=0;memcpy(&id,record+0x9c+layer*4,4);if(id){frameSurfaceId=id;break;}}
-    }
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
     if(swapPad) {args->structureInput=swapSavedInput;args->structureInputSize=swapSavedSize;IOFree(swapPad,0x508);}
-    // The transaction updates overlays only (its record layers carry no surfaces and the original
-    // SwapEnd has already retired the request); the frame lives in the overlay surface the record
-    // names (or the default framebuffer surface), so copy it now that the original path is done.
-    if(stat && selector==5 && status==kIOReturnSuccess)
-        native_legacy_present_base(reinterpret_cast<void *>((uintptr_t)native_legacy_object),frameSurfaceId);
     if(traced)printf("UKEMEM: sel %u exit %x\n",(unsigned)selector,(unsigned)status);
     if(stat && selector==5 && stat->selector_calls[5]<3) dumpSwapQueue("swap-end",stat->selector_calls[5]+1,status);
     if(stat && selector==6 && stat->selector_calls[6]<3) dumpSwapQueue("swap-wait",stat->selector_calls[6]+1,status);

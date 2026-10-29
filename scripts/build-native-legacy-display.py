@@ -27,6 +27,9 @@ header='''// SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <IOKit/IOService.h>
 #include <libkern/libkern.h>
 struct OriginalLegacySwapRequest;
+struct OriginalLegacyStateRequest {uint32_t skipRequested,requested,skipPowered,powered;uint8_t changed;uint8_t pad[11];};
+// Original swap-record offsets the backend reads: layer masks, the two layer rectangles, the option words, the dimensions and the four surfaces.
+enum : unsigned {kRequestRect0=17,kRequestRect1=81,kRequestMasks=792,kRequestOptions=804,kRequestDims=816,kRequestSurfaces=2624,kLegacyVsyncClients=5592};
 class IOMobileFramebufferLegacy : public IOService {
  OSDeclareAbstractStructors(IOMobileFramebufferLegacy)
  unsigned char originalPrivate[0x18a0-sizeof(IOService)];
@@ -40,6 +43,12 @@ public:
  const OriginalLegacySwapRequest *pendingSwapRequest() const {
   const OriginalLegacySwapRequest *request=nullptr;
   memcpy(&request,reinterpret_cast<const unsigned char *>(this)+5480,sizeof(request));return request;
+ }
+ // The original state setter is virtual slot 354; the uke backend uses it only to name the firmware-powered word.
+ void applyStateRequest(OriginalLegacyStateRequest *request,bool force) {
+  typedef int (*Setter)(void *,OriginalLegacyStateRequest *,bool);
+  Setter setter=reinterpret_cast<Setter *>(*reinterpret_cast<void **>(this))[354];
+  setter(this,request,force);
  }
  // The real normal scanout backend removes its pending head before calling
  // slot 295. Slot 312 is a discard path (terminal state 8), not presentation.
@@ -89,7 +98,10 @@ for i in range(168,358):
     elif i==288:header+=' virtual bool startHardware();\n'
     elif i in pure:header+=f' virtual __attribute__((noreturn)) void opaque{i}()=0;\n'
     else:header+=f' virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque{i}();\n'
-header+='};\nstatic_assert(sizeof(IOMobileFramebufferLegacy)==0x18a0,"Actual original instance extent");\n'
+header+='''};
+#define NATIVE_LEGACY_LEAVES(X) X(211) X(245) X(246) X(306) X(307) X(338) X(345)
+static_assert(sizeof(IOMobileFramebufferLegacy)==0x18a0,"Actual original instance extent");
+'''
 (OUT/'OriginalLegacyFramebufferABI.h').write_text(header)
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeLegacyDisplay'],text=True),end='')
 obj=OUT/'NativeLegacyDisplay.o';raw=obj.read_bytes();image=macho(raw)
@@ -131,12 +143,12 @@ owned=[];native=[]
 for i,name in enumerate(compiled):
     expected=int(methods[i]['address'],16)
     if name.startswith(('__ZN19NativeLegacyDisplay','__ZNK19NativeLegacyDisplay')):
-        owned.append(i);require(i in (0,1,7,14,84,86,87,141,155,184,188,242,288,290,296,301) or i in pure,'Only qualified own methods and guarded leaves override')
+        owned.append(i);require(i in (0,1,7,14,84,86,87,141,155,184,188,288,290,296,301) or i in pure,'Only qualified own methods and guarded leaves override')
     elif '25IOMobileFramebufferLegacy' in name:
         require(i not in pure,'No unresolved original abstract backend target');bindings[name]=expected
     else:
         require(i<168 and (old is None or names.get(name)==expected),'Actual inherited native base symbol '+str(i));native.append(i)
-require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,242,288,290,296,301]+pure),'Exact owned method set')
+require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,288,290,296,301]+pure),'Exact owned method set')
 undefined={n for n,_,k in symbols if k==1 and 'IOMobileFramebufferLegacy' in n}
 require(undefined==set(bindings),'All and only actual original-class imports qualified')
 # The default-surface port fallback calls the original slot242 and the original
@@ -228,7 +240,7 @@ while i<len(args):
     elif not value.startswith('-W'):cmd.append(value)
     i+=1
 cmd+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unnecessary-virtual-specifier','-Wno-c99-designator','-Wno-reorder-init-list',
-      '-Wno-deprecated-enum-enum-conversion','-I',str(ROOT/'.cache/xnu-work/osfmk')]
+      '-Wno-deprecated-enum-enum-conversion','-Wno-unused-but-set-global','-Wno-missing-designated-field-initializers','-I',str(ROOT/'.cache/xnu-work/osfmk')]
 (ROOT/'kits/uke-ci').mkdir(parents=True,exist_ok=True)
 cmd+=['-I',str(ROOT/'kits/uke-ci')]
 run(cmd,cwd=r['directory'])
