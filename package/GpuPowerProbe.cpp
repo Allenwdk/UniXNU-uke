@@ -1428,11 +1428,38 @@ void startHeartbeatThread() {
     thread_t thread = nullptr;
     if (kernel_thread_start(heartbeatThread, nullptr, &thread) == KERN_SUCCESS) {thread_deallocate(thread); gHeartbeatThread = true;}
 }
+extern "C" uint32_t native_gpu_revote_now(void);
+extern "C" void sheng_cpufreq_probe(void);
+
+// The GPU clock, for the record: the compositor's frame time has never been compared against the frequency the GX domain
+// actually runs at. GPUCC holds PLL0 (the GFX3D source), PLL1 (the GMU source) and the GFX3D/GMU/HUB root clock generators;
+// the RCG's CFG word carries SRC_SEL (bits 10:8) and SRC_DIV (bits 4:0), so a divider and the PLL's L value give the rate.
+void logGpuClock() {
+    if (!gVa[GPB_WIN_GPUCC]) return;
+    auto rd = [](uint32_t off) {return *reinterpret_cast<volatile uint32_t *>(gVa[GPB_WIN_GPUCC] + off);};
+    const uint32_t pll0m = rd(0x0000), pll0o = rd(0x0004), pll0l = rd(0x0010);
+    const uint32_t pll1m = rd(0x1000), pll1o = rd(0x1004), pll1l = rd(0x1010);
+    const uint32_t gfx = rd(0x9000), gfxcfg = rd(0x9004);
+    const uint32_t gmu = rd(0x9168), gmucfg = rd(0x916c);
+    const uint32_t hub = rd(0x919c), hubcfg = rd(0x91a0);
+    IOLog("UKE GPU: clk pll0 m%x o%x l%u pll1 m%x o%x l%u gfx %x/%x gmu %x/%x hub %x/%x\n",
+          pll0m, pll0o, pll0l & 0x3ff, pll1m, pll1o, pll1l & 0x3ff,
+          gfx, gfxcfg, gmu, gmucfg, hub, hubcfg);
+}
+
 void heartbeat() {
     // Row 4 from now on: seconds since the run ended, GX state, and (only with GX on) the GPU status words, so a photo
     // tells a live kernel from a hung one and shows whether the GPU stays idle.
     char row[64];
     for (unsigned t = 0;; t += 2) {
+        // The CPU levels and the perf vote: both are one-shot at bring-up, and the boot-time record of the former can leave
+        // the msgbuf tail before the first userdata record is written.
+        if (!(t % 30)) sheng_cpufreq_probe();
+        if (!(t % 30)) logGpuClock();
+        if (t && !(t % 10)) {
+            const uint32_t again = native_gpu_revote_now();
+            if (!(t % 60)) IOLog("UKE GPU: revote %x\n", again);
+        }
         if (!(t % 10))
             IOLog("UKE MEM: free=%u wire=%u active=%u inactive=%u\n",
                   &vm_page_free_count ? vm_page_free_count : 0,
@@ -1779,6 +1806,17 @@ void probeThread(void *, wait_result_t) {
 extern "C" bool native_gpu_idle(void) {
     if (!gxOn()) return false;
     return gpuRd(A740_CP_RB_RPTR) == gpuRd(A740_CP_RB_WPTR);
+}
+
+// Hold the top GPU level. The bring-up sends one blocking GX_BW_PERF_VOTE; the GMU firmware's own governor moves the level
+// between frames, and a burst of compositing then starts at whatever level it chose. Repeating the same vote on the
+// heartbeat (as sheng's DCVS does with its activity vote) keeps the top level while the display is busy.
+extern "C" uint32_t native_gpu_revote_now(void) {
+    static const uint32_t vote[3] = {1, 9, 6};
+    uint32_t out[16], error = 0;
+    size_t count = 0;
+    const uint32_t status = AdrenoHfiExchange(&gColdDevice.hfi, 30, vote, 3, 200, hfiWait, out, 16, &count, &error);
+    return status ? 0 : (error ? 0x80000000u | error : 1u);
 }
 
 extern "C" void sheng_gpu_power_probe(void) {
