@@ -278,6 +278,10 @@ kernel_args = [
   # records whose layer 6 frame the own-present path resolves.
   "sheng-gpu-power=9",
   "sheng-gpu-metal=1",
+  # The A732 SMMU is fused to 31 bits. Force the CPU TTBR0 switch with the
+  # GPU idle (mode 1): the CP aperture switch (mode 2) stalled the ring on the
+  # first Metal submission in gpucomp57.
+  "sheng-gpu-ttbr=1",
   # GPU scanout hand-off (upstream GpuScanoutClient path): the addon plugin's
   # scanout client blits the offered frame into the scanout on the GPU; a
   # refused offer or failed copy falls back to the CPU copy (fail-safe).
