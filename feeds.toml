@@ -32,14 +32,14 @@ local = "../UniXNU/drivers/NativeAdreno"
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
-commit = "d88a37d4b1261863d0452bd03adbcd1d483479f4"
+commit = "cd8a7b2d7f73d3e28a69201b5e448c8883c9ce26"
 local = "../UniXNU/drivers/NativeMobileDisplay"
 
 [[source]]
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/Allenwdk/AdrenoMetal.git"
-commit = "23b9e4dcc64df2677355d8d06ae9fa9fb7684890"
+commit = "739de5b622cee3b441f07826d6d4fface0a1fc19"
 local = "../UniXNU/drivers/NativeMetal"
 
 [[source]]
