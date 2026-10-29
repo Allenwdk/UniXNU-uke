@@ -24,7 +24,7 @@ struct vc_info {
 
 /* 3x cells: at 1x the panic text is unreadable on this panel. The full text does
  * not have to fit on screen -- it is staged to the pram and lands in userdata. */
-#define SCALE   2
+#define SCALE   3
 
 extern const u64 gFont[];
 
@@ -249,7 +249,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
 {
   volatile struct vc_info *v = (volatile struct vc_info *)VINFO;
   struct ctx g;
-  u32 row, col, saved;
+  u32 row, col, saved, saved_h;
   u8 save[PANIC_SAVE_BYTES];
   u8 *banner = 0;
 
@@ -289,8 +289,13 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   g.log = save;
   g.logn = 0;
   g.logcap = sizeof(save);
+  /* First pass formats the whole message into the buffer and draws nothing: the stack after the assertion would fill the panel and
+   * anything drawn over it would collide with it. The stack still reaches the pram through the flush below. */
+  saved_h = g.h;
+  g.h = 0;
   format (&g, fmt, args);
   saved = g.logn;
+  g.h = saved_h;
 #if PANIC_TEXT
   /* The board's boot-page banner buffer, for kernels that have one (the GPU configuration has no BootProgress: PANIC_TEXT is 0 and
    * this copy is compiled out, which is what keeps the screen inside the kernel's padding). */
@@ -310,14 +315,13 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
    * kernel's padding and what a panic on this board is read for is the message's own first lines, which the block below redraws. The
    * memory counters still reach the log from the probe's UKE MEM rows while the system is alive. */
   g.log = 0;
-  /* The first lines of the message name the failure (the assertion and its caller); the stack above scrolls them off the panel and
-   * the screen then parks, so what stays visible is the tail. Draw the head again over the top of the screen from the text saved for
-   * the pram: the two together are what a photograph of the panic is worth. */
+  /* The message, drawn once and alone from its start: the assertion and its first frames are what a photograph of a panic is read
+   * for. Whatever does not fit the panel is still in the pram (the flush below) and in the next boot's log. */
   if (saved) {
     u32 i;
     g.x = 0;
     g.y = 0;
-    for (i = 0; i < saved && i < 900; i++) {
+    for (i = 0; i < saved; i++) {
       put (&g, (u8)save[i]);
     }
     __asm__ volatile ("dsb sy");
