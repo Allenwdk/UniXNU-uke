@@ -1773,6 +1773,14 @@ void probeThread(void *, wait_result_t) {
 }
 }
 
+// The display's direct path asks this before it flips a surface: the CP ring drained (RPTR caught up with WPTR) means
+// everything the render server had submitted by then, the frame about to be scanned included, has been consumed. Evidence
+// for now (the display counts idle and busy flips); weak there, so a configuration without this probe keeps its own path.
+extern "C" bool native_gpu_idle(void) {
+    if (!gxOn()) return false;
+    return gpuRd(A740_CP_RB_RPTR) == gpuRd(A740_CP_RB_WPTR);
+}
+
 extern "C" void sheng_gpu_power_probe(void) {
     unsigned mode = 0;
     if (!PE_parse_boot_argn("sheng-gpu-power", &mode, sizeof mode) || !mode || native_gpu_power_stage) return;
