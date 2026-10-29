@@ -432,3 +432,46 @@ A4 ──┴── B3 ──┘                        (GPU 轨 D1-b 合流)
 - 表切换/CP 检查成功、createVm NotReady、共享回退触发，但连接仍失败 ⇒ feat 的每进程地址空间路径在本板未走通。
 - 带宽测量（1.76/3.75 GB/s）来自 gpucomp37（老驱动），结论不受影响。
 - 设备刷回 gpucomp37；feat 合并改为独立任务，先补细粒度失败点遥测（createVm/setScope/core->open/service）。
+
+## 28. 2026-10-29 深夜：feat 版跑通但偶发踩坏内核内存（feat 轨暂停）
+
+### feat 版确实跑起来了（gpucomp46，连续 918 s 无 panic）
+
+```
+UKE GPU: conn switch=0 cp=0 mode=1 mount=0/0 shared=0 tables=10/1 in=31 out=40
+UKE GPU3: M a5.0/5.0 k0 s5/0 r1 o2/0/1 n2
+UKE DPU: flip n=4920 … latch=1285us max=2093us fence=4892/28 gpu=12133us max=162318us
+```
+
+- `mount=0/0`、`shared=0`、`tables=10/1`：feat 的**每进程地址空间**在 31 位 aperture 下走通
+  （`clientWindow()` 把窗口放到 `0x10000000` + 1.75 GiB，各客户端独立页表、可共用同一段）；
+  `o2/0/1` = 2 次成功打开、0 次 busy（之前是 `o8/24/4`）。
+- 栅栏放行 **99.4%**（4892/4920），看门狗丢弃降到 0.6%（旧驱动 11–12%）；`gpu=12.1 ms`（offer→GPU 完成均值）。
+  空闲 flip 10 fps（CA 空闲出帧率，正常）。
+
+### 但随后一次启动 panic：`">maxDepth"`
+
+- 屏幕与寄存器：`panic(cpu 3 caller 0xfffffff007904540)`、`pc 0xfffffff007904548`、`lr 0xfffffff007904540`、
+  `esr 0x56000004`（EC=0x15 SVC）、`far 0x0030000c08000041`、`x8 = NativeLegacyDisplay::getMetaClass()`。
+- 符号解析（`llvm-nm`）：`0x…04540` = **`OSMetaClass::applyToInstances`+0xf4**；`caller 0x…9154b0` =
+  **`OSKext::loadExecutable`**（显示 late probe 里有 `OSKextLoadKextWithIdentifier("com.apple.iokit.IOSurface")`）。
+- 反汇编 + XNU 源码定位：`libkern/c++/OSMetaClass.cpp:1118` 的 `panic(">maxDepth")`——当元类的**父类链深度**
+  超过 `sDeepestClass` 时断言。
+- 结论：这是**内核数据结构被踩坏**的典型症状（元类继承链被写成非法值），不是 GPU 代码自己 panic；
+  时间上只出现在 feat 驱动（每进程地址空间 + 按需页表 + CPU 侧 TTBR0 切换）之后，且是**偶发**
+  （一次启动 918 s 无恙，下一次在 kext 加载时炸）。
+
+### 处置与后续（feat 轨单独推进）
+
+- 设备回到 **gpucomp37**（老驱动：GPU 渲染、无 panic），feat 的镜像链 gpucomp38–46 保留在
+  `uke-port/releases/2026-10-29-gpu-upstream-feat|aperture|lowwin|paniclog/`。
+- feat 轨下一步（按顺序，全部要能单独回退）：
+  1. **隔离测试**：单客户端（只留 backboardd）、`sheng-gpu-ttbr=1/2` 对照、临时强制共享 VM
+     （跳过 `createVm`），看 `>maxDepth` 是否随每进程地址空间消失；
+  2. **TTBR0 切换时序**：feat 在 mode 1 下由 CPU 写 TTBR0（`writeTtbr0`），确认它与提交/完成、TLB 失效
+     的先后关系（以及 `submit->setTableSwitching` 的 `rangeOutstanding` 条件）；
+  3. **踩内存金丝雀**：在 probe 心跳里对一个已知内核结构（如元类链表头或自建哨兵页）做校验并计数，
+     把「GPU 活动 ↔ 破坏」关联起来，再决定是否重试 feat。
+- panic 捕获链的结论：pram 交接（`uke_panic_flush`）没有产出 `UKE PANIC` 行；从 panic 屏调用内核 `printf`
+  只打出了空前缀（Darwin 变参走栈上约定）；可用方案是 panic 屏把文本拷进 probe 导出的
+  `uke_panic_shadow`，由心跳线程打 `UKE PANIC: …`。屏幕侧已改为：进屏关控制台、字体 3×、只画消息本身。
