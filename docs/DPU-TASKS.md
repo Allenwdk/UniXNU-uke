@@ -522,3 +522,36 @@ UKE DPU: flip n=4920 … latch=1285us max=2093us fence=4892/28 gpu=12133us max=1
 
 - 基线验证通过后，feat 轨按 §28 的三步隔离测试推进；性能结论（fill 1.76 GB/s、copy 3.75 GB/s）
   与显示链（DPU 直扫 + 插件栅栏）不受影响。
+
+## 30. 2026-10-29 深夜：gpucomp47 变 CPU 渲染的根因（gpucomp48）
+
+### 现象与定位
+
+gpucomp47（"可开机基线"）能进系统，但**明显是 CPU 渲染**——UI 极慢。逐项排除：
+
+- **不是参数**：从两个 payload 里分别抽出 `EFI/UniXNU/unixnu.toml`，逐字节相同（987 B，
+  `sheng-fb-gpu=1 sheng-gpu-power=9 sheng-gpu-metal=1 sheng-gpu-pool=1536 …`）。
+- **不是插件**：addon blob 的 3 个 CDHash 与 gpucomp37 完全一致（`2d7300cd`/`61a38565`/`ee022a5f`）。
+- **不是驱动**：`uke-a732-cache` = `f1a2aee`，就是 gpucomp37 用的代码。
+- **是 probe**：gpucomp37 的工作区里，除时钟/revote/idle 之外还有**两处功能性改动**，被一起并进了 `f4376f8`，
+  还原时漏掉：
+  1. `gpuStart()` 里的 `native_adreno_pool_mib = bootArg("sheng-gpu-pool", 1536);` —— BO 池在
+     `NativeAdrenoGpuContextBringup` **内部**按这个全局量预留；驱动的 `NativeAdrenoService` 读同一个 boot arg
+     太晚（context 已建好），所以必须在 bring-up 前写进去。
+  2. `gpuOn()` 的初始 HFI 投票 `{1,1,1}` → `{1,9,6}` —— 生成表里 index 0 是占位、**index 1 是最低真实档
+     （255 MHz / 2.1 GB/s）**，`{1,1,1}` 等于让 GPU 一直跑最低频。
+- 旁证：gpucomp37 当时测到 `B fill=1758MB/s copy=3745MB/s`，3.7 GB/s 已超过最低档 2.1 GB/s 的上限，
+  说明它必然运行在顶档——即那版确实带着 `{1,9,6}`。
+
+### 修复与镜像
+
+- 设备仓 `ef13cfc`：补回上面两行（内容取自 `f4376f8`），probe 与 gpucomp37 的功能行为一致；
+  其余 feat 遥测（maint/conn/aperture/`GPUFLT`，依赖 feat 专有符号）继续不引入。
+- 镜像 `uke-port/releases/2026-10-29-gpu-revert/`：`vendor_boot_uke_gpucomp48.img` `e1a2831d…`、
+  `payload_uke_gpucomp48.img` `0fd88117…`、内核 `3b0386a5…`、boot 沿用 `0220bc5a…`；addon 校验全项 PASS。
+
+### 教训（写进流程）
+
+从"当时能跑的一版"回退，必须核对**未提交工作区里混在同一个提交中的功能性改动**，不能只看名字像遥测的
+（pool/投票这类两行代码决定 GPU 是否以正确档位、正确内存池运行）。以后 feat 的提交里再出现这类混装，
+摘取时按 hunk 逐个判断。
