@@ -91,6 +91,8 @@ extern "C" NativeAdrenoVm *NativeAdrenoGpuContextVm() __attribute__((weak));
 extern "C" IOReturn native_adreno_publish(NativeAdrenoVm *, NativeAdrenoSubmit *, NativeAdrenoRing *, const NativeAdrenoRingClock *,
     const NativeAdrenoTimer *, const NativeAdrenoAbiDeviceInfo *, uint32_t, uint32_t) __attribute__((weak));
 extern "C" uint32_t native_adreno_publish_stats(uint32_t *) __attribute__((weak));
+/* The BO pool the bring-up reserves: sheng sets it before NativeAdrenoGpuContextBringup; the service's boot-arg read runs too late. */
+extern "C" volatile uint32_t native_adreno_pool_mib;
 // The staged AGXAccelerator (drivers/NativeAdreno/NativeAdrenoAccelerator.cpp): its static initializer runs only after the
 // original IOGPUFamily kext has loaded, because the parent metaclass does not exist before that.
 extern "C" void native_adreno_accelerator_static_init(void) __asm__("__GLOBAL__sub_I_NativeAdrenoAccelerator.cpp") __attribute__((weak));
@@ -1281,6 +1283,9 @@ void gpuStart() {
     char row[64];
     uint32_t *c = native_gpu_cp;
     if (!NativeAdrenoGpuContextBringup || !NativeAdrenoGpuContextBuffers || !gSmmuMap) {setRow(6, "Q nolink"); return;}
+    // The BO pool (one contiguous block, sheng-gpu-pool MiB, sheng's default 1536) is taken inside the bring-up; the driver's
+    // NativeAdrenoService reads the same argument only later, after the context is already built, so set it here first.
+    native_adreno_pool_mib = bootArg("sheng-gpu-pool", 1536);
     // 1. The GPU's own context bank and buffers (arm-smmu-qcom: the GPU always gets bank 0; DT iommus SIDs 0 and 1).
     NativeAdrenoGmuContextReport &q = native_gpu_context;
     const IOReturn ctx = NativeAdrenoGpuContextBringup(reinterpret_cast<volatile uint8_t *>(gSmmuMap->getVirtualAddress()),
@@ -1544,7 +1549,10 @@ void gpuOn() {
     io.barrier(io.cookie);
     g[3] = rd(ShengGmuCore, kGxStatus);
     // a6xx_gmu_set_initial_freq -> a6xx_hfi_set_freq: {ack_type 1 (blocking), freq index, bw index}.
-    const uint32_t vote[3] = {1, 1, 1};
+    // The generated tables (build/sheng-gmu/ShengGmuVotesSource.h) start with a dummy level 0; index 1 is the lowest real
+    // level (255 MHz / 2.1 GB/s), which is where bring-up ran. The compositor needs the top levels: 9 = 950 MHz and
+    // 6 = 16.5 GB/s (the display alone reads 3.28 GB/s at 120 Hz).
+    const uint32_t vote[3] = {1, 9, 6};
     uint32_t out[16], error = 0;
     size_t count = 0;
     g[0] = AdrenoHfiExchange(&gColdDevice.hfi, 30, vote, 3, 1000, hfiWait, out, 16, &count, &error);
