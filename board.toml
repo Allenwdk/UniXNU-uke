@@ -282,9 +282,10 @@ kernel_args = [
   # scanout client blits the offered frame into the scanout on the GPU; a
   # refused offer or failed copy falls back to the CPU copy (fail-safe).
   "sheng-fb-gpu=1",
-  # DPU direct scanout: map the compositor's plain BGRA surface into the display bank's stage-1
-  # window and flip VIG0/VIG1, instead of the 27 MB CPU copy per frame.
-  "uke-dpu-scanout=3",
+  # Upstream GopFramebuffer direct scanout: the two VIG pipes fetch the
+  # compositor's surface through the display bank's stage-1 window; the
+  # GPU-copy hand-off above remains the fallback if a mapping is refused.
+  "sheng-dpu-scanout=2",
   # The display refresh tick (upstream display port): 120 Hz vsync messages from the family's own sender, so the render
   # server paces to the panel instead of its 1/60 s heartbeat, and IOMFBDisplayRefresh reports the panel rate.
   "sheng-vsync=120",

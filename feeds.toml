@@ -32,7 +32,9 @@ local = "../UniXNU/drivers/Adreno740"
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/UniXNU/GopFramebuffer.git"
-commit = "cd8a7b2d7f73d3e28a69201b5e448c8883c9ce26"
+# Pure upstream feat/ipados27-gpu-parity: no uke display patches in the
+# default build (local-only paths stay in uke-display-quirks).
+commit = "7f7ae1e129113b4880c8f2039b398cdad15cb3f2"
 local = "../UniXNU/drivers/GopFramebuffer"
 
 [[source]]
