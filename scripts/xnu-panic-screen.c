@@ -43,6 +43,11 @@ struct ctx {
 #ifndef UKE_PANIC_FLUSH
 #define UKE_PANIC_FLUSH 0UL
 #endif
+/* disableConsoleOutput (kern/printf.c through the platform expert): the console keeps drawing from the other CPUs onto the same frame
+ * buffer this screen draws on, so the panic text has to own the panel from here on. */
+#ifndef PANIC_QUIET
+#define PANIC_QUIET 0UL
+#endif
 #define PANIC_TEXT_BYTES 256
 #define PANIC_SAVE_BYTES 1024
 
@@ -128,6 +133,14 @@ static int readable (const char *s, const u64 *args)
   if (a < 0xffff000000000000UL) return 0;
   __asm__ volatile ("at s1e1r, %1; isb; mrs %0, par_el1" : "=r" (par) : "r" (a) : "memory");
   return !(par & 1) && ((par >> 60) != 0);
+}
+
+static void quiet_console (void)
+{
+#if PANIC_QUIET
+  *(volatile int *)(PANIC_QUIET) = 1;
+  __asm__ volatile("dsb sy" ::: "memory");
+#endif
 }
 
 static void format (struct ctx *g, const char *fmt, const u64 *args)
@@ -272,6 +285,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   if (PANIC_TEXT && *(volatile u8 *)PANIC_TEXT == 0) {
     banner = (u8 *)PANIC_TEXT;
   }
+  quiet_console ();
   g.log = save;
   g.logn = 0;
   g.logcap = sizeof(save);

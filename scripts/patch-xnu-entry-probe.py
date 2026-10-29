@@ -203,6 +203,13 @@ def assemble_c(source, va, workdir, symbols):
         if not any(base <= text and text + 256 <= base + size for base, size, _, _ in SEGMENTS):
             raise SystemExit('Invalid _boot_progress_panic_text')
         definitions.append(f'-DPANIC_TEXT={text:#x}UL')
+    # Optional: disableConsoleOutput, so the console (still drawn by the other CPUs onto the same frame buffer) cannot overwrite
+    # the panic text after it is drawn.
+    quiet = symbols.get('_disableConsoleOutput')
+    if quiet is not None:
+        if quiet % 4 or not any(base <= quiet and quiet + 4 <= base + size for base, size, _, _ in SEGMENTS):
+            raise SystemExit('Invalid _disableConsoleOutput')
+        definitions.append(f'-DPANIC_QUIET={quiet:#x}UL')
     # Optional: UkeLastLog's pram staging, called from the panic screen because the
     # normal panic funnel (which used to call it) is redirected to this screen.
     flush = symbols.get('_uke_panic_flush')
