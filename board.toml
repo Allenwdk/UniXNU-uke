@@ -285,7 +285,6 @@ kernel_args = [
   # DPU direct scanout: map the compositor's plain BGRA surface into the display bank's stage-1
   # window and flip VIG0/VIG1, instead of the 27 MB CPU copy per frame.
   "uke-dpu-scanout=3",
-  "sheng-gpu-pool=1536",
   # The display refresh tick (upstream display port): 120 Hz vsync messages from the family's own sender, so the render
   # server paces to the panel instead of its 1/60 s heartbeat, and IOMFBDisplayRefresh reports the panel rate.
   "sheng-vsync=120",
