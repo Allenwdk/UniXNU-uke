@@ -24,7 +24,7 @@ struct vc_info {
 
 /* 3x cells: at 1x the panic text is unreadable on this panel. The full text does
  * not have to fit on screen -- it is staged to the pram and lands in userdata. */
-#define SCALE   3
+#define SCALE   2
 
 extern const u64 gFont[];
 
@@ -277,6 +277,9 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   g.logcap = sizeof(save);
   format (&g, fmt, args);
   saved = g.logn;
+#if PANIC_TEXT
+  /* The board's boot-page banner buffer, for kernels that have one (the GPU configuration has no BootProgress: PANIC_TEXT is 0 and
+   * this copy is compiled out, which is what keeps the screen inside the kernel's padding). */
   if (banner) {
     u32 n = saved < PANIC_TEXT_BYTES - 1 ? saved : PANIC_TEXT_BYTES - 1;
     u32 i;
@@ -285,22 +288,26 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
     }
     banner[n] = 0;
   }
+#endif
   __asm__ volatile ("dsb sy");
   /* Sample the active CPU translation regime, without changing it. This is
    * panic-time evidence only; it does not establish early mappings or EL0 ABI. */
-  {
-    u64 tcr, sctlr;
-    __asm__ volatile ("mrs %0, tcr_el1" : "=r" (tcr));
-    __asm__ volatile ("mrs %0, sctlr_el1" : "=r" (sctlr));
-    hex (&g, "\nTCR=", tcr);
-    hex (&g, "\nSCTLR=", sctlr);
-  }
-  /* Resolved from this candidate's symbols by the patcher, never fixed addresses.
-   * Values are sampled at panic time and need not form an atomic VM snapshot. */
-  (void)MAX_MEM;
-  hex (&g, "\npages=", *(volatile const u32 *)PAGE_TOTAL);
-  hex (&g, "\nfree=", *(volatile const u32 *)PAGE_FREE);
+  /* The register and memory samples this screen once printed (TCR, SCTLR, pages, free) are gone: the code has to stay inside the
+   * kernel's padding and what a panic on this board is read for is the message's own first lines, which the block below redraws. The
+   * memory counters still reach the log from the probe's UKE MEM rows while the system is alive. */
   g.log = 0;
+  /* The first lines of the message name the failure (the assertion and its caller); the stack above scrolls them off the panel and
+   * the screen then parks, so what stays visible is the tail. Draw the head again over the top of the screen from the text saved for
+   * the pram: the two together are what a photograph of the panic is worth. */
+  if (saved) {
+    u32 i;
+    g.x = 0;
+    g.y = 0;
+    for (i = 0; i < saved && i < 900; i++) {
+      put (&g, (u8)save[i]);
+    }
+    __asm__ volatile ("dsb sy");
+  }
   /* The raw argument slots are not dumped: the formatted message above already carries them. */
   mark[0] = 0xC0FFEE11u;
   mark[1] = 0x5CEEDA7Au;
