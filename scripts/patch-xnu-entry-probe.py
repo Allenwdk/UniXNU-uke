@@ -210,13 +210,14 @@ def assemble_c(source, va, workdir, symbols):
         if quiet % 4 or not any(base <= quiet and quiet + 4 <= base + size for base, size, _, _ in SEGMENTS):
             raise SystemExit('Invalid _disableConsoleOutput')
         definitions.append(f'-DPANIC_QUIET={quiet:#x}UL')
-    # Optional: the kernel's printf, so the panic text also reaches the message buffer (and therefore the userdata log) instead of
-    # living only on the parked screen and in the pram.
-    kprintf = symbols.get('_printf')
-    if kprintf is not None:
-        if not any(base <= kprintf < base + size for base, size, _, _ in SEGMENTS):
-            raise SystemExit('Invalid _printf')
-        definitions.append(f'-DPANIC_PRINTF={kprintf:#x}UL')
+    # Optional: the board's panic shadow and its length word, so the probe's heartbeat thread can print the message after the panic
+    # screen has parked the panicking CPU.
+    shadow = symbols.get('_uke_panic_shadow')
+    if shadow is not None and any(base <= shadow and shadow + 1024 <= base + size for base, size, _, _ in SEGMENTS):
+        definitions.append(f'-DPANIC_SHADOW={shadow:#x}UL')
+        length = symbols.get('_uke_panic_shadow_len')
+        if length is not None and length % 4 == 0 and any(base <= length and length + 4 <= base + size for base, size, _, _ in SEGMENTS):
+            definitions.append(f'-DPANIC_SHADOW_LEN={length:#x}UL')
     # Optional: UkeLastLog's pram staging, called from the panic screen because the
     # normal panic funnel (which used to call it) is redirected to this screen.
     flush = symbols.get('_uke_panic_flush')

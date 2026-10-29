@@ -18,6 +18,10 @@
 #include <mach/kmod.h>
 #include <machine/machine_routines.h>
 extern "C" kmod_info_t g_kernel_kmod_info;
+/* The panic screen copies its message here (scripts/xnu-panic-screen.c, address resolved by the patcher): the screen parks the
+ * panic's CPU but the probe's heartbeat thread keeps running on another one, so the message reaches the log there even when the
+ * panel cannot be read and the pram hand-off does not land. */
+extern "C" {volatile char uke_panic_shadow[1024];volatile uint32_t uke_panic_shadow_len;}
 extern "C" void native_legacy_display_static_init(void) __asm__("__GLOBAL__sub_I_NativeLegacyDisplay.cpp");
 extern "C" IOService *native_legacy_display_allocate(void);
 extern "C" void native_gop_presenter_static_init(void) __asm__("__GLOBAL__sub_I_NativeGOPPresenter.cpp");

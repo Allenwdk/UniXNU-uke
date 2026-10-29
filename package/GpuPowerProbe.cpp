@@ -1531,6 +1531,17 @@ void startHeartbeatThread() {
 }
 extern "C" uint32_t native_gpu_revote_now(void);
 extern "C" void sheng_cpufreq_probe(void);
+// The panic screen's copy of its message (LegacyDisplayProbe.cpp): printed here because this thread keeps running on another CPU
+// while the panicking one is parked.
+extern "C" {extern volatile char uke_panic_shadow[1024];extern volatile uint32_t uke_panic_shadow_len;}
+static void logPanicShadow(void)
+{
+    static uint32_t printed=0;
+    const uint32_t length=uke_panic_shadow_len;
+    if(!length || length==printed)return;
+    printed=length;
+    IOLog("UKE PANIC: %.1024s\n",(const char *)uke_panic_shadow);
+}
 
 // The driver's connection path: whether the context's table switching came up (feat branch: every user connection takes its own
 // address space and is refused without it), the CP-switch check, and how many connections fell back to the kernel's space.
@@ -1590,6 +1601,7 @@ void heartbeat() {
         if (!(t % 30)) logGpuClock();
         if (!(t % 30)) logMaintenance();
         if (!(t % 30)) logConnections();
+        logPanicShadow();
         if (t && !(t % 10)) {
             const uint32_t again = native_gpu_revote_now();
             if (!(t % 60)) IOLog("UKE GPU: revote %x\n", again);

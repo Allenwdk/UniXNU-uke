@@ -48,10 +48,14 @@ struct ctx {
 #ifndef PANIC_QUIET
 #define PANIC_QUIET 0UL
 #endif
-/* The kernel's printf (kern/printf.c): the message also goes into the message buffer, which UkeLastLog writes to userdata every two
- * seconds, so the panic text survives a parked screen and a reboot. */
-#ifndef PANIC_PRINTF
-#define PANIC_PRINTF 0UL
+/* The board's panic shadow (kits/uke/LegacyDisplayProbe.cpp): the message is copied there and the probe's heartbeat thread, which
+ * keeps running on another CPU, prints it into the log. A plain copy, no variadic call: the Darwin ABI passes variadic arguments on
+ * the stack and a call from here reached the kernel's printf with an empty string. */
+#ifndef PANIC_SHADOW
+#define PANIC_SHADOW 0UL
+#endif
+#ifndef PANIC_SHADOW_LEN
+#define PANIC_SHADOW_LEN 0UL
 #endif
 #define PANIC_TEXT_BYTES 256
 #define PANIC_SAVE_BYTES 1024
@@ -335,11 +339,18 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   mark[0] = 0xC0FFEE11u;
   mark[1] = 0x5CEEDA7Au;
   __asm__ volatile ("dsb sy");
-#if PANIC_PRINTF
-  /* Straight into the kernel log, one line: this is the copy that reaches userdata even when the pram hand-off does not. */
+#if PANIC_SHADOW
   if (saved) {
-    typedef int (*panic_printf_t)(const char *, ...);
-    ((panic_printf_t)PANIC_PRINTF)("UKE PANIC: %s\n", (const char *)save);
+    volatile char *shadow = (volatile char *)PANIC_SHADOW;
+    u32 n = saved < 1023 ? saved : 1023, i;
+    for (i = 0; i < n; i++) {
+      shadow[i] = save[i];
+    }
+    shadow[n] = 0;
+    __asm__ volatile("dsb sy" ::: "memory");
+#if PANIC_SHADOW_LEN
+    *(volatile u32 *)PANIC_SHADOW_LEN = n;
+#endif
   }
 #endif
   /* Hand the saved text to the boot-log writer's pram staging block. The marker
