@@ -1,3 +1,5 @@
 # Board patches for xnu-12377, one per line in application order.
-# Phase 1 starts empty so the untreated source build is the first link gate;
-# the uke bring-up patches move here one at a time as each boot stage needs them.
+# Phase 1: the Darwin 26 spawn-attribute layout every daemon needs, and the
+# ptrauth-null qualifier form that upstream LLVM rejects (Apple clang only).
+darwin26-posix-spawn-attrs.patch
+native-ptrauth-null-portability.patch

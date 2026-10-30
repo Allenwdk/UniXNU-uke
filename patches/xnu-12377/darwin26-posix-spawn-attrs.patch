@@ -1,0 +1,63 @@
+# Darwin 26 libsystem passes a 0x100-byte struct _posix_spawnattr; convert the fields after psa_launch_type.
+# Taken from UniXNU-sheng feat/ipados27-gpu-parity (zzzz-sheng-ipados27-bringup.patch).
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index a4f494d..52c1448 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -4332,6 +4332,42 @@ spawn_posix_cred_adopt(proc_t p,
+  *		Handle posix_spawnattr_t
+  *		Handle posix_spawn_file_actions_t
+  */
++/*
++ * Darwin 26 libsystem passes a 0x100-byte struct _posix_spawnattr. It matches this kernel's layout up to and including
++ * psa_launch_type; psa_sec_flags then became 32 bits at 0xac, a byte at 0xb0 was added (sanitizer use, not supported here),
++ * and every later field moved by 8: crash count 0xb4, throttle timeout 0xb8, kqworkloop soft/hard limits 0xbc/0xc0,
++ * conclave memory limit 0xc4, extension pointers from 0xc8. Read without conversion, the kqworkloop soft limit is the
++ * crash count and every daemon is reported for allocating too many kqworkloops.
++ */
++#define PSA_DARWIN26_SIZE       0x100
++#define PSA_DARWIN26_HEAD       0xc8
++_Static_assert(sizeof(struct _posix_spawnattr) != PSA_DARWIN26_SIZE, "native and Darwin 26 spawn attributes need distinct sizes");
++_Static_assert(offsetof(struct _posix_spawnattr, psa_sec_flags) == 0xaa, "native psa_sec_flags moved");
++_Static_assert(offsetof(struct _posix_spawnattr, psa_crash_count) == 0xac, "native psa_crash_count moved");
++_Static_assert(offsetof(struct _posix_spawnattr, psa_conclave_mem_limit) == 0xbc, "native psa_conclave_mem_limit moved");
++
++static int
++psa_from_darwin26(user_addr_t attrp, struct _posix_spawnattr *psa)
++{
++	uint8_t raw[PSA_DARWIN26_HEAD];
++	uint32_t word;
++	int error;
++
++	if ((error = copyin(attrp, raw, sizeof(raw))) != 0) {
++		return error;
++	}
++	bzero(psa, offsetof(struct _posix_spawnattr, psa_ports));
++	memcpy(psa, raw, offsetof(struct _posix_spawnattr, psa_sec_flags));
++	memcpy(&word, raw + 0xac, sizeof(word));
++	psa->psa_sec_flags = (uint16_t)word;
++	memcpy(&psa->psa_crash_count, raw + 0xb4, sizeof(psa->psa_crash_count));
++	memcpy(&psa->psa_throttle_timeout, raw + 0xb8, sizeof(psa->psa_throttle_timeout));
++	memcpy(&psa->psa_kqworkloop_soft_limit, raw + 0xbc, sizeof(psa->psa_kqworkloop_soft_limit));
++	memcpy(&psa->psa_kqworkloop_hard_limit, raw + 0xc0, sizeof(psa->psa_kqworkloop_hard_limit));
++	memcpy(&psa->psa_conclave_mem_limit, raw + 0xc4, sizeof(psa->psa_conclave_mem_limit));
++	return 0;
++}
++
+ int
+ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
+ {
+@@ -4452,7 +4488,12 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
+ 			 * This is a bit fragile: <rdar://problem/16427422>
+ 			 */
+ 
+-			if ((error = copyin(px_args.attrp, &px_sa, px_sa_offset)) != 0) {
++			if (px_args.attr_size == PSA_DARWIN26_SIZE) {
++				/* Darwin 26 libsystem layout: convert the fields after psa_launch_type (see psa_from_darwin26). */
++				if ((error = psa_from_darwin26(px_args.attrp, &px_sa)) != 0) {
++					goto bad;
++				}
++			} else if ((error = copyin(px_args.attrp, &px_sa, px_sa_offset)) != 0) {
+ 				goto bad;
+ 			}
+ 

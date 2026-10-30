@@ -1,0 +1,18 @@
+# Apple clang accepts a fourth "__ptrauth" argument ("authenticates-null-values") that upstream LLVM rejects.
+# Value initializers are generated only on the device; the qualifier keeps its key and string diversity.
+diff --git a/libkern/os/base.h b/libkern/os/base.h
+--- a/libkern/os/base.h
++++ b/libkern/os/base.h
+@@ -355,6 +355,11 @@
+ #include <ptrauth.h>
+ #define OS_PTRAUTH_SIGNED_PTR(type) __ptrauth(ptrauth_key_process_independent_data, 1, ptrauth_string_discriminator(type))
+-#define OS_PTRAUTH_SIGNED_PTR_AUTH_NULL(type) __ptrauth(ptrauth_key_process_independent_data, 1, ptrauth_string_discriminator(type), "authenticates-null-values")
++#if defined(__apple_build_version__)
++#define OS_PTRAUTH_SIGNED_PTR_AUTH_NULL(type) __ptrauth(ptrauth_key_process_independent_data, 1, ptrauth_string_discriminator(type), "authenticates-null-values")
++#else
++/* Apple-only fourth argument; upstream LLVM rejects it, the key and diversity stay. */
++#define OS_PTRAUTH_SIGNED_PTR_AUTH_NULL(type) __ptrauth(ptrauth_key_process_independent_data, 1, ptrauth_string_discriminator(type))
++#endif
+ #define OS_PTRAUTH_DISCRIMINATOR(str) ptrauth_string_discriminator(str)
+ #define __ptrauth_only
+ #else //  __has_feature(ptrauth_calls)
