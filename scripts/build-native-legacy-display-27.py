@@ -272,7 +272,8 @@ run(['xcrun', 'clang', '-target', TRIPLE, '-isysroot', sdk, '-c', OUT / 'origina
 # llvm-objcopy: the Linux toolchain's LLVM on this host, Homebrew's on macOS.
 llvm = Path(os.environ.get('UNIXNU_TOOLCHAIN', '/opt/unixnu-linux')) / 'llvm/bin'
 if not (llvm / 'llvm-objcopy').is_file():
-    llvm = Path(run(['brew', '--prefix', 'llvm'], text=True).strip()) / 'bin'
+    found = shutil.which('llvm-objcopy')
+    llvm = Path(found).parent if found else Path(run(['brew', '--prefix', 'llvm'], text=True).strip()) / 'bin'
 late = OUT / 'NativeLegacyDisplay.late.o'
 run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_NativeLegacyDisplay.cpp', obj, late])
 
