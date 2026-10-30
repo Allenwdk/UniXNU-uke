@@ -15,3 +15,14 @@ CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
 # The GPU is off in the first CPU-rendering milestone: no NATIVE_ADRENO, no Metal
 # addon. Re-enable together with the Adreno740/AdrenoMetal feat archives.
 # CONFIG_XNU_NATIVE_ADRENO is not set
+
+# Source storage: the UFS runtime is built from the public IOStorageFamily source and authenticates the
+# 24A446 OS policy. Only the signed headers travel in the payload; the hash table is the OS.vroot data object
+# of the userdata image. Data/SystemOS mount with their own images and seed.
+CONFIG_XNU_SOURCE_STORAGE=y
+CONFIG_XNU_SOURCE_STORAGE_TABLES="userdata"
+CONFIG_XNU_SOURCE_STORAGE_POLICIES="OS"
+CONFIG_XNU_OWNER_ROOT_AUDIT=y
+CONFIG_XNU_OWNER_ROOT_TRUST=y
+CONFIG_XNU_NATIVE_RAM_BLOCK=y
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/sheng-source-storage/libShengSourceStorage.a"

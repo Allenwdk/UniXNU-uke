@@ -78,6 +78,9 @@ def decrypt_aea(path):
     keys_out = [line.strip() for line in result.stdout.splitlines() if line.strip().startswith('base64:')]
     if result.returncode or len(keys_out) != 1:
         raise SystemExit(f'could not read the AEA key of {path.name}: {result.stderr.strip()[-300:]}')
+    plain = path.with_suffix('')
+    if plain.is_file() and plain.stat().st_size:
+        return plain
     before = {p.name for p in path.parent.iterdir()}
     result = subprocess.run([ipsw, 'fw', 'aea', '-b', keys_out[0], '-o', str(path.parent), str(path)],
                             capture_output=True, text=True)
@@ -104,6 +107,9 @@ class BlocksReader:
         data = bytes(self.buffer[:size])
         del self.buffer[:size]
         return data
+
+    def close(self):
+        self.blocks = iter(())
 
 
 source = args.image.resolve()

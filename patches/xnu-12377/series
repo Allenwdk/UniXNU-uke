@@ -5,3 +5,5 @@
 darwin26-posix-spawn-attrs.patch
 native-ptrauth-null-portability.patch
 native-4k-stack-shift.patch
+# Source storage starts after vfsinit when the device has the runtime (weak import).
+source-storage-runtime.patch

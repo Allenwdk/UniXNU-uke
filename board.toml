@@ -17,6 +17,7 @@ kit = "uke"                      # the package/ of this repository appears as ki
 include = [
   "ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState",
   "GopFramebuffer", "QcomGeniSpi", "ShengNovatekTouch",
+  "ShengUfs", "VirtioMmioBlock", "RamBlock", "VerifiedRoot",
 ]
 
 # The target OS image comes from the `ipados-27.0.1-24A446` profile (iPad17,3 / J820AP,
@@ -49,6 +50,10 @@ archives = [
   "component:ArmCpu",
   "build-libpthread-kernel.py",
   "component:AppleKeyStoreState",
+  # Source storage: ShengUfs against the public IOStorageFamily, the Data RAM block and the verify target.
+  "component:VirtioMmioBlock",
+  "component:ShengUfs",
+  "component:RamBlock",
   # The 24A446 prelink matches calls against a symbol-bearing RELEASE build of the same source.
   "build-fileset-reference-27.py",
   # The owned display backend and its probes; the HID source driver waits for the DriverKit HID headers
@@ -164,9 +169,10 @@ title = "uke first boot: source 4K XNU to console"
 dram_size = "0x240000000"            # XNU VM DRAM: the full 9 GiB high range (0x8C0000000-0xB00000000)
 dram_base = "0x8C0000000"            # high DRAM range 0x8C0000000-0xB00000000; the ADT writes /chosen/dram-base
 skip_setup_tool = "scripts/seed-data-skip-setup.py"   # used by --skip-setup
-# The 17-line panic-screen patcher reads a flat kernel's symbol table; the 24A446 output is an MH_FILESET,
-# so the screen is off until the patcher learns the fileset layout.
 panic_screen = false
+# The signed root-policy bundle (build-sheng-source-storage.py): with XNU_SOURCE_STORAGE_TABLES=userdata only the
+# 544-byte headers travel here as kernel.macho.vroot; the hash tables live in the userdata image as OS.vroot.
+root_policies = "{tree}/build/sheng-source-storage/root-policies.bin"
 # No owner-built Metal addon in the iPadOS 27 CPU-rendering path: the payload carries no
 # kernel.macho.gpuaddon and the kernel args below never enable the Metal device.
 kernel_args = [
@@ -202,9 +208,9 @@ kernel_args = [
   "offline-key-events=1",
   "sheng-dpu-scanout=2",
   "sheng-vsync=120",
-  # Storage (source-storage UFS root, persistent Data, UFS log) joins with the source-storage archive and the
-  # 24A446 root policy: native-source-storage=1 native-ufs-root=1 native-ufs-allow-unverified=1
-  # sheng-data-persist=2 sheng-staged-apps=1 sheng-log=1 sheng-pmgr=2.
+  # Storage: source-storage UFS root (the 24A446 OS policy travels as kernel.macho.vroot and OS.vroot).
+  "native-source-storage=1",
+  "native-ufs-root=1",
   # Board policy carried over from the 17.7.11 line.
   "sheng-lite=1",
   "sheng-aks=1",
@@ -270,6 +276,9 @@ embedded-panic-log-size = 0x380000
 [adt.defaults.u32]
 sleep-disabled = 1
 "kern.maxvnodes" = 0x13400
+# No Apple PMGR or SEP: report a virtual platform, so AMFI does not wait for an ApplePMGRNub and the
+# native UFS root needs no PMGR stand-in (sheng's iPadOS 27 board does the same).
+"vmm-present" = 1
 
 [adt.product.string]
 model = "xiaomi,uke"
