@@ -1,0 +1,75 @@
+name: ipados27-root-policy
+
+# Sign and fully verify the original 24A446 OS image: the root policy that the source-storage runtime
+# authenticates before it mounts the root volume. macOS only (hdiutil/diskutil + the VerifiedRoot host
+# library); the resulting verified-root-24A446/OS bundle is downloaded and placed under the build tree's
+# build/ directory. The private owner key stays on the runner; the kernel only carries its public anchor.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: macos-14
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+        with:
+          path: UniXNU-uke
+          ref: feat/ipados27-gpu-parity
+
+      - name: Check out UniXNU (iPadOS 27 line)
+        uses: actions/checkout@v4
+        with:
+          repository: Allenwdk/UniXNU
+          ref: feat/ipados27-gpu-parity
+          path: UniXNU
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Host tools
+        run: |
+          brew install openssl@3 ipsw
+
+      - name: Fetch the 24A446 OS member
+        working-directory: UniXNU
+        run: ./unixnu ipsw fetch OS -D ../UniXNU-uke | tee /tmp/os-member.txt
+
+      - name: Decrypt the image when the IPSW ships it as AEA
+        working-directory: UniXNU
+        run: |
+          OS=$(tail -1 /tmp/os-member.txt)
+          case "$OS" in
+            *.aea)
+              OS=$(PYTHONPATH=scripts python3 -c 'import pathlib,sys; from unixnu.ipsw import decrypt_aea; print(decrypt_aea(pathlib.Path(sys.argv[1])))' "$OS")
+              ;;
+          esac
+          echo "OS_IMAGE=$OS" >> "$GITHUB_ENV"
+
+      - name: Build and verify the OS root policy
+        working-directory: UniXNU
+        run: |
+          python3 ../UniXNU-uke/scripts/make-root-policy-27.py \
+            --image "$OS_IMAGE" \
+            --profile profiles/os/ipados-27.0.1-24A446/profile.toml \
+            --verified-root kits/VerifiedRoot \
+            --output out/verified-root-24A446/OS
+
+      - name: Upload the policy bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-root-24A446-OS
+          path: |
+            UniXNU/out/verified-root-24A446/OS/manifest.bin
+            UniXNU/out/verified-root-24A446/OS/trusted-key.bin
+            UniXNU/out/verified-root-24A446/OS/verification.json
+            UniXNU/out/verified-root-24A446/OS/manifest.json
+          if-no-files-found: error
