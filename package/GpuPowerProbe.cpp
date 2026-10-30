@@ -1613,8 +1613,14 @@ void heartbeat() {
             // Mirror the on-screen stall rows and the command streams into the kernel log: the screen is muted after the
             // first presented frame, so this is the only way a hang leaves evidence.
             static int ringDumped;
-            if (!ringDumped && &native_adreno_ring_log && &native_adreno_ring_log_count && native_adreno_ring_window) {
+            if (!ringDumped) {
                 ringDumped = 1;
+                // A header even when a symbol is missing: whether the dump could see the ring at all is itself evidence.
+                IOLog("UKE GPUD: log=%x count=%x window=%x ib=%x wide=%x stall=%x n=%u/%u\n",
+                      (unsigned)(unsigned long)&native_adreno_ring_log, (unsigned)(unsigned long)&native_adreno_ring_log_count,
+                      (unsigned)(unsigned long)native_adreno_ring_window, (unsigned)(unsigned long)&native_adreno_ib_log,
+                      (unsigned)(unsigned long)&native_adreno_ib_log_wide, (unsigned)(unsigned long)&native_adreno_stall,
+                      native_adreno_ring_log_count, native_adreno_ib_log_count);
                 const unsigned logs = native_adreno_ring_log_count < 16 ? native_adreno_ring_log_count : 16;
                 const unsigned show = logs < 4 ? logs : 4;
                 for (unsigned k = 0; k < show; ++k) {
