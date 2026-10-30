@@ -703,17 +703,13 @@ static void native_legacy_default_surface_state(IOService *display,unsigned mode
         memcpy(fb+0x1618,&temp,sizeof(temp));
         IOLog("UKE: display surface adopted surface=%p sid=%u\n",temp,(unsigned)sid);
     }
-    // The compositor writes a 64-byte trailer past the last pixel and the
-    // exported mapping measures 0xF000 past the allocation, so give the
-    // surface one guard page.
+    // No guard page past the allocation: the descriptor's length is what the kernel memsets when it clears the
+    // surface, and a page past the backing store has nothing behind it. gpucomp64 panicked exactly there
+    // (_secure_memset+0x48, length 0x1A14000, far = base + 0x1A13000), so the length stays the allocation's.
     if(temp) {
         uint64_t allocation=0;
         memcpy(&allocation,reinterpret_cast<unsigned char *>(temp)+0x90,8);
-        if(allocation && allocation<=0x1A14000ull) {
-            uint64_t padded=allocation+0x1000;
-            memcpy(reinterpret_cast<unsigned char *>(temp)+0x90,&padded,8);
-            IOLog("UKE: surface allocation %llu -> %llu (guard)\n",(unsigned long long)allocation,(unsigned long long)padded);
-        }
+        IOLog("UKE: surface allocation %llu\n",(unsigned long long)allocation);
     }
     // Opt-in CA mapping experiment (offline-legacy-default-surface=2): the surface's +0x30 descriptor is what the
     // display exports; the compositor's 0x1A22000-byte region is the allocation (0x1A13000) plus 0xF000. Map the
