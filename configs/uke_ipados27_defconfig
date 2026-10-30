@@ -1,0 +1,15 @@
+# uke / iPadOS 27.0.1 (24A446), arm64e.
+#
+# Phase 1 build gate: the shared arm64e and 24A446 profiles carry the kernel
+# configuration; this defconfig only fixes the target-specific switches until
+# the source-storage and display archives are ported. Board archives stay off
+# so the link gate is the untreated XNU 12377 source build.
+CONFIG_XNU_KERNEL_CHAINED_FIXUPS=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
+CONFIG_XNU_BUILD_ARCHIVES=n
+CONFIG_XNU_ARMVIRT_PLATFORM=n
+CONFIG_XNU_DT_PANIC_REGION=y
+
+# The GPU is off in the first CPU-rendering milestone: no NATIVE_ADRENO, no Metal
+# addon. Re-enable together with the Adreno740/AdrenoMetal feat archives.
+# CONFIG_XNU_NATIVE_ADRENO is not set

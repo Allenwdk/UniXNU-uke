@@ -15,41 +15,48 @@ git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
 commit = "98618c197e789acfd7ac6755ad23bf7e04881780"
 local = "../UniXNU-sm7675-common"
 
-# Board-pinned component variants: the canonical GPU modules carry the uke
-# integration branches, and the UFS and touch sources are the board's own
-# copies. Everything else resolves through the catalog. The Native*
-# repositories are kept only as history/fallback; no build reads them.
+# Board-pinned component variants for the iPadOS 27 line: the canonical GPU and
+# input modules are the upstream feat/ipados27-gpu-parity tips; the GPU driver
+# stays out of the build (CPU rendering) but the display module supplies the
+# 24A446 legacy-display backend. The touch source stays the board's own fork.
 [[source]]
 name = "Adreno740"
 kind = "driver"
 git = "https://github.com/UniXNU/Adreno740.git"
-# uke-a732-parity: Adreno740 feat/ipados27-gpu-parity (90b52bf) plus the
-# board's A732/GMU/31-bit-window/BO-teardown patches.
-commit = "786fcfb4bc34a1a8e5f3aa8f7b283d90e762bb5d"
+# Upstream feat/ipados27-gpu-parity tip (2026-10-30).
+commit = "c0a2f392a49b7363b26811189cb62d7d0f9e4b8a"
 local = "../UniXNU/drivers/Adreno740"
 
 [[source]]
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/UniXNU/GopFramebuffer.git"
-# Pure upstream feat/ipados27-gpu-parity: no uke display patches in the
-# default build (local-only paths stay in uke-display-quirks).
-commit = "7f7ae1e129113b4880c8f2039b398cdad15cb3f2"
+# Upstream feat/ipados27-gpu-parity tip (2026-10-30): the CPU path's display backend.
+commit = "4975bc84eb87e16d629125dcffb30cc30dfd2d86"
 local = "../UniXNU/drivers/GopFramebuffer"
 
 [[source]]
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/UniXNU/AdrenoMetal.git"
-# uke-metal-upstream: AdrenoMetal feat/ipados27-gpu-parity (148698d) plus the
-# iOS 17 SDK shared-event declaration only.
-commit = "5dbdfc9d6f0eea6ced668d5efd4740576ddc48ad"
+# Upstream feat/ipados27-gpu-parity tip (2026-10-30); not built in the CPU milestone.
+commit = "278333f4a5c8c026dec8e8c277c741c0d909cc77"
 local = "../UniXNU/drivers/AdrenoMetal"
 
 [[source]]
 name = "ShengUfs"
 kind = "driver"
-local = "drivers/NativeUfs"
+git = "https://github.com/UniXNU/ShengUfs.git"
+# Upstream feat/ipados27-gpu-parity: the source-storage UFS runtime and the
+# display bank's stage-1 window live here now, not in the old NativeUfs fork.
+commit = "78c93b0941896e0515c6abaad3ff0d88b50a78ca"
+
+[[source]]
+name = "ShengHidInput"
+kind = "driver"
+git = "https://github.com/UniXNU/ShengHidInput.git"
+# Upstream feat/ipados27-gpu-parity: the 24A446 vtable discriminators.
+commit = "24f1f3fbed6feff42e1ca02e2ce386a5c3c36da8"
 
 [[source]]
 name = "ShengNovatekTouch"

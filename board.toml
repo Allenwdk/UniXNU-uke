@@ -5,7 +5,7 @@ schema_version = 2
 name = "uke"
 soc = "SM7675"
 soc_source = "sm7675"
-os_profile = "ipados-17.7.11-21H461"
+os_profile = "ipados-27.0.1-24A446"
 description = "Xiaomi Pad 7"
 kit = "uke"                      # the package/ of this repository appears as kits/uke in the build tree
 
@@ -19,21 +19,9 @@ include = [
   "XnuPrelink", "DarwinBoot", "VerifiedRoot", "AirNir", "AdrenoPM4", "AdrenoFirmware", "ArmSmmu4K",
 ]
 
-# The target OS image: the unchanged iPad7,1 iPadOS 17.7.11 restore image. Give --ipsw PATH to use a local file; without
-# it the remote url is read with range requests, only the members that are needed.
-[ipsw]
-url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
-product = "iPad7,1"
-version = "17.7.11"
-build = "21H461"
-device_class = "j120ap"
-chip_id = 0x8011
-board_id = 12
-fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]   # the small components
-
-[ipsw.sha256]
-"044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
-"044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
+# The target OS image comes from the `ipados-27.0.1-24A446` profile (iPad17,3 / J820AP,
+# iPadOS 27.0.1 24A446). Give --ipsw PATH to use a local file; without it the remote url is
+# read with range requests, only the members that are needed.
 
 # The raw image for the userdata partition: the OS and SystemOS disk images of the IPSW behind a manifest.
 # first_lba and last_lba are the GPT entry "userdata" of LUN 0, read from the tablet.
@@ -41,50 +29,28 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustC
 first_lba = 0x2d3000
 last_lba = 0x3b147fa
 lba_bytes = 4096
-windows = [
-  { name = "OS", component = "OS" },
-  { name = "SystemOS", component = "Cryptex1,SystemOS" },
-]
 
 [kernel]
-defconfig = "uke_defconfig"
+defconfig = "uke_ipados27_defconfig"
 # The four-layer series of the resolver: shared arch patches, the SoC platform
-# patches, the OS patches and the board's own. Empty fragments: the board's
-# defconfigs carry the full configuration.
-config_fragments = []
+# patches, the OS patches and the board's own. The arm64e profile supplies the
+# shared arch series and the 24A446 profile the OS series; the SoC and device
+# series are re-based on xnu-12377 in their own repositories.
+config_fragments = ["arch:configs/common.config", "os:configs/ipados.config"]
+patch_series = ["arch:patches/xnu/series", "soc:patches/xnu-12377/series", "os:patches/xnu/series", "device:patches/xnu-12377/series"]
 # Archive builders of the kernel step, in order. They run only for a configuration with
-# CONFIG_XNU_BUILD_ARCHIVES=y (configs/uke-full_defconfig), after the bootstrap pass has left the
-# compile records behind. component: entries are catalog recipes; the rest are scripts of the
-# build tree with their arguments.
+# CONFIG_XNU_BUILD_ARCHIVES=y (uke_ipados27_defconfig turns its own off until the source-storage
+# and display archives are ported), after the bootstrap pass has left the compile records behind.
+# component: entries are catalog recipes; the rest are scripts of the build tree with their arguments.
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
   "component:ArmDTPlatform",
   "component:ArmCpu",
-  "component:ArmVirtPlatform",
-  "component:SoftwareAES",
-  "build-software-aes-bindings.py",
-  "prepare-storage-headers.py",
-  "component:ShengUfs",
-  "build-arm-driver.py NativeUfs --unverified",
-  "build-ufs-original-bindings.py",
-  "component:RamBlock",
-  "component:VirtioMmioBlock",
-  "component:VirtioMmioConsole",
-  "build-mockfs-fixture.py",
-  "build-sheng-platform-power.py",
   "build-libpthread-kernel.py",
-  "prepare-uke-gmu.py",
-  "component:Adreno740",
-  "build-native-adreno-kits.py",
-  "build-adreno740-accelerator.py",
-  "component:ShengHidInput",
+  "component:ShengUfs",
+  "component:RamBlock",
   "component:AppleKeyStoreState",
-  "build-native-legacy-display.py",
-  # The addon blob packs the owner-built Metal plugin bundle; the script builds
-  # it (and the owner trust module that admits it) when it is not on disk yet.
-  "build-gpu-addon-blob.py",
-  "build-boot-log.py",
 ]
 
 # Adreno 732 (uke) board values for the native GPU driver. The driver carries
@@ -150,45 +116,9 @@ sha256 = "435c7bac9a328b8a100df930b84b65b4d579e42be44785d0e60e3729291bb864"
 bytes = 12088
 sha256 = "1294992888e8c7c7fcd8a6d0a672cc666eff3c95e666ce5840db7e03edcc500d"
 
-[kernel.prelink]
-tool = "kits/NativePrelink/emit_prelink.py"
-kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
-kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
-slide = "-0x1000000"
-early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
-roots = [
-  "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
-  "com.apple.driver.AppleARMPlatform",
-  "com.apple.driver.AppleARMWatchdogTimer",
-  "com.apple.driver.AppleAudioClockLibs",
-  "com.apple.driver.AppleEffaceableStorage",
-  "com.apple.driver.AppleIISController",
-  "com.apple.driver.AppleM2ScalerCSCDriver",
-  "com.apple.driver.AppleMobileFileIntegrity",
-  "com.apple.driver.ApplePMGR",
-  "com.apple.driver.IODARTFamily",
-  "com.apple.filesystems.apfs",
-  "com.apple.iokit.CoreAnalyticsFamily",
-  "com.apple.iokit.IOAVFamily",
-  "com.apple.iokit.IOAudio2Family",
-  "com.apple.iokit.IOCECFamily",
-  "com.apple.iokit.IOCryptoAcceleratorFamily",
-  "com.apple.iokit.IOGPUFamily",
-  "com.apple.iokit.IOHDCPFamily",
-  "com.apple.iokit.IOMobileGraphicsFamily",
-  "com.apple.iokit.IOReportFamily",
-  "com.apple.iokit.IOSlowAdaptiveClockingFamily",
-  "com.apple.iokit.IOStorageFamily",
-  "com.apple.iokit.IOSurface",
-  "com.apple.kec.Libm",
-  "com.apple.kec.corecrypto",
-  "com.apple.kext.AppleMatch",
-  "com.apple.kext.CoreTrust",
-  "com.apple.security.AppleImage4",
-  "com.apple.security.sandbox",
-  "com.apple.iokit.IOHIDFamily",
-  "com.apple.iokit.IOHIDEventDriver",
-]
+# The kernel prelink input (tool, kernelcache sha, slide, early_security_init and roots) comes from
+# the `ipados-27.0.1-24A446` profile: the 24A446 kernelcache is an MH_FILESET with stripped symbols,
+# so the profile's XnuPrelink emitter and fileset-reference path apply instead of the 21H461 values.
 
 [firmware]
 config = "uke"                   # Resources/Configs/uke.toml in the Mu-Silicium checkout (--uefi)
@@ -230,23 +160,17 @@ dram_size = "0x240000000"            # XNU VM DRAM: the full 9 GiB high range (0
 dram_base = "0x8C0000000"            # high DRAM range 0x8C0000000-0xB00000000; the ADT writes /chosen/dram-base
 skip_setup_tool = "scripts/seed-data-skip-setup.py"   # used by --skip-setup
 panic_screen = true                  # native XNU panic output; Font.h is vendored in scripts/
-trust_cache_sha256 = [
-  "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
-]
-# The owner-built Metal addon (build-gpu-addon-blob.py, produced by the kernel
-# archives above): payloads/kernel.macho.gpuaddon, placed by the DarwinBoot
-# loader after the trust caches and staged into Data by kern_exec.c.
-gpu_addon = "build/uke-gpu-addon/gpu-addon.z"
+# No owner-built Metal addon in the iPadOS 27 CPU-rendering path: the payload carries no
+# kernel.macho.gpuaddon and the kernel args below never enable the Metal device.
 kernel_args = [
   "-v",
   "serial=3",
   "debug=0x14e",
-  # DEVELOPMENT kernels keep kprintf off unless this is set; uke has no UART,
-  # so kprintf then falls back to the framebuffer video console. Graphics boot
-  # suppresses text until -uketextconsole switches the console to text mode.
+  # uke has no UART: kprintf goes to the framebuffer video console.
   "-enable_kprintf_spam",
   "-uketextconsole",
   "kt_fixed_zones=120",
+  # Legacy display family (GopFramebuffer): CPU composition, GOP/DPU presentation.
   "offline-legacy-register=1",
   "offline-legacy-gop=1",
   "offline-legacy-unit-scale=2",
@@ -254,66 +178,31 @@ kernel_args = [
   "offline-legacy-validate=1",
   "offline-legacy-transfer=1",
   "offline-legacy-cpu-present=1",
-  "offline-legacy-default-surface=1",
-  # (The own-present set's `offline-legacy-base-present` was dropped here: only the
-  # retired NativeMobileDisplay reads that argument, the upstream display that the
-  # GPU track builds resolves the record itself, and the kernel command line is at
-  # its 1000-byte limit.)
-  # the screen console must not draw over presented frames; it is muted only
-  # after the first successful copy, so logs survive until the UI takes over.
+  "offline-legacy-phase=4",
   "offline-legacy-noconsole=1",
+  # Input: touch at stage 4, HID reports, polled frame path.
   "offline-hid-home=1",
   "offline-hid-input=1",
-  # Touch bring-up (docs/TOUCH-PORT.md on-screen set): stage 4 = firmware
-  # download + frame loop; sheng-touch-hid=1 publishes digitizer reports
-  # (required); poll mode is the device-proven frame path (the interrupt path
-  # is not yet verified on hardware and falls back to polling by itself).
   "sheng-touch=4",
   "sheng-touch-hid=1",
   "sheng-touch-poll=1",
-  "offline-legacy-phase=4",
-  # GPU track (same values as gpu-framepresent v2/v3): the staged A732 bring-up
-  # publishes the Metal device and the compositor submits the 1200-byte overlay
-  # records whose layer 6 frame the own-present path resolves.
-  "sheng-gpu-power=9",
-  "sheng-gpu-metal=1",
-  # The A732 SMMU is fused to 31 bits. Force the CPU TTBR0 switch with the
-  # GPU idle (mode 1): the CP aperture switch (mode 2) stalled the ring on the
-  # first Metal submission in gpucomp57.
-  "sheng-gpu-ttbr=1",
-  # GPU scanout hand-off (upstream GpuScanoutClient path): the addon plugin's
-  # scanout client blits the offered frame into the scanout on the GPU; a
-  # refused offer or failed copy falls back to the CPU copy (fail-safe).
-  "sheng-fb-gpu=1",
-  # Upstream GopFramebuffer direct scanout: the two VIG pipes fetch the
-  # compositor's surface through the display bank's stage-1 window; the
-  # GPU-copy hand-off above remains the fallback if a mapping is refused.
-  "sheng-dpu-scanout=2",
-  # The window the pipes fetch through is NativeUfs's (ShengUfs f2d6a4a) and keeps
-  # its own argument: the display only asks for the window, NativeUfs builds it.
-  # It was dropped when the display moved to the upstream chain (only the upstream
-  # argument was kept), which left the direct path with no window: every frame
-  # took the copy path. 1 = build the display bank's stage-1 window.
-  "uke-dpu-scanout=1",
-  # The display refresh tick (upstream display port): 120 Hz vsync messages from the family's own sender, so the render
-  # server paces to the panel instead of its 1/60 s heartbeat, and IOMFBDisplayRefresh reports the panel rate.
-  "sheng-vsync=120",
-  # stage the owner-built NativeAdrenoMetal bundle (addon blob) into Data so the
-  # render server opens a native Metal device; iconservicesagent then keeps
-  # CoreImage on that device instead of the null-GL crash loop.
-  "sheng-gpu-addon=1",
-  "sheng-iconservices=1",
+  # Display client, APFS load and the display refresh tick.
   "offline-mobile-graphics-client=1",
   "offline-mobile-graphics-load=1",
   "offline-apfs-load=1",
   "boot-progress=2",
   "-apfs_shared_datavolume",
   "offline-key-events=1",
+  "sheng-dpu-scanout=2",
+  "sheng-vsync=120",
+  # Storage: source-storage UFS root and the persistent Data store.
+  "native-source-storage=1",
   "native-ufs-root=1",
   "native-ufs-allow-unverified=1",
   "sheng-data-persist=2",
   "sheng-staged-apps=1",
   "sheng-log=1",
+  # Board policy carried over from the 17.7.11 line.
   "sheng-pmgr=2",
   "sheng-lite=1",
   "sheng-aks=1",
@@ -322,31 +211,16 @@ kernel_args = [
   "armcpu-spi-ipi=1",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
+  "use_contiguous_hint=0",
 ]
-# Fixups of signed text, applied by the kernel after signature validation (patches/xnu/native-text-fixup.patch); they reach it as
-# /chosen/text-fixups, not on the command line. Each is <file name>,<file offset>,<original>,<replacement>, in hex. uke runs the
-# same 21H461 iPadOS build as sheng, so sheng's fixup list applies verbatim.
-text_fixups = [
-  # +[AWAttentionAwarenessConfiguration initialize] (21H461) only forces +[AWClientPreferences initialize] and deadlocks
-  # SpringBoard startup against it (ABBA between the main thread and Siri's SASMyriadController); it returns at once instead.
-  "dyld_shared_cache_arm64.15,421e8bc,28ad1bb0008544f9,c0035fd6008544f9",
-  "dyld_shared_cache_arm64.13,1b05bec,44008052,24008052",
-  "dyld_shared_cache_arm64.13,1b05b08,44008052,24008052",
-  # BTAudioHALPlugin's factory returns NULL, so audiomxd skips it: with bluetoothd disabled (sheng-lite) the plugin reconnects to the
-  # audio device and hangs audiomxd's startup (int-141), which keeps the speaker from ever being ready.
-  "BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6",
-]
+# No text_fixups in the 27 path: the 21H461 list addresses the iOS 17 dyld cache; 24A446 needs its
+# own investigation (if any) after the desktop is up.
 
 [payload.adt]
 tool = "scripts/make-uke-adt.py"
 chip_id = "207"
 owned_memory_size = "0x130000000"     # 4.75 GiB, sheng's proven value on the same 12 GB RAM class; fits the 9 GiB
                                       # high-bank run (0x8C0000000..0xB00000000) now mapped in uke's MemoryMapLib
-root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
-# mount(8) phase 1 requires a boot manifest hash to name /private/preboot/<hash>.
-# uke has no Apple personalization manifest, so this is an explicit bring-up
-# owner boot-set identity (SHA-384 of "UkeBringup.BootSet.v1\0"), not Apple data.
-boot_manifest_hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5139ec7b580d63ca9319e218962a2236f23faca"
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
 packed_data_ramdisk = true
 persistent_data = true               # sheng-data-persist keeps Data writes, so Data is not ephemeral storage
@@ -389,8 +263,7 @@ include_dirs = ["soc:dts"]
 [adt.chosen.u32]
 embedded-panic-log-size = 0x380000
 
-[adt.chosen.bytes]
-boot-manifest-hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5139ec7b580d63ca9319e218962a2236f23faca"
+# No /chosen/boot-manifest-hash: the 24A446 source-storage runtime supplies the owner boot set.
 
 [adt.defaults.u32]
 sleep-disabled = 1
