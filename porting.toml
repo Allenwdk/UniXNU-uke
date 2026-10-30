@@ -3,36 +3,38 @@ schema_version = 1
 [device]
 name = "uke"
 soc = "SM7675"
-os_profile = "ipados-17.7.11-21H461"
-summary = "Xiaomi Pad 7 (SM7675/cliffs) port: format-2 repository migration verified by from-scratch kernel builds; the shared patch set is fully upstream-aligned (73 patches, four-layer chain); the bring-up runs through GPU mode 9, a real on-screen UI and touch scanning, with host-only migration verification on 2026-10-28."
+os_profile = "ipados-27.0.1-24A446"
+summary = "Xiaomi Pad 7 (SM7675/cliffs) port on the iPadOS 27.0.1 (24A446, arm64e, XNU 12377) line: the arm64e MH_FILESET kernel is prelinked against the 24A446 kernelcache (G1), the 24A446 Legacy display backend and the source-storage root are linked into it, and the payload/vendor_boot/boot/userdata images are built host-side on 2026-10-30; device bring-up (G2 root volume, G3 desktop with CPU rendering) is pending."
 
 [[area]]
 id = "configuration"
 status = "host-verified"
 components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink"]
-paths = ["board.toml", "feeds.toml", "configs/**", "patches/xnu/series", "proprietary-files.txt"]
+paths = ["board.toml", "feeds.toml", "configs/**", "patches/xnu/series", "patches/xnu-12377/series", "proprietary-files.txt"]
 inputs = ["Format-2 resolver of the shared UniXNU checkout (schema_version = 2).",
-  "UniXNU-sm7675-common SoC layer and the ipados-17.7.11-21H461 OS profile.",
+  "UniXNU-sm7675-common SoC layer and the ipados-27.0.1-24A446 OS profile (iPad17,3, XNU 12377.121.6, arm64e).",
+  "24A446 kernelcache kernelcache.decompressed (sha256 38e6d9fa...) as the prelink reference.",
   "Catalog components with the board's fork pins in feeds.toml."]
-configuration = ["board.toml: schema_version 2, soc_source sm7675, os_profile ipados-17.7.11-21H461, kit uke.",
-  "The validated 68-patch set as one explicit series (device:patches/xnu/series).",
-  "Nine board defconfigs; uke-gpu-userland_defconfig is the active GPU track."]
-procedure = ["./unixnu defconfig uke-gpu-userland_defconfig -D ../UniXNU-uke-format2",
-  "./unixnu fetch -D ../UniXNU-uke-format2 && ./unixnu status --json -D ../UniXNU-uke-format2",
-  "./unixnu tree -D ../UniXNU-uke-format2"]
+configuration = ["board.toml: schema_version 2, soc_source sm7675, os_profile ipados-27.0.1-24A446, kit uke.",
+  "Four-layer series arch:patches/xnu/series + soc:patches/xnu-12377/series + os:patches/xnu/series + device:patches/xnu-12377/series; uke_ipados27_defconfig is the active track and starts with GPU off (CPU rendering).",
+  "Archives: corecrypto 14, ArmDTPlatform, ArmCpu, AppleKeyStoreState, ShengUfs/VirtioMmioBlock/RamBlock/VerifiedRoot, the 24A446 fileset reference and the 24A446 Legacy display backend."]
+procedure = ["./unixnu defconfig uke_ipados27_defconfig -D ../UniXNU-uke-build",
+  "./unixnu fetch -D ../UniXNU-uke-build && ./unixnu status --json -D ../UniXNU-uke-build",
+  "./unixnu build kernel -D ../UniXNU-uke-build && ./unixnu build payload -D ../UniXNU-uke-build",
+  "./unixnu build userdata -D ../UniXNU-uke-build --object OS.vroot=<policy>/manifest.bin"]
 findings = ["The format-1 patch path never applied the shared patches from a cold tree (the board module shadowed them); the format-2 series replays the set statelessly.",
   "Catalog archive recipes equal the board's legacy builder commands; the component aliases keep the old script names working.",
   "P2 (gpucomp26): the compositor's two-plane 'b3a8' frame is scanned by the DPU natively. Plane 0's 4 B/texel colour words (rows 4*width apart) are XRGB2101010, whose SSPP SRC_FORMAT 0x000276ff is the firmware's own ARGB8888 word 0x000237ff (unpack 0x03020001) with alpha bit 8 clear and DX bit 14 set, per the stock dpu_hw_sspp_setup_format/dpu_formats.c in the reference kernel; plane 1 is the alpha byte, whose row is the record's stride field. The 34,177,024-byte frame maps only its 27,340,800-byte plane-0 prefix into one slot; the CPU decode remains the fallback when the display-bank window is unavailable.",
   "gpucomp26 log (recovery, userdata window, t=16..917 s): UKE DPU: direct ready fmt=000237ff/000237ff unpack=03020001 tenbit=000276ff; four b3a8 frames mapped by their plane-0 prefix (direct slot ... bytes=27340800); UKE DPU: tenbit sample p0=18060180 p0c=37edfb7e alpha=ff/ff -- the alpha plane is 0xFF, so the frame is opaque and the XRGB2101010 word order is the right one. One stall snapshot at t=78.4 s and none after; GPU commit-to-complete still averages 50.9 ms over 8884 commits in 893 s (about 9.9/s).",
   "gpucomp27 ports the upstream display's refresh tick (GopFramebuffer 33e941a): startVsync/vsyncTick/armVsync, getRefreshAttributes at slot 301 and setDisplayRefreshProperties in registerService, with the builder binding _native_legacy_vsync_notify (0xfffffff005796720) and _native_legacy_set_refresh_properties (0xfffffff00579ebb8) after checking the original bytes; board.toml sets sheng-vsync=120 (armcpu-diagnostics dropped to stay at 987 of 1000 command-line bytes). The direct path now prints UKE DPU: flip n=... tb=... skip=... fb=... latch=...us max=...us vsync=... every 120 frames and the first eight UKE DPU: skip lines, so the next log separates compositor starvation from display-path loss.",
 ]
-completion = ["Status resolves arch, soc, os and device layers with the intended pins; the patch order lists 68 unique patches; the output path is out/uke/ipados-17.7.11-21H461/<config>/."]
-limits = ["The adopted shared patches (five evolutions and seven additions) are host-verified only; their userland behavior is unproven on hardware."]
-next_action = ["Flash gpucomp38 (uke-port/releases/2026-10-29-gpu-upstream-feat: kernel f050cf35, payload be3f7cc8, vendor_boot 29ddb27b) when the device can come out of TWRP, and check first whether B fill/copy rises above the 1.76/3.75 GB/s gpucomp37 measured; UKE GPU: maint then shows which cache-maintenance phase the driver still pays.",
-  "If the throughput holds, keep the feat-based driver (upstream cache maintenance, on-demand page tables, hangcheck) and re-measure the compositor's frame time; the DPU direct path with the client fence (gpucomp31-36 findings) stays as the display side."]
+completion = ["Status resolves arch, soc, os and device layers with the intended pins; the output path is out/uke/ipados-27.0.1-24A446/uke_ipados27/; kernel.macho is MH_FILESET/arm64e and prelinks against the 24A446 kernelcache."]
+limits = ["Device bring-up (G2/G3) is not started: no 24A446 image has run on hardware. The SystemOS root policy is not generated (the profile marks it optional), and the HID source driver is a weak stub until the DriverKit HID headers are available."]
+next_action = ["Flash uke-port/releases/2026-10-30-ipados27-storage (boot_a/b + vendor_boot_a/b + userdata, set_active a) and take the bring-up log; check arm_init/bsd_init, the source-storage root mount and launchd, then the desktop with CPU rendering."]
 evidence = [
-  { kind = "host", reference = "board.toml", result = "schema_version 2 resolves with 23 component specs, 37 modules and a 68-entry patch order", command = "./unixnu status --json -D ../UniXNU-uke-format2", revision = "23c2926941405e7df8097a6bca6ee8348a39c787" },
-  { kind = "source", reference = "patches/xnu/series", result = "the validated patch set in application order, shared entries prefixed arch:" },
+  { kind = "host", reference = "board.toml", result = "schema_version 2 resolves the ipados-27.0.1-24A446 profile with the four-layer patch series; kernel.macho is MH_FILESET/arm64e (95,322,112 B, sha256 99a6b970...)", command = "./unixnu status --json -D ../UniXNU-uke-build && ./unixnu build kernel -D ../UniXNU-uke-build", revision = "a8da9009d43f6c679ebd46903810906afa8ce906" },
+  { kind = "source", reference = "configs/uke_ipados27_defconfig", result = "the active 27 track: CONFIG_XNU_BUILD_ARCHIVES=y, CHAINED_FIXUPS=y, native display backend, source storage with the OS root policy, NATIVE_ADRENO off." },
+  { kind = "source", reference = "patches/xnu-12377/series", result = "the device's xnu-12377 entries: Darwin 26 posix_spawn attrs, ptrauth null portability, 4K stack shift and the source-storage runtime hook." },
 ]
 
 [[area]]
@@ -95,29 +97,32 @@ evidence = [
 
 [[area]]
 id = "storage"
-status = "device-verified"
+status = "host-verified"
 components = ["ShengUfs", "RamBlock", "VirtioMmioBlock", "VirtioMmioConsole", "VerifiedRoot"]
-paths = ["drivers/NativeUfs/**", "board.toml", "proprietary-files.txt"]
+paths = ["board.toml", "package/SourceStorage.cpp", "package/SourceRootBinding.cpp", "package/SourceRootPolicies.cpp", "package/UfsDpuStubs.c", "package/UfsDpuTableStubs.c", "scripts/make-root-policy-27.py"]
 inputs = ["UFS host at 0x1d84000 (GCC windows 0x177000/0x19e000).",
-  "userdata GPT windows (first_lba 0x2d3000..) with the OS and SystemOS components."]
-configuration = ["NativeUfs builds with --unverified (bring-up transport without the verified-root policy bundle).",
-  "Kernel arguments native-ufs-root=1 native-ufs-allow-unverified=1, owner Data persist level 2."]
-procedure = ["./unixnu build package -D ../UniXNU-uke-format2; ./unixnu build userdata (macOS) or the recorded seed images."]
-findings = ["TLMM per-GPIO base is 0x0f100000; reading 0x0f000000 hits unbacked space and hangs the bus.",
-  "The owner root-binding audit is the base of the bsd_init owner block; the other probes expect its result.",
-]
-completion = ["UFS enumerates, the owner Data mounts and the SystemOS volume appears."]
-limits = ["The verified-root transport is not yet the default; userdata imaging needs macOS hdiutil."]
-next_action = ["Switch the UFS transport to the verified-root policy bundle before shipping."]
+  "24A446 OS disk image: raw APFS, 9,613,344,768 B, image sha256 8a12cdad... (equals profile [root]), volume UUID 2F8E6EED-...; the VerifiedRoot OS policy verified all 2,347,008 blocks.",
+  "userdata SHNGROOT v2 image (9,689,890,816 B): OS window at 0x100000 (block 512, read-only) and the OS.vroot data object at 0x23D100000 (75,104,800 B, block 4096)."]
+configuration = ["Source storage: ShengUfs + VerifiedRoot + RamBlock + VirtioMmioBlock; the 544-byte policy header travels as kernel.macho.vroot and the hash table as the OS.vroot userdata object.",
+  "Kernel arguments native-source-storage=1 native-ufs-root=1; there is no unverified transport on this line."]
+procedure = ["./unixnu build kernel -D ../UniXNU-uke-build",
+  "./unixnu build userdata -D ../UniXNU-uke-build --object OS.vroot=<policy>/manifest.bin"]
+findings = ["The display bank's stage-1 window functions (native_ufs_dpu_map/table/l2) belong to ShengUfs; the display builder stubs only their data when the source storage is absent, so the display backend and the storage link into one kernel (the map stub is compiled only without storage).",
+  "The root policy hashes every 4 KiB block of the OS image: the host verification ran vr_host_block over all 2,347,008 blocks and the image sha256 equals the profile root (8a12cdad...); the 592-byte kernel.macho.vroot bundle's 544-byte manifest header is byte-identical to manifest.bin.",
+  "The OS member of the IPSW is an 8.25 GB AEA archive that decrypts to the raw APFS image; on Linux build userdata reuses it through a .dmg.json cache record instead of the macOS aea tool (rules 7.22)."]
+completion = ["The kernel mounts the OS volume from the userdata window through the verified policy and bsd_init reaches launchd."]
+limits = ["Host-verified only: nothing on this line has run on hardware yet. The SystemOS policy is not generated (the profile marks it optional)."]
+next_action = ["Flash uke-port/releases/2026-10-30-ipados27-storage and check the source-storage root mount in the bring-up log."]
 evidence = [
-  { kind = "device", reference = "docs/PROGRESS.md", result = "UFS root boots and the owner Data volume mounts on hardware", command = "fastboot boot boot.img", revision = "c77d613dc91fb54479242aa5d5902c48662b80d7" },
+  { kind = "host", reference = "board.toml", result = "kernel.macho carries _native_source_storage_start and _native_ufs_source_create; userdata-root.img is a v2 SHNGROOT with the OS window (8a12cdad...) and OS.vroot (575c24fb...)", command = "./unixnu build kernel && ./unixnu build userdata --object OS.vroot=<policy>/manifest.bin -D ../UniXNU-uke-build", revision = "a8da9009d43f6c679ebd46903810906afa8ce906" },
+  { kind = "device", reference = "docs/PROGRESS.md", result = "the 17.7.11 line mounted its owner Data volume through the NativeUfs transport (historical; not the source-storage path)", command = "fastboot boot boot.img", revision = "c77d613dc91fb54479242aa5d5902c48662b80d7" },
 ]
 
 [[area]]
 id = "display"
-status = "device-verified"
+status = "host-verified"
 components = ["GopFramebuffer", "NativeUfs"]
-paths = ["package/LegacyDisplayProbe.cpp", "package/OfflineGOP*.mm", "package/DpuProbe.cpp", "drivers/NativeUfs/NativeUfs.cpp", "scripts/build-native-legacy-display.py", "scripts/check-dpu-probe-host.py", "docs/dts-reference/mdss-cliffs-map.md"]
+paths = ["package/LegacyDisplayProbe.cpp", "package/OfflineGOP*.mm", "package/DpuProbe.cpp", "scripts/build-native-legacy-display-27.py", "scripts/build-native-legacy-display.py", "scripts/check-dpu-probe-host.py", "docs/dts-reference/mdss-cliffs-map.md"]
 inputs = ["UEFI GOP framebuffer; panel O82 3200x2136 with the splash at 0xe3940000/0x2b00000.",
   "Overlay-present Legacy driver and the recorded mobile-graphics ABI candidates.",
   "DPU track: cliffs DTB mdss_mdp@0xae00000 (sde-off 0x1000, VIG 0x5000/0x7000, CTL0 0x16000, INTF1/2 0x36000/0x37000, PP0 0x6a000, LM0 0x45000), apps_smmu 0x15000000 display streams SID 0x1c00 mask 0x02."]
@@ -177,13 +182,14 @@ evidence = [
   { kind = "device", reference = "docs/DPU-PORT.md", result = "M2/C3 PASS: redirecting VIG0/VIG1 to gop+0x800000 (1600x1068, stride 0x3200) drew red/green/blue/checker correctly for 2 s each, src0 readback e4140000, auto-restore; low-DRAM e5400000 shows gray (outside the display-readable GOP range)", command = "fastboot boot vendor_boot_uke_dpu_c3c.img", revision = "3c65101d7ce614a3c2520c4fb5c2b5ac2dd42657" },
   { kind = "device", reference = "docs/DPU-PORT.md", result = "B2 PASS: stage-1 window state=80000002 on bank 2; test=3 mapped a 27.3 MB BGRA buffer at IOVA 0x10000000 and the DPU scanned it (latch 1196 us); fix was Linux arm-smmu SCTLR 0x10e7 / TCR 0x803519 / TCR2 0x38015 with a 4xL2 2MB-block table; the S2CR bypass experiment b2v4 crashed and was reverted", command = "fastboot boot vendor_boot_uke_dpu_b2v8.img", revision = "3c65101d7ce614a3c2520c4fb5c2b5ac2dd42657" },
   { kind = "device", reference = "docs/DPU-PORT.md", result = "D1b PASS: presentBase maps each BGRA IOSurface into a stage-1 window slot and flips VIG0/VIG1 with no CPU copy; user reports clearly smoother ~10 fps and mostly correct output, with artifacts in some scenes (suspect GPU in-flight surface reuse; next: fence or one-swap delay)", command = "fastboot boot vendor_boot_uke_dpu_d1b.img", revision = "3c65101d7ce614a3c2520c4fb5c2b5ac2dd42657" },
+  { kind = "host", reference = "board.toml", result = "the 24A446 Legacy backend binds IOMobileFramebufferLegacy (379 slots, arm64e PAC diversities) and links with the presenter, keystore and display/DPU/touch/boot probes; kernel.macho sha256 99a6b970...", command = "./unixnu build kernel -D ../UniXNU-uke-build", revision = "a8da9009d43f6c679ebd46903810906afa8ce906" },
 ]
 
 [[area]]
 id = "input"
-status = "device-verified"
+status = "implemented"
 components = ["ShengHidInput", "ShengNovatekTouch", "QcomGeniSpi"]
-paths = ["drivers/NativeNovatekTouch/**", "package/TouchProbe.cpp", "package/HidInputProbe.cpp"]
+paths = ["drivers/NativeNovatekTouch/**", "package/TouchProbe.cpp", "package/HidInputProbe.cpp", "package/HidInputStubs.c"]
 inputs = ["Novatek NT36532 (o82 firmware, csot and tm variants) over Qcom Geni SPI.",
   "HID delivery through the workloop (NativeHidInput runAction on the touch thread)."]
 configuration = ["60x40 scan geometry; TLMM per-GPIO base 0x0f100000; poll mode frames flow after first valid frame type 4.",
@@ -192,15 +198,15 @@ procedure = ["Boot with the touch diagnostics and read the UKE TCH counters."]
 findings = ["Full bring-up runs on device through stage 4: firmware download CRC-ok and scanning 60x40.",
   "The v3 argument set is sheng-fb-gpu=0 plus offline-legacy-base-present=1; the desktop-era fb-gpu=1 hangs identically."]
 completion = ["Frames reach HID and the on-screen swipe responds."]
-limits = ["The on-screen swipe and coordinate mapping are the remaining break after the migration."]
-next_action = ["Fix HID delivery/coordinate mapping, then re-enable base-present with the v3 argument set."]
+limits = ["On the 27 line the HID source driver is a weak stub (the Linux SDK has no DriverKit HID headers); ShengNovatekTouch and the touch probe are linked, but HID delivery is not active yet."]
+next_action = ["Build ShengHidInput on macOS with the DriverKit HID headers, then re-enable the touch HID path on the 27 line."]
 evidence = [
   { kind = "device", reference = "docs/TOUCH-PORT.md", result = "UKE TCH: scanning v11 pid5993 60x40 with hb/drv/rpt counters advancing", command = "fastboot boot boot.img", revision = "c77d613dc91fb54479242aa5d5902c48662b80d7" },
 ]
 
 [[area]]
 id = "gpu"
-status = "device-verified"
+status = "planned"
 components = ["Adreno740", "AdrenoMetal", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "Sm8550Platform", "AirNir"]
 paths = ["board.toml", "scripts/prepare-uke-gmu.py", "docs/GPU-PORT.md"]
 inputs = ["Adreno 732 (chip 0x43030b00, gen7-11-0) with the gen71100 firmware triplet pinned in proprietary-files.txt.",
@@ -211,8 +217,8 @@ procedure = ["Build the GPU archives and boot the staged modes; read the G1..G0/
 findings = ["Staged modes 1/3/4/5/6/7/8/9 pass: GMU SMMU context Ready, command DB v1 parses p0, PLL1 locked, GX off/on with the perf vote, the Metal publish, and the user stream with F0 r3b/3b G0 q3 u0.",
   "A successful pool adopt needs an adopted_pool guard or the VM fallback returns kIOReturnBusy; the secure SMMU stream SMR write aborts, so the context is single-route."]
 completion = ["The Metal accelerator publishes and a user stream renders; the scanout shows frames."]
-limits = ["The format-2 kernel has not yet run the mode ladder on hardware (host-only verification)."]
-next_action = ["Flash and re-run modes 7-9, then continue the Metal accelerator plus scanout work."]
+limits = ["Out of scope on the 27 line: NATIVE_ADRENO is off and the board runs with CPU rendering; the 17.7.11 GPU bring-up (modes 1-9, Metal publish, DPU scanout) is kept here as history."]
+next_action = ["Revisit after the 27 desktop is up: port the feat/ipados27-gpu-parity driver stack and carry over the b3a8 scanout findings."]
 evidence = [
   { kind = "device", reference = "docs/GPU-PORT.md", result = "mode 9 passes with the kernel Metal publish (M ... s5/0 r1) and the user stream heartbeat F0 r3b/3b G0 q3 u0", command = "fastboot boot vendor_boot_uke_gpu_m9l.img", revision = "c77d613dc91fb54479242aa5d5902c48662b80d7" },
   { kind = "host", reference = "proprietary-files.txt", result = "the gen71100 firmware triplet hashes match the board pins", command = "sha256sum .cache/firmware/uke-gpu/*", revision = "23c2926941405e7df8097a6bca6ee8348a39c787" },
@@ -272,17 +278,18 @@ components = ["DarwinBoot", "XnuPrelink", "VerifiedRoot"]
 paths = ["board.toml", "scripts/build-session-image.sh"]
 inputs = ["Stock vendor_boot DTB with the board's dtb_node patches (splash reservation, payload at 0x1000000).",
   "Trust cache bundle and the recorded Data seed."]
-configuration = ["[payload]: volume UKEESP, 80 MiB, loader firmware, panic_screen true, 35 kernel arguments.",
-  "[bootimg.image]: v4 header, page 4096; the stock DTB keeps its /chosen and gains the initrd nodes."]
-procedure = ["./unixnu build payload --kernel kernel.macho --unique-chip-id HEX -D ../UniXNU-uke-format2",
-  "./unixnu bootimg --uefi ../uefi-uke --dtb ../uke-port/data/vendor_boot.dtb --ramdisk none -D ../UniXNU-uke-format2"]
-findings = ["The v4 header parsing and the existing-/chosen fdtput tolerance stay board-side; upstream expects a fresh /chosen.",
-  "payload.img and boot.img build on Linux; userdata imaging and skip-setup still need macOS."]
-completion = ["payload.img contains unixnu.toml, kernel.macho and its ADT; boot.img boots from the stock DTB."]
-limits = ["Host-only verification; the platform seed is not stored in any repository and was substituted for the structural build."]
-next_action = ["Build with the real unique_chip_id and flash the inactive slot."]
+configuration = ["[payload]: volume UKEESP, 94 MiB, loader firmware, panic_screen false, root_policies kernel.macho.vroot; the vendor_boot partition is 96 MiB.",
+  "[bootimg.image]: v4 header, page 4096; the stock DTB keeps its /chosen and gains the initrd window 0x1000000..0x7000000."]
+procedure = ["./unixnu build payload --kernel kernel.macho --unique-chip-id HEX -D ../UniXNU-uke-build",
+  "./unixnu bootimg --uefi ../uefi-uke --dtb ../uke-port/data/vendor_boot.dtb --ramdisk none -D ../UniXNU-uke-build"]
+findings = ["The v4 header parsing and the existing-/chosen tolerance are in unixnu bootimg (core 5525d18); the boot image carries an empty ramdisk because the payload is the vendor_boot vendor ramdisk.",
+  "payload, boot, vendor_boot and userdata all build on Linux; only the Data skip-setup seed still needs macOS."]
+completion = ["payload.img contains kernel.macho, its ADT, the trust cache, the Data seed and kernel.macho.vroot; boot.img boots from the stock DTB."]
+limits = ["Host-only verification; the platform seed is not stored in any repository and was substituted for the structural build.",
+  "The 94 MiB payload leaves about 200 KB in the 96 MiB vendor_boot partition."]
+next_action = ["Flash the 2026-10-30-ipados27-storage release and confirm the FAT volume handoff."]
 evidence = [
-  { kind = "host", reference = "board.toml", result = "payload.img 80 MiB with the UKEESP volume and boot.img 1,515,520 bytes over the stock vendor_boot DTB", command = "./unixnu build payload && ./unixnu bootimg --uefi ../uefi-uke --dtb ../uke-port/data/vendor_boot.dtb --ramdisk none", revision = "4f4bf7e1f4ad56743562777becd7ac7d6714216c" },
+  { kind = "host", reference = "board.toml", result = "payload.img 94 MiB (sha256 e368e3f3...) and boot.img 1,515,520 bytes (sha256 9b04ce75...) over the stock vendor_boot DTB", command = "./unixnu build payload && ./unixnu bootimg --uefi ../uefi-uke --dtb ../uke-port/data/vendor_boot.dtb --ramdisk none", revision = "a8da9009d43f6c679ebd46903810906afa8ce906" },
   { kind = "device", reference = "docs/GPU-PORT.md", result = "the fmt2 test image booted to userland on hardware with the recovered platform seed and the Data seed handoff", command = "fastboot flash boot_a vendor_boot_a && fastboot set_active a && fastboot reboot", revision = "bdb1af9a7100367cde283ff5408681de8fbbcfe3" },
 ]
 
