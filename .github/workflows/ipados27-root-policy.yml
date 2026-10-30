@@ -31,6 +31,13 @@ jobs:
           path: UniXNU
           submodules: recursive
 
+      - name: Check out the SM7675 SoC layer
+        uses: actions/checkout@v4
+        with:
+          repository: Allenwdk/UniXNU-sm7675-common
+          ref: feat/ipados27-gpu-parity
+          path: UniXNU-sm7675-common
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
