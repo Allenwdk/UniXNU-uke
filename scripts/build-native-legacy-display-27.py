@@ -523,6 +523,10 @@ for source in (ROOT / 'drivers/QcomGeniSpi/GeniSpi.c', ROOT / 'drivers/ShengNova
     board_objects.append(obj)
 input_objects += board_objects
 print(f'Board drivers: {len(board_objects)} objects')
+# The DPU window calls belong to the source storage; the strong stub is only for a kernel built without it.
+if not (ROOT / 'build/sheng-source-storage/libShengSourceStorage.a').is_file():
+    compile_c(ROOT / 'kits/uke/UfsDpuStubs.c', OUT / 'UfsDpuStubs.o')
+    input_objects.append(OUT / 'UfsDpuStubs.o')
 archive = OUT / 'libNativeLegacyDisplay.late.a'
 archive.unlink(missing_ok=True)
 run(['xcrun', 'ar', 'rcs', archive, late, OUT / 'original-bindings.o', OUT / 'original-addresses.o', OUT / 'LegacyDisplayProbe.o', OUT / 'LegacyDisplaySupport27.o', gop_late,

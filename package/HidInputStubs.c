@@ -34,14 +34,7 @@ __attribute__((weak)) volatile uint32_t native_ufs_dpu_smmu[24];
 __attribute__((weak)) volatile uint32_t native_ufs_dpu_check[8];
 __attribute__((weak)) volatile uint32_t native_ufs_dpu_atos[4];
 __attribute__((weak)) volatile uint32_t native_ufs_dpu_fault_sid;
-/* Strong: the callers reach these through authenticated function pointers (weak_import), and the linker keeps
- * an import entry for a weak_import reference even when a weak definition sits in a force-loaded archive.
- * The chained-fixup prelink refuses import entries, so the no-storage build defines them outright. */
-uint32_t native_ufs_dpu_map(unsigned slot, const uint64_t *pages, unsigned count)
-{
-	(void)slot; (void)pages; (void)count;
-	return 0;
-}
-uint32_t native_ufs_dpu_table(unsigned index) { (void)index; return 0; }
-uint32_t native_ufs_dpu_l2(unsigned index) { (void)index; return 0; }
+/* The DPU window *functions* live in UfsDpuStubs.c (built only when the source storage is absent): the
+ * callers reach them through authenticated function pointers, and a strong duplicate here would collide with
+ * NativeUfs once the source storage is linked. The data symbols above stay weak and are overridden. */
 __attribute__((weak)) volatile uint32_t native_touch_edge_stats[4];
