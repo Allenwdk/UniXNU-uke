@@ -14,6 +14,11 @@ from pathlib import Path
 import subprocess
 
 root = Path(__file__).resolve().parents[1]
+# The reference copies .cache/xnu-work before build-xnu-4k-baseline.sh runs its Linux rewrites; apply them first
+# (idempotent) so the copy gets the standard vector syntax the upstream assembler needs.
+prepare = root / 'scripts/linux/prepare-xnu.py'
+if prepare.is_file():
+    subprocess.run(['python3', str(prepare), 'source'], cwd=root, check=True)
 output = root / 'build/xnu/fileset-reference'
 output.mkdir(parents=True, exist_ok=True)
 source = output / 'source'
