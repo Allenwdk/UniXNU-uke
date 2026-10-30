@@ -9,6 +9,8 @@ CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
 CONFIG_XNU_BUILD_ARCHIVES=y
 CONFIG_XNU_ARMVIRT_PLATFORM=n
 CONFIG_XNU_DT_PANIC_REGION=y
+# The owned GopFramebuffer legacy display backend (CPU composition, GOP/DPU presentation).
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
 
 # The GPU is off in the first CPU-rendering milestone: no NATIVE_ADRENO, no Metal
 # addon. Re-enable together with the Adreno740/AdrenoMetal feat archives.

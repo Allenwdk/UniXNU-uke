@@ -16,6 +16,7 @@ kit = "uke"                      # the package/ of this repository appears as ki
 [components]
 include = [
   "ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState",
+  "GopFramebuffer", "QcomGeniSpi", "ShengNovatekTouch", "ShengHidInput",
 ]
 
 # The target OS image comes from the `ipados-27.0.1-24A446` profile (iPad17,3 / J820AP,
@@ -48,8 +49,12 @@ archives = [
   "component:ArmCpu",
   "build-libpthread-kernel.py",
   "component:AppleKeyStoreState",
+  # The source HID driver first: the display builder binds its original IOHIDDevice.
+  "component:ShengHidInput",
   # The 24A446 prelink matches calls against a symbol-bearing RELEASE build of the same source.
   "build-fileset-reference-27.py",
+  # The owned display backend, its probes and the HID/touch bindings.
+  "build-native-legacy-display-27.py",
 ]
 
 # Adreno 732 (uke) board values for the native GPU driver. The driver carries

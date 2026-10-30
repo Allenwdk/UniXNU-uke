@@ -389,26 +389,12 @@ run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--global
      gop / 'NativeGOPPresenter.o', gop_late])
 # Keyboard, buttons and touch, the iPadOS 17 drivers: their source-API objects (public IOHIDFamily headers, so every IOHIDDevice
 # virtual keeps its real name and pointer-authentication discriminator), linked against the original IOHIDDevice of this fileset.
-# The owned HID source is compiled here against the public IOHIDFamily headers and the kernel's own C++ flags:
-# build-sheng-source-drivers.py expects the device checkout's old Native* layout, which uke no longer has.
-storage_helper = load_helper('source_storage_headers', ROOT / 'scripts/prepare-storage-headers.py')
-storage = (ROOT / 'refer/IOStorageFamily').resolve()
-hid_source_tree = (ROOT / 'refer/IOHIDFamily').resolve()
-storage_commit = run(['git', '-C', storage, 'rev-parse', 'HEAD'], text=True).strip()
-hid_commit = run(['git', '-C', hid_source_tree, 'rev-parse', 'HEAD'], text=True).strip()
-header_report = storage_helper.prepare(storage, storage_commit, OUT / 'headers')
-hid_include = OUT / 'hid-include'
-for source_dir, relative in ((hid_source_tree / 'IOHIDFamily', 'IOKit/hid'),
-                             (hid_source_tree / 'IOHIDSystem/IOKit/hidsystem', 'IOKit/hidsystem')):
-    destination = hid_include / relative
-    destination.mkdir(parents=True, exist_ok=True)
-    for header in sorted(source_dir.glob('*.h')):
-        shutil.copyfile(header, destination / header.name)
-hid_sdk = Path(header_report['sdk'])
-hid_sdk_kernel = hid_sdk / 'System/Library/Frameworks/Kernel.framework/Versions/A/Headers'
-compile_cpp(ROOT / 'drivers/ShengHidInput/NativeHidInput.cpp', OUT / 'NativeHidInput.o',
-            ['-DNATIVE_HID_SOURCE_API=1', '-I', str(OUT / 'headers/include'), '-idirafter', str(hid_sdk_kernel)])
-SRC = OUT
+# The source HID driver is compiled by component:ShengHidInput (build-sheng-hid-input.py's arm64e path)
+# against the public IOHIDFamily headers. This builder binds the original IOHIDDevice of the fileset and
+# checks every owned vtable entry's pointer-authentication diversity.
+SRC = ROOT / 'build/sheng-hid-input'
+require((SRC / 'NativeHidInput.o').is_file() and (SRC / 'NativeHidInput.late.o').is_file(),
+        'component:ShengHidInput must build before the display archive')
 hid_abi = json.loads(Path(__file__).resolve().with_name('hid-device-24A446.json').read_text())
 hid_slots = [(int(t, 16), int(d, 16)) for t, d in hid_abi['slots']]
 hid_pure = {i for i, (t, _) in enumerate(hid_slots) if t == slots[214][0]}
@@ -485,9 +471,7 @@ for name, va in sorted(hid_bindings.items()):
 (OUT / 'hid-addresses.S').write_text(hid_addresses)
 for stem in ('hid-bindings', 'hid-addresses'):
     run(['xcrun', 'clang', '-target', TRIPLE, '-isysroot', sdk, '-c', OUT / (stem + '.S'), '-o', OUT / (stem + '.o')])
-hid_late = OUT / 'NativeHidInput.late.o'
-run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_NativeHidInput.cpp',
-     SRC / 'NativeHidInput.o', hid_late])
+hid_late = SRC / 'NativeHidInput.late.o'
 hid_probe = ROOT / 'kits/uke/HidInputProbe.cpp'
 compile_cpp(hid_probe, OUT / 'HidInputProbe.o')
 input_objects = [hid_late, OUT / 'hid-bindings.o', OUT / 'hid-addresses.o', OUT / 'HidInputProbe.o']
