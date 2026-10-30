@@ -408,6 +408,7 @@ run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--global
 # against the public IOHIDFamily headers. This builder binds the original IOHIDDevice of the fileset and
 # checks every owned vtable entry's pointer-authentication diversity.
 SRC = ROOT / 'build/sheng-hid-input'
+hid_probe = ROOT / 'kits/uke/HidInputProbe.cpp'
 HID_SOURCE = (SRC / 'NativeHidInput.o').is_file() and (SRC / 'NativeHidInput.late.o').is_file()
 if HID_SOURCE:
     hid_abi = json.loads(Path(__file__).resolve().with_name('hid-device-24A446.json').read_text())
