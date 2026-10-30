@@ -39,17 +39,15 @@ defconfig = "uke_ipados27_defconfig"
 config_fragments = ["arch:configs/common.config", "os:configs/ipados.config"]
 patch_series = ["arch:patches/xnu/series", "soc:patches/xnu-12377/series", "os:patches/xnu/series", "device:patches/xnu-12377/series"]
 # Archive builders of the kernel step, in order. They run only for a configuration with
-# CONFIG_XNU_BUILD_ARCHIVES=y (uke_ipados27_defconfig turns its own off until the source-storage
-# and display archives are ported), after the bootstrap pass has left the compile records behind.
-# component: entries are catalog recipes; the rest are scripts of the build tree with their arguments.
+# CONFIG_XNU_BUILD_ARCHIVES=y (uke_ipados27_defconfig). This is the first link gate: the shared
+# source archives only. The source-storage, display, HID and boot-log builders are added here as
+# their iPadOS 27 ports land.
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
   "component:ArmDTPlatform",
   "component:ArmCpu",
   "build-libpthread-kernel.py",
-  "component:ShengUfs",
-  "component:RamBlock",
   "component:AppleKeyStoreState",
 ]
 
