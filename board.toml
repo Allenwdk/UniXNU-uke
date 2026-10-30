@@ -30,6 +30,11 @@ include = [
 first_lba = 0x2d3000
 last_lba = 0x3b147fa
 lba_bytes = 4096
+# The OS root only: the 24A446 policy signs the OS image, and the profile marks SystemOS optional. The
+# hash table rides as the OS.vroot data object (--object OS.vroot=<policy>/manifest.bin).
+windows = [
+  { name = "OS", component = "OS" },
+]
 
 [kernel]
 defconfig = "uke_ipados27_defconfig"
@@ -259,7 +264,9 @@ props = [
 path = "/chosen"
 props = [
   { name = "linux,initrd-start", type = "x", value = ["0x1000000"] },
-  { name = "linux,initrd-end", type = "x", value = ["0x6000000"] },
+  # The 24A446 payload is 94 MiB (0x5E00000) at 0x1000000; UkeBootMemoryDxe publishes this range as the
+  # FAT volume, so the end must cover it (the 17-line image said 0x6000000 for an 80 MiB payload).
+  { name = "linux,initrd-end", type = "x", value = ["0x7000000"] },
 ]
 
 [device_tree]
