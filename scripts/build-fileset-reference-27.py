@@ -59,6 +59,14 @@ args = ['make', '-C', str(source), 'build', 'SDKROOT=iphoneos',
                                           *map(str, archives), *(f'-Wl,-force_load,{p}' for p in forced)]),
         'XNU_EXTERNAL_KERNEL_ARCHIVES=' + ' '.join(map(str, archives + forced)),
         f'OBJROOT={output}', f'SYMROOT={output}/sym', f'DSTROOT={output}/dst']
+if os.uname().sysname == 'Linux':
+    # What xnu's makefile takes from a Mac, as build-xnu-4k-baseline.sh passes to the main build.
+    clt = os.environ.get('CLT_PREFIX', '/opt/unixnu-linux/CommandLineTools/usr')
+    env.update(PLATFORM='iPhoneOS', HOST_CC=f'{clt}/bin/xnu-host-cc', MIGCOM=f'{clt}/libexec/migcom')
+    args += ['TIGHTBEAMC=tightbeamc-not-supported', 'BUILD_DSYM=0',
+             f'MEMORY_SIZE={os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")}',
+             f'SYSCTL_HW_PHYSICALCPU={os.cpu_count()}', f'SYSCTL_HW_LOGICALCPU={os.cpu_count()}',
+             f'LD_KERNEL_LIBS={sdk}/usr/local/lib/kernel/libcc_kext.a']
 (output / 'lto-command.json').write_text(json.dumps(args, indent=2) + '\n')
 with (output / 'lto-build.log').open('w') as log:
     result = subprocess.run(args, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
