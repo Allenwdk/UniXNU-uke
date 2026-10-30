@@ -255,11 +255,10 @@ kernel_args = [
   "offline-legacy-transfer=1",
   "offline-legacy-cpu-present=1",
   "offline-legacy-default-surface=1",
-  # own-present (the gpu-framepresent v2/v3 verified set): presentBase resolves
-  # the swap record's overlay surface after each SwapEnd and copies it to the
-  # GOP. Without this the path is silent and the screen stays on the boot frame
-  # (the 2026-10-27/28 frozen-screen runs never set it).
-  "offline-legacy-base-present=1",
+  # (The own-present set's `offline-legacy-base-present` was dropped here: only the
+  # retired NativeMobileDisplay reads that argument, the upstream display that the
+  # GPU track builds resolves the record itself, and the kernel command line is at
+  # its 1000-byte limit.)
   # the screen console must not draw over presented frames; it is muted only
   # after the first successful copy, so logs survive until the UI takes over.
   "offline-legacy-noconsole=1",
@@ -290,6 +289,12 @@ kernel_args = [
   # compositor's surface through the display bank's stage-1 window; the
   # GPU-copy hand-off above remains the fallback if a mapping is refused.
   "sheng-dpu-scanout=2",
+  # The window the pipes fetch through is NativeUfs's (ShengUfs f2d6a4a) and keeps
+  # its own argument: the display only asks for the window, NativeUfs builds it.
+  # It was dropped when the display moved to the upstream chain (only the upstream
+  # argument was kept), which left the direct path with no window: every frame
+  # took the copy path. 1 = build the display bank's stage-1 window.
+  "uke-dpu-scanout=1",
   # The display refresh tick (upstream display port): 120 Hz vsync messages from the family's own sender, so the render
   # server paces to the panel instead of its 1/60 s heartbeat, and IOMFBDisplayRefresh reports the panel rate.
   "sheng-vsync=120",
