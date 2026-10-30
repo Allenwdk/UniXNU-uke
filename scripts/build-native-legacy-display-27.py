@@ -8,6 +8,7 @@ code is bound at its fileset address plus the collection slide; no original inst
 """
 import hashlib
 import importlib.util
+import os
 import json
 from pathlib import Path
 import shutil
@@ -268,7 +269,10 @@ asm.write_text(text)
 sdk = run(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
 run(['xcrun', 'clang', '-target', TRIPLE, '-isysroot', sdk, '-c', asm, '-o', OUT / 'original-bindings.o'])
 run(['xcrun', 'clang', '-target', TRIPLE, '-isysroot', sdk, '-c', OUT / 'original-addresses.S', '-o', OUT / 'original-addresses.o'])
-llvm = Path(run(['brew', '--prefix', 'llvm'], text=True).strip()) / 'bin'
+# llvm-objcopy: the Linux toolchain's LLVM on this host, Homebrew's on macOS.
+llvm = Path(os.environ.get('UNIXNU_TOOLCHAIN', '/opt/unixnu-linux')) / 'llvm/bin'
+if not (llvm / 'llvm-objcopy').is_file():
+    llvm = Path(run(['brew', '--prefix', 'llvm'], text=True).strip()) / 'bin'
 late = OUT / 'NativeLegacyDisplay.late.o'
 run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_NativeLegacyDisplay.cpp', obj, late])
 
@@ -393,89 +397,96 @@ run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--global
 # against the public IOHIDFamily headers. This builder binds the original IOHIDDevice of the fileset and
 # checks every owned vtable entry's pointer-authentication diversity.
 SRC = ROOT / 'build/sheng-hid-input'
-require((SRC / 'NativeHidInput.o').is_file() and (SRC / 'NativeHidInput.late.o').is_file(),
-        'component:ShengHidInput must build before the display archive')
-hid_abi = json.loads(Path(__file__).resolve().with_name('hid-device-24A446.json').read_text())
-hid_slots = [(int(t, 16), int(d, 16)) for t, d in hid_abi['slots']]
-hid_pure = {i for i, (t, _) in enumerate(hid_slots) if t == slots[214][0]}
+HID_SOURCE = (SRC / 'NativeHidInput.o').is_file() and (SRC / 'NativeHidInput.late.o').is_file()
+if HID_SOURCE:
+    hid_abi = json.loads(Path(__file__).resolve().with_name('hid-device-24A446.json').read_text())
+    hid_slots = [(int(t, 16), int(d, 16)) for t, d in hid_abi['slots']]
+    hid_pure = {i for i, (t, _) in enumerate(hid_slots) if t == slots[214][0]}
 
 
-def object_symbols(data):
-    commands = macho(data)['commands']
-    st = next(p for c, p, _ in commands if c == 2)
-    sy, count, strings, _ = struct.unpack_from('<4I', data, st + 8)
-    found = []
-    for i in range(count):
-        ix, kind, _, _, va = struct.unpack_from('<IBBHQ', data, sy + i * 16)
-        found.append((data[strings + ix:data.index(b'\0', strings + ix)].decode(), va, kind))
-    return found
+    def object_symbols(data):
+        commands = macho(data)['commands']
+        st = next(p for c, p, _ in commands if c == 2)
+        sy, count, strings, _ = struct.unpack_from('<4I', data, st + 8)
+        found = []
+        for i in range(count):
+            ix, kind, _, _, va = struct.unpack_from('<IBBHQ', data, sy + i * 16)
+            found.append((data[strings + ix:data.index(b'\0', strings + ix)].decode(), va, kind))
+        return found
 
 
-def object_vtable(data, found, name, count):
-    """[(symbol, signed word)] of the first count entries of vtable name (authenticated pointer relocations)."""
-    va = next(v for n, v, _ in found if n == name)
-    entries = {}
-    for segment in macho(data)['segments']:
-        for sec in segment['sections']:
-            if sec['va'] <= va < sec['va'] + sec['size']:
-                ro, rc = struct.unpack_from('<2I', data, sec['command_offset'] + 56)
-                for i in range(rc):
-                    offset, bits = struct.unpack_from('<2I', data, ro + i * 8)
-                    if bits >> 27 & 1 and bits >> 25 & 3 == 3 and bits >> 28 == 11:
-                        entries[sec['va'] + offset] = (found[bits & 0xffffff][0],
-                                                       struct.unpack_from('<Q', data, sec['fileoff'] + offset)[0])
-    return [entries.get(va + 16 + i * 8) for i in range(count)]
+    def object_vtable(data, found, name, count):
+        """[(symbol, signed word)] of the first count entries of vtable name (authenticated pointer relocations)."""
+        va = next(v for n, v, _ in found if n == name)
+        entries = {}
+        for segment in macho(data)['segments']:
+            for sec in segment['sections']:
+                if sec['va'] <= va < sec['va'] + sec['size']:
+                    ro, rc = struct.unpack_from('<2I', data, sec['command_offset'] + 56)
+                    for i in range(rc):
+                        offset, bits = struct.unpack_from('<2I', data, ro + i * 8)
+                        if bits >> 27 & 1 and bits >> 25 & 3 == 3 and bits >> 28 == 11:
+                            entries[sec['va'] + offset] = (found[bits & 0xffffff][0],
+                                                           struct.unpack_from('<Q', data, sec['fileoff'] + offset)[0])
+        return [entries.get(va + 16 + i * 8) for i in range(count)]
 
 
-hid_raw = (SRC / 'NativeHidInput.o').read_bytes()
-hid_found = object_symbols(hid_raw)
-hid_bindings = {n: int(v, 16) + slide for n, v in hid_abi['bindings'].items()}
-by_diversity = {}
-for i, (_, d) in enumerate(hid_slots):
-    by_diversity.setdefault(d, []).append(i)
-hid_vtables = [n for n, _, k in hid_found if n.startswith('__ZTV') and k != 1 and '9MetaClassE' not in n]
-# An original method in an owned vtable is bound to the original entry of that slot (a base-class override signs with the
-# discriminator of the introducing IOService declaration, so its own name does not identify the slot); any other import by
-# the slot whose discriminator its name has.
-slot_of = {}
-for vt_name in hid_vtables:
-    for i, entry in enumerate(object_vtable(hid_raw, hid_found, vt_name, len(hid_slots))):
-        if entry and '11IOHIDDevice' in entry[0]:
-            require(slot_of.setdefault(entry[0], i) == i, f'{entry[0]}: one slot in every owned vtable')
-for name in sorted({n for n, _, k in hid_found if k == 1 and ('11IOHIDDevice' in n)} - set(hid_bindings)):
-    if name in slot_of:
-        slot = slot_of[name]
-    else:
-        matches = by_diversity.get(discriminator(name[1:]), [])
-        require(len(matches) == 1, f'{name}: one original IOHIDDevice slot with its discriminator')
-        slot = matches[0]
-    require(slot not in hid_pure, f'{name}: not an abstract original slot')
-    hid_bindings[name] = hid_slots[slot][0] + slide
-for vt_name in hid_vtables:
-    entries = object_vtable(hid_raw, hid_found, vt_name, len(hid_slots))
-    require(all(entries), f'{vt_name}: at least the {len(hid_slots)} IOHIDDevice entries')
-    for i, (name, word) in enumerate(entries):
-        require(word >> 63 and word >> 48 & 1 and word >> 49 & 3 == 0 and (word >> 32) & 0xffff == hid_slots[i][1],
-                f'{vt_name} slot {i} ({name}) signed with the original diversity {hid_slots[i][1]:#x}')
-        if '11IOHIDDevice' in name:
-            require(hid_bindings.get(name) == hid_slots[i][0] + slide, f'{vt_name} slot {i} ({name}) is the original entry')
-HID_DATA = {'__ZN11IOHIDDevice10gMetaClassE', '__ZTV11IOHIDDevice'}
-hid_text, hid_addresses = '.text\n.p2align 2\n', ''
-for name, va in sorted(hid_bindings.items()):
-    if name in HID_DATA:
-        hid_addresses += f'.globl {name}\n.set {name}, {va:#x}\n'
-    else:
-        hid_addresses += f'.globl {name}.original\n.set {name}.original, {(va - native_slide) & ((1 << 64) - 1):#x}\n'
-        hid_text += f'.globl {name}\n{name}:\n bti c\n b {name}.original\n'
-(OUT / 'hid-bindings.S').write_text(hid_text)
-(OUT / 'hid-addresses.S').write_text(hid_addresses)
-for stem in ('hid-bindings', 'hid-addresses'):
-    run(['xcrun', 'clang', '-target', TRIPLE, '-isysroot', sdk, '-c', OUT / (stem + '.S'), '-o', OUT / (stem + '.o')])
-hid_late = SRC / 'NativeHidInput.late.o'
-hid_probe = ROOT / 'kits/uke/HidInputProbe.cpp'
-compile_cpp(hid_probe, OUT / 'HidInputProbe.o')
-input_objects = [hid_late, OUT / 'hid-bindings.o', OUT / 'hid-addresses.o', OUT / 'HidInputProbe.o']
-print(f'HID: {len(hid_bindings)} original IOHIDDevice bindings, vtables {hid_vtables} match the original diversities')
+    hid_raw = (SRC / 'NativeHidInput.o').read_bytes()
+    hid_found = object_symbols(hid_raw)
+    hid_bindings = {n: int(v, 16) + slide for n, v in hid_abi['bindings'].items()}
+    by_diversity = {}
+    for i, (_, d) in enumerate(hid_slots):
+        by_diversity.setdefault(d, []).append(i)
+    hid_vtables = [n for n, _, k in hid_found if n.startswith('__ZTV') and k != 1 and '9MetaClassE' not in n]
+    # An original method in an owned vtable is bound to the original entry of that slot (a base-class override signs with the
+    # discriminator of the introducing IOService declaration, so its own name does not identify the slot); any other import by
+    # the slot whose discriminator its name has.
+    slot_of = {}
+    for vt_name in hid_vtables:
+        for i, entry in enumerate(object_vtable(hid_raw, hid_found, vt_name, len(hid_slots))):
+            if entry and '11IOHIDDevice' in entry[0]:
+                require(slot_of.setdefault(entry[0], i) == i, f'{entry[0]}: one slot in every owned vtable')
+    for name in sorted({n for n, _, k in hid_found if k == 1 and ('11IOHIDDevice' in n)} - set(hid_bindings)):
+        if name in slot_of:
+            slot = slot_of[name]
+        else:
+            matches = by_diversity.get(discriminator(name[1:]), [])
+            require(len(matches) == 1, f'{name}: one original IOHIDDevice slot with its discriminator')
+            slot = matches[0]
+        require(slot not in hid_pure, f'{name}: not an abstract original slot')
+        hid_bindings[name] = hid_slots[slot][0] + slide
+    for vt_name in hid_vtables:
+        entries = object_vtable(hid_raw, hid_found, vt_name, len(hid_slots))
+        require(all(entries), f'{vt_name}: at least the {len(hid_slots)} IOHIDDevice entries')
+        for i, (name, word) in enumerate(entries):
+            require(word >> 63 and word >> 48 & 1 and word >> 49 & 3 == 0 and (word >> 32) & 0xffff == hid_slots[i][1],
+                    f'{vt_name} slot {i} ({name}) signed with the original diversity {hid_slots[i][1]:#x}')
+            if '11IOHIDDevice' in name:
+                require(hid_bindings.get(name) == hid_slots[i][0] + slide, f'{vt_name} slot {i} ({name}) is the original entry')
+    HID_DATA = {'__ZN11IOHIDDevice10gMetaClassE', '__ZTV11IOHIDDevice'}
+    hid_text, hid_addresses = '.text\n.p2align 2\n', ''
+    for name, va in sorted(hid_bindings.items()):
+        if name in HID_DATA:
+            hid_addresses += f'.globl {name}\n.set {name}, {va:#x}\n'
+        else:
+            hid_addresses += f'.globl {name}.original\n.set {name}.original, {(va - native_slide) & ((1 << 64) - 1):#x}\n'
+            hid_text += f'.globl {name}\n{name}:\n bti c\n b {name}.original\n'
+    (OUT / 'hid-bindings.S').write_text(hid_text)
+    (OUT / 'hid-addresses.S').write_text(hid_addresses)
+    for stem in ('hid-bindings', 'hid-addresses'):
+        run(['xcrun', 'clang', '-target', TRIPLE, '-isysroot', sdk, '-c', OUT / (stem + '.S'), '-o', OUT / (stem + '.o')])
+    hid_late = SRC / 'NativeHidInput.late.o'
+    hid_probe = ROOT / 'kits/uke/HidInputProbe.cpp'
+    compile_cpp(hid_probe, OUT / 'HidInputProbe.o')
+    input_objects = [hid_late, OUT / 'hid-bindings.o', OUT / 'hid-addresses.o', OUT / 'HidInputProbe.o']
+    print(f'HID: {len(hid_bindings)} original IOHIDDevice bindings, vtables {hid_vtables} match the original diversities')
+else:
+    # The source HID driver needs the DriverKit HID headers, which this Linux SDK does not carry; weak
+    # stubs keep the display archive linkable and touch waits for the macOS/GHA step.
+    compile_cpp(ROOT / 'kits/uke/HidInputProbe.cpp', OUT / 'HidInputProbe.o')
+    compile_c(ROOT / 'kits/uke/HidInputStubs.c', OUT / 'HidInputStubs.o')
+    input_objects = [OUT / 'HidInputProbe.o', OUT / 'HidInputStubs.o']
+    print('HID: source driver absent; weak stubs only (touch deferred)')
 # The uke board drivers: CPU frequency, the Novatek touch panel through GENI SPI, the read-only DPU probe,
 # the boot process/trace probes and the panic-screen stubs. Their classes derive from xnu's own, so the
 # kernel's C++ flags give them the kernel ABI.
