@@ -17,9 +17,11 @@
 #include <kern/clock.h>
 #include <pexpert/pexpert.h>
 extern "C" {
-#include "../../drivers/QcomGeniSpi/GeniSpi.h"
-#include "../../drivers/ShengNovatekTouch/NvtProtocol.h"
-#include "../../drivers/ShengNovatekTouch/NvtTouchCore.h"
+// The module sources live under the build tree's drivers/ (the tree links this package as kits/uke, so a
+// path relative to the package no longer reaches them); the builder adds their directories with -I.
+#include "GeniSpi.h"
+#include "NvtProtocol.h"
+#include "NvtTouchCore.h"
 #include "TouchBoard.h"
 #include "SmmuBypass.h"
 extern const uint8_t native_touch_firmware[] __attribute__((weak_import));
