@@ -282,6 +282,16 @@ r = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELO
 source = ROOT / 'kits/uke/LegacyDisplayProbe.cpp'
 
 
+
+def run_compile(cmd, cwd, name):
+    """Compile one probe; the assertion/build output of a failing compiler goes to the log."""
+    result = subprocess.run([str(x) for x in cmd], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if result.returncode:
+        log = OUT / (name + '.compile.log')
+        log.write_text(result.stdout)
+        raise SystemExit(f'{name}: compile failed\n{result.stdout[-6000:]}')
+
+
 def compile_cpp(src, dst, extra=()):
     cmd, args, i = [], r['arguments'], 0
     while i < len(args):
@@ -300,7 +310,7 @@ def compile_cpp(src, dst, extra=()):
         i += 1
     cmd += ['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-Wno-unnecessary-virtual-specifier', '-Wno-c99-designator',
             '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion', '-I', str(ROOT / '.cache/xnu-work/osfmk'), *extra]
-    run(cmd, cwd=r['directory'])
+    run_compile(cmd, r['directory'], Path(dst).stem)
 
 
 def compile_c(src, dst, recipe='osfmk/DEVELOPMENT/startup.o.json'):
@@ -321,7 +331,7 @@ def compile_c(src, dst, recipe='osfmk/DEVELOPMENT/startup.o.json'):
             cmd.append(value)
         i += 1
     cmd += ['-Wall', '-Wextra', '-Werror', '-mgeneral-regs-only', '-I', str(ROOT / '.cache/xnu-work/osfmk'), '-I', str(ROOT / 'kits/uke')]
-    run(cmd, cwd=rc['directory'])
+    run_compile(cmd, rc['directory'], Path(dst).stem)
 
 
 compile_cpp(source, OUT / 'LegacyDisplayProbe.o')
