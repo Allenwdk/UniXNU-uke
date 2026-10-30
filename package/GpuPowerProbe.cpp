@@ -1576,12 +1576,15 @@ void heartbeat() {
                   &vm_page_inactive_count ? vm_page_inactive_count : 0);
         uint32_t info = 0;
         gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuCore, kG2hInfo, &info);
-        // The dump's stage counter is re-armed whenever the ring drains: a boot-time sample that saw rptr != wptr once used to
-        // consume every stage before the userdata log could hold a line, so the hang at 100 s found nothing left to print
-        // (gpucomp61-65: GPUS rows present, GPUD/GPUV absent from the raw ring too).
+        // The dump's stage counter: a boot-time sample that saw rptr != wptr once used to consume every stage before the
+        // userdata log could hold a line, so the hang found nothing left to print (gpucomp61-65). It is armed from t=45 s on,
+        // re-armed only after the ring has been drained for four samples (a new hang episode), and its first stage carries the
+        // 16 dwords at rptr as well, so one record holds the packet the CP is on even if the stall is momentary.
         static int dumpStage = -1;
-        if (!(gxOn() && gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR))) dumpStage = -1;
-        if (gxOn() && gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR)) {
+        static unsigned dumpIdle;
+        const bool stalledNow = gxOn() && gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR);
+        if (!stalledNow) {if (++dumpIdle > 4) dumpStage = -1;} else dumpIdle = 0;
+        if (stalledNow) {
             // 0x928/0x92a and 0x92b/0x92d, BV IB1 0xa6d/0xa70), so a photograph tells which IB and how far into it the CP stopped.
             // Rows are 47 characters, so IB bases show their low 24 bits.
             snprintf(row, sizeof row, "H%u R%x r%x/%x b%x i%x/%x j%x v%x/%x", t, gpuRd(A740_RBBM_STATUS), gpuRd(A740_CP_RB_RPTR),
@@ -1619,7 +1622,7 @@ void heartbeat() {
             // why gpucomp61-63 left no GPUD/GPUR/GPUV/GPUIB line at all while the stall branch itself ran (GPUS rows prove it).
             // Each stage below stays under six lines, so a stall lasting seconds still leaves the whole dump.
             // (dumpStage is declared above the branch, so a drained sample re-arms it.)
-            if (dumpStage < 16) {
+            if (t >= 45 && dumpStage < 20) {
                 const uint32_t rptr = gpuRd(A740_CP_RB_RPTR);
                 const int stage = dumpStage++;
                 if (stage < 0) {
@@ -1632,7 +1635,18 @@ void heartbeat() {
                     IOLog("UKE GPUD0: rptr=%x wptr=%x rbbm=%x ib1=%x/%x ib2=%x/%x bv=%x\n", rptr, gpuRd(A740_CP_RB_WPTR),
                           gpuRd(A740_RBBM_STATUS), gpuRd(0x0928), gpuRd(0x092a), gpuRd(0x092d), gpuRd(0x0a6d) & 0xffffff,
                           gpuRd(0x0a70));
+                    // The 16 dwords at rptr carry the packet the CP is on: print them with the header, in the same record.
+                    uint32_t first[64];
+                    if (native_adreno_ring_window(rptr, 64, first)) {
+                        IOLog("UKE GPUV0: %08x %08x %08x %08x %08x %08x %08x %08x\n",
+                              first[0], first[1], first[2], first[3], first[4], first[5], first[6], first[7]);
+                        IOLog("UKE GPUV1: %08x %08x %08x %08x %08x %08x %08x %08x\n",
+                              first[8], first[9], first[10], first[11], first[12], first[13], first[14], first[15]);
+                    } else {
+                        IOLog("UKE GPUV: no window at rptr=%x\n", rptr);
+                    }
                 } else if (stage < 4) {
+                    // The 64 dwords at rptr, 16 per heartbeat: the packets the CP has not consumed.
                     // The 64 dwords at rptr, 16 per heartbeat: the packets the CP has not consumed.
                     uint32_t window[64];
                     if (native_adreno_ring_window(rptr, 64, window)) {

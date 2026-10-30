@@ -277,7 +277,7 @@ kernel_args = [
   # publishes the Metal device and the compositor submits the 1200-byte overlay
   # records whose layer 6 frame the own-present path resolves.
   "sheng-gpu-power=9",
-  "sheng-gpu-metal=1",
+  "sheng-gpu-metal=0",
   # The A732 SMMU is fused to 31 bits. Force the CPU TTBR0 switch with the
   # GPU idle (mode 1): the CP aperture switch (mode 2) stalled the ring on the
   # first Metal submission in gpucomp57.
