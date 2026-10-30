@@ -74,7 +74,8 @@ if result.returncode == 0:
     # The OS profile names the reference next to the output dir; make writes it under the config dir.
     built = output / 'DEVELOPMENT_ARM64_BCM2837' / 'mach.development.bcm2837.unstripped.noctf'
     link = output / 'mach.release.bcm2837.unstripped.noctf'
-    if built.is_file() and not link.is_file():
+    if built.is_file():
+        link.unlink(missing_ok=True)
         link.symlink_to(built.relative_to(output))
 print('RELEASE reference exit', result.returncode, 'log', output / 'lto-build.log', flush=True)
 raise SystemExit(result.returncode)
