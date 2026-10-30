@@ -151,22 +151,23 @@ extern "C" volatile uint32_t sheng_gmu_build_fail;
  * waits, then NativeAdrenoRing::stallState()'s CP words (RBBM_STATUS..STATUS3, INT, CP_HW_FAULT, CP_STATUS_1, PROTECT,
  * RPTR/WPTR, IB1/IB2 bases and remaining words, BV RPTR/IB1/IB2). stall_mem is the SMMU fault record (FSR, FAR lo/hi,
  * FSYNR0), then for BR IB1 / BV IB1 / BV IB2 17 words (dword index + 16 words), then the map handles under them. */
-extern "C" {extern volatile uint32_t native_adreno_stall[2 + 22];}
-extern "C" {extern volatile uint32_t native_adreno_stall_mem[4 + 3 * 17 + 4];}
+extern "C" {extern volatile uint32_t native_adreno_stall[2 + 22] __attribute__((weak));}
+extern "C" {extern volatile uint32_t native_adreno_stall_mem[4 + 3 * 17 + 4] __attribute__((weak));}
 /* The last sixteen command streams the ring submitted: [seqno, start, end, total, words...]. */
-extern "C" {extern volatile uint32_t native_adreno_ring_log[16][4 + 112];}
-extern "C" {extern volatile uint32_t native_adreno_ring_log_count;}
-extern "C" uint32_t native_adreno_ring_window(uint32_t at,uint32_t count,uint32_t *out);
-/* Connection/table switching and maintenance counters from NativeAdrenoPublish.cpp and NativeAdrenoCpu.cpp. */
-extern "C" {extern volatile uint32_t native_adreno_table_switches[8];}
-extern "C" {extern volatile uint32_t native_adreno_mount_fail[4];}
-extern "C" {extern volatile uint32_t native_adreno_cp_aperture[4];}
-extern "C" {extern volatile uint32_t native_adreno_bits[2];}
-extern "C" {extern volatile uint64_t native_adreno_maint_phase[8][2];}
+extern "C" {extern volatile uint32_t native_adreno_ring_log[16][4 + 112] __attribute__((weak));}
+extern "C" {extern volatile uint32_t native_adreno_ring_log_count __attribute__((weak));}
+extern "C" uint32_t native_adreno_ring_window(uint32_t at,uint32_t count,uint32_t *out) __attribute__((weak));
+/* Connection/table switching and maintenance counters from NativeAdrenoPublish.cpp and NativeAdrenoCpu.cpp.
+ * All of these are feature-branch additions: weak so this probe still links into the baseline driver image. */
+extern "C" {extern volatile uint32_t native_adreno_table_switches[8] __attribute__((weak));}
+extern "C" {extern volatile uint32_t native_adreno_mount_fail[4] __attribute__((weak));}
+extern "C" {extern volatile uint32_t native_adreno_cp_aperture[4] __attribute__((weak));}
+extern "C" {extern volatile uint32_t native_adreno_bits[2] __attribute__((weak));}
+extern "C" {extern volatile uint64_t native_adreno_maint_phase[8][2] __attribute__((weak));}
 /* msm hangcheck recovery: [0] hangs, [1] restarts, [2] failed restarts, [3] last hung fence, [4] last status, [5] replayed. */
-extern "C" {extern volatile uint32_t native_adreno_recovery[8];}
+extern "C" {extern volatile uint32_t native_adreno_recovery[8] __attribute__((weak));}
 /* The bridge's telemetry table (NativeAdrenoPublish.cpp): rows of text the Metal plugin streams as markers. */
-extern "C" {extern char native_adreno_metal_rows[48][96];}
+extern "C" {extern char native_adreno_metal_rows[48][96] __attribute__((weak));}
 
 extern "C" {
 extern char boot_progress_ext[8][48];
@@ -1183,7 +1184,7 @@ void metalRows() {
     // The bridge's telemetry table (the plugin streams it as markers every six seconds): rows such as P0/P1 carry the
     // last refusals' full text, V the pipeline/cache counters. Mirror changed rows into the kernel log so a dump keeps
     // the detail the four on-screen rows cannot show.
-    {
+    if (&native_adreno_metal_rows) {
         static char logged[48][96];
         for (unsigned i = 0; i < 48; ++i) {
             const char *line = native_adreno_metal_rows[i];
@@ -1196,7 +1197,7 @@ void metalRows() {
     // fetch points and the map handles under them. A handle at or above the first was mapped after the job, i.e. its memory
     // was freed and reused under the GPU. This is the evidence that decides between a mapping-lifetime bug and a bad
     // pipeline/descriptor; the same snapshot's CP words say whether an SMMU fault stalled the context at all.
-    {
+    if (&native_adreno_stall && &native_adreno_stall_mem) {
         static uint32_t loggedStall;
         const uint32_t fence = native_adreno_stall[0];
         if (fence && fence != loggedStall) {
@@ -1517,6 +1518,7 @@ void logGpuClock() {
 // The driver's connection path: whether the context's table switching came up (feat branch), the CP-switch check, and how
 // many connections fell back to the kernel's space. tables=made/live tells whether per-process VMs are really in use.
 static void logConnections() {
+    if (!&native_adreno_table_switches || !&native_adreno_mount_fail || !&native_adreno_cp_aperture || !&native_adreno_bits) return;
     IOLog("UKE GPU: conn switch=%x cp=%x mode=%u mount=%u/%x shared=%u tables=%u/%u in=%u out=%u\n",
           native_adreno_table_switches[6], native_adreno_cp_aperture[2], native_adreno_cp_aperture[3],
           native_adreno_mount_fail[0], native_adreno_mount_fail[1], native_adreno_mount_fail[2],
@@ -1526,6 +1528,7 @@ static void logConnections() {
 // The driver's cache-maintenance phases: pool, allocate, map, submit, unmap, complete, table and diagnostic passes, each
 // with the number of runs and the KiB touched. A frame's cost that is not in the GPU's own time shows up here first.
 static void logMaintenance() {
+    if (!&native_adreno_maint_phase) return;
     IOLog("UKE GPU: maint pool=%llu/%lluk alloc=%llu/%lluk map=%llu/%lluk sub=%llu/%lluk unmap=%llu/%lluk cmp=%llu/%lluk tab=%llu/%lluk\n",
           (unsigned long long)native_adreno_maint_phase[0][0],(unsigned long long)native_adreno_maint_phase[0][1],
           (unsigned long long)native_adreno_maint_phase[1][0],(unsigned long long)native_adreno_maint_phase[1][1],
@@ -1538,6 +1541,7 @@ static void logMaintenance() {
 // msm hangcheck: whether a stall was ever declared and whether a board restart hook exists to recover from it. If hangs
 // rises while restarts stays 0, the GPU is hung and nothing can bring it back (native_adreno_set_restart is never called).
 static void logRecovery() {
+    if (!&native_adreno_recovery) return;
     IOLog("UKE GPU: rec hang=%u restart=%u fail=%u fence=%u status=%x replay=%u guilty=%u\n",
           native_adreno_recovery[0], native_adreno_recovery[1], native_adreno_recovery[2],
           native_adreno_recovery[3], native_adreno_recovery[4], native_adreno_recovery[5], native_adreno_recovery[6]);
@@ -1603,7 +1607,7 @@ void heartbeat() {
             // Mirror the on-screen stall rows and the command streams into the kernel log: the screen is muted after the
             // first presented frame, so this is the only way a hang leaves evidence.
             static int ringDumped;
-            if (!ringDumped) {
+            if (!ringDumped && &native_adreno_ring_log && &native_adreno_ring_log_count && native_adreno_ring_window) {
                 ringDumped = 1;
                 const unsigned logs = native_adreno_ring_log_count < 16 ? native_adreno_ring_log_count : 16;
                 const unsigned show = logs < 4 ? logs : 4;
