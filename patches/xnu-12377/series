@@ -1,5 +1,7 @@
 # Board patches for xnu-12377, one per line in application order.
-# Phase 1: the Darwin 26 spawn-attribute layout every daemon needs, and the
-# ptrauth-null qualifier form that upstream LLVM rejects (Apple clang only).
+# Phase 1: the Darwin 26 spawn-attribute layout every daemon needs, the
+# ptrauth-null qualifier form upstream LLVM rejects, and the 4 KiB stack shift
+# the XnuPrelink review sites bind.
 darwin26-posix-spawn-attrs.patch
 native-ptrauth-null-portability.patch
+native-4k-stack-shift.patch
