@@ -22,6 +22,12 @@ if prepare.is_file():
 output = root / 'build/xnu/fileset-reference'
 output.mkdir(parents=True, exist_ok=True)
 source = output / 'source'
+# The copy is valid only for the patch set that produced .cache/xnu-work; a re-patched tree must be copied again.
+patch_list = root.parent / 'xnu-patches.list'
+signature = hashlib.sha256(patch_list.read_bytes()).hexdigest() if patch_list.is_file() else ''
+stamp = output / 'source-signature'
+if source.exists() and (not stamp.is_file() or stamp.read_text().strip() != signature):
+    shutil.rmtree(source)
 if not source.exists():
     shutil.copytree(root / '.cache/xnu-work', source, symlinks=True,
                     ignore=shutil.ignore_patterns('.git'))
@@ -34,6 +40,7 @@ if not source.exists():
     manifest = {str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in source.rglob('*') if p.is_file()}
     (output / 'source-sha256.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    stamp.write_text(signature + '\n')
 sdk = root / '.cache/fakeroot'
 arch = os.environ.get('UNIXNU_XNU_ARCH', 'arm64e')
 ios = os.environ.get('UNIXNU_IOS_VERSION', '27.0')
