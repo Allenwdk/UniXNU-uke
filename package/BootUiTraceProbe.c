@@ -8,6 +8,8 @@
 #include <machine/machine_routines.h>
 #include <arm/thread.h>
 #include <vm/vm_map.h>
+// xnu 12377 keeps vm_map_reference/vm_map_read_user in the private kernel header, not vm_map.h.
+#include <vm/vm_map_xnu.h>
 #include <ipc/ipc_space.h>
 #include <ipc/ipc_port.h>
 #include <string.h>
