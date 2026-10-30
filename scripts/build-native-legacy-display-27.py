@@ -523,7 +523,10 @@ for source in (ROOT / 'drivers/QcomGeniSpi/GeniSpi.c', ROOT / 'drivers/ShengNova
     board_objects.append(obj)
 input_objects += board_objects
 print(f'Board drivers: {len(board_objects)} objects')
-# The DPU window calls belong to the source storage; the strong stub is only for a kernel built without it.
+# The DPU window mapping call belongs to the source storage; the strong stub is only for a kernel built
+# without it. The two read-only table accessors are not in ShengUfs's source API and are always stubbed.
+compile_c(ROOT / 'kits/uke/UfsDpuTableStubs.c', OUT / 'UfsDpuTableStubs.o')
+input_objects.append(OUT / 'UfsDpuTableStubs.o')
 if not (ROOT / 'build/sheng-source-storage/libShengSourceStorage.a').is_file():
     compile_c(ROOT / 'kits/uke/UfsDpuStubs.c', OUT / 'UfsDpuStubs.o')
     input_objects.append(OUT / 'UfsDpuStubs.o')
