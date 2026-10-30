@@ -1576,8 +1576,12 @@ void heartbeat() {
                   &vm_page_inactive_count ? vm_page_inactive_count : 0);
         uint32_t info = 0;
         gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuCore, kG2hInfo, &info);
+        // The dump's stage counter is re-armed whenever the ring drains: a boot-time sample that saw rptr != wptr once used to
+        // consume every stage before the userdata log could hold a line, so the hang at 100 s found nothing left to print
+        // (gpucomp61-65: GPUS rows present, GPUD/GPUV absent from the raw ring too).
+        static int dumpStage = -1;
+        if (!(gxOn() && gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR))) dumpStage = -1;
         if (gxOn() && gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR)) {
-            // The ring is not drained: where each CP thread is (a6xx.xml A7XX: BV RB_RPTR 0xa66, IB1/IB2 base and remaining dwords
             // 0x928/0x92a and 0x92b/0x92d, BV IB1 0xa6d/0xa70), so a photograph tells which IB and how far into it the CP stopped.
             // Rows are 47 characters, so IB bases show their low 24 bits.
             snprintf(row, sizeof row, "H%u R%x r%x/%x b%x i%x/%x j%x v%x/%x", t, gpuRd(A740_RBBM_STATUS), gpuRd(A740_CP_RB_RPTR),
@@ -1614,7 +1618,7 @@ void heartbeat() {
             // characters, more than one userdata log record holds; the decoder drops a record whose write was torn, which is
             // why gpucomp61-63 left no GPUD/GPUR/GPUV/GPUIB line at all while the stall branch itself ran (GPUS rows prove it).
             // Each stage below stays under six lines, so a stall lasting seconds still leaves the whole dump.
-            static int dumpStage = -1;
+            // (dumpStage is declared above the branch, so a drained sample re-arms it.)
             if (dumpStage < 16) {
                 const uint32_t rptr = gpuRd(A740_CP_RB_RPTR);
                 const int stage = dumpStage++;
