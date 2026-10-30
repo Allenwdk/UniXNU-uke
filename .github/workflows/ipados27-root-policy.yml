@@ -56,9 +56,15 @@ jobs:
           OS=$(tail -1 /tmp/os-member.txt)
           case "$OS" in
             *.aea)
-              OS=$(PYTHONPATH=scripts python3 -c 'import pathlib,sys; from unixnu.ipsw import decrypt_aea; print(decrypt_aea(pathlib.Path(sys.argv[1])))' "$OS")
+              # decrypt_aea logs to stdout as well: keep only its last line (the plain image path), then free
+              # the 7.8 GiB archive copy so both images fit the runner disk.
+              PLAIN=$(PYTHONPATH=scripts python3 -c 'import pathlib,sys; from unixnu.ipsw import decrypt_aea; print(decrypt_aea(pathlib.Path(sys.argv[1])))' "$OS" | tail -1)
+              rm -f "$OS"
+              OS="$PLAIN"
               ;;
           esac
+          df -h / | tail -1
+          test -f "$OS"
           echo "OS_IMAGE=$OS" >> "$GITHUB_ENV"
 
       - name: Build and verify the OS root policy
