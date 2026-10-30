@@ -22,12 +22,25 @@ if prepare.is_file():
 output = root / 'build/xnu/fileset-reference'
 output.mkdir(parents=True, exist_ok=True)
 source = output / 'source'
-# The copy is valid only for the patch set that produced .cache/xnu-work; a re-patched tree must be copied again.
+# The copy is valid only for the exact patch set that produced .cache/xnu-work; a changed patch body must be
+# copied again, so the signature covers the contents, not just the path list.
 patch_list = root.parent / 'xnu-patches.list'
-signature = hashlib.sha256(patch_list.read_bytes()).hexdigest() if patch_list.is_file() else ''
+signature = ''
+if patch_list.is_file():
+    digest = hashlib.sha256(patch_list.read_bytes())
+    for entry in patch_list.read_text().splitlines():
+        patch = Path(entry)
+        if patch.is_file():
+            digest.update(hashlib.sha256(patch.read_bytes()).digest())
+    signature = digest.hexdigest()
 stamp = output / 'source-signature'
 if source.exists() and (not stamp.is_file() or stamp.read_text().strip() != signature):
     shutil.rmtree(source)
+    # The objects belong to the previous source: rebuild them too.
+    for stale in ('DEVELOPMENT_ARM64_BCM2837', 'sym', 'dst'):
+        path = output / stale
+        if path.is_dir():
+            shutil.rmtree(path)
 if not source.exists():
     shutil.copytree(root / '.cache/xnu-work', source, symlinks=True,
                     ignore=shutil.ignore_patterns('.git'))
