@@ -45,7 +45,7 @@ flags = ('-Wno-reserved-identifier -Wno-pre-c11-compat -Wno-missing-designated-f
          '-Wno-ms-bitfield-padding -DXNU_NATIVE_PAN=1 -DXNU_SOURCE_CORECRYPTO14=1 -DXNU_BOOT_PROGRESS=0')
 deployment = f'-miphoneos-version-min={ios}'
 args = ['make', '-C', str(source), 'build', 'SDKROOT=iphoneos',
-        'ARCH_CONFIGS=ARM64', 'MACHINE_CONFIGS=BCM2837', 'KERNEL_CONFIGS=RELEASE',
+        'ARCH_CONFIGS=ARM64', 'MACHINE_CONFIGS=BCM2837', 'KERNEL_CONFIGS=DEVELOPMENT',
         'ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=' + arch, 'LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY',
         'ARM64_LINK_ADDR=0xfffffff007004000', 'ARM64_PLKSEG_ADDR=0xfffffff004004000',
         f'DEPLOYMENT_TARGET_FLAGS={deployment} -DXNU_TARGET_OS_IOS',
@@ -70,5 +70,11 @@ if os.uname().sysname == 'Linux':
 (output / 'lto-command.json').write_text(json.dumps(args, indent=2) + '\n')
 with (output / 'lto-build.log').open('w') as log:
     result = subprocess.run(args, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
+if result.returncode == 0:
+    # The OS profile names the reference next to the output dir; make writes it under the config dir.
+    built = output / 'DEVELOPMENT_ARM64_BCM2837' / 'mach.development.bcm2837.unstripped.noctf'
+    link = output / 'mach.release.bcm2837.unstripped.noctf'
+    if built.is_file() and not link.is_file():
+        link.symlink_to(built.relative_to(output))
 print('RELEASE reference exit', result.returncode, 'log', output / 'lto-build.log', flush=True)
 raise SystemExit(result.returncode)
