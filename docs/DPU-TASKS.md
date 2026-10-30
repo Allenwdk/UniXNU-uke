@@ -257,6 +257,8 @@ A4 ──┴── B3 ──┘                        (GPU 轨 D1-b 合流)
   做：在 `GpuPowerProbe` 里每次 stall 打上游 `native_adreno_stall_mem`（FSR/FAR/IB words/映射 handle），
   行格式 `UKE GPUFLT:`；同轮加 `sheng-disable-jobs=com.apple.KaleidoscopePoster` 对照镜像。
   完成：stall 消失，或 `UKE GPUFLT` 给出确定 VA/BO/管线；对照镜像不再 stall。
+  - 2026-10-30：`3958bad` 把 probe 退回 pre-feature 时删掉了 GPUFLT；gpucomp59 用 device `25b357c` 按当前
+    feat 分支接回（并加 `UKE GPUCP`/`GPUS`/ring dump 与 conn/rec 计数）。镜像已构建、未刷。
 - **S2 GPU 频率/带宽确认**
   做：读 GMU/RBBM 频率与 `qcom,sde-data-bus0`/`ebi` 带宽投票，确认 950 MHz 与 high 档；
   主线同步后旧的 mode 8 perf vote 需重新验证。
