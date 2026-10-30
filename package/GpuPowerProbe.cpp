@@ -157,6 +157,12 @@ extern "C" {extern volatile uint32_t native_adreno_stall_mem[4 + 3 * 17 + 4] __a
 extern "C" {extern volatile uint32_t native_adreno_ring_log[16][4 + 112] __attribute__((weak));}
 extern "C" {extern volatile uint32_t native_adreno_ring_log_count __attribute__((weak));}
 extern "C" uint32_t native_adreno_ring_window(uint32_t at,uint32_t count,uint32_t *out) __attribute__((weak));
+/* The first 28 dwords of each of the last four submitted IBs: [slot] = seqno, iova low/high, bytes, then the words. */
+extern "C" {extern volatile uint32_t native_adreno_ib_log[4][4 + 28] __attribute__((weak));}
+extern "C" {extern volatile uint32_t native_adreno_ib_log_count __attribute__((weak));}
+/* The same first IB read after clean+invalidate: 256 dwords, plus peekWordsUncached's status per slot. */
+extern "C" {extern volatile uint32_t native_adreno_ib_log_wide[4][4 + 256] __attribute__((weak));}
+extern "C" {extern volatile uint32_t native_adreno_ib_log_wide_status[4] __attribute__((weak));}
 /* Connection/table switching and maintenance counters from NativeAdrenoPublish.cpp and NativeAdrenoCpu.cpp.
  * All of these are feature-branch additions: weak so this probe still links into the baseline driver image. */
 extern "C" {extern volatile uint32_t native_adreno_table_switches[8] __attribute__((weak));}
@@ -1631,6 +1637,35 @@ void heartbeat() {
                                  window[at], window[at + 1], window[at + 2], window[at + 3],
                                  window[at + 4], window[at + 5], window[at + 6], window[at + 7]);
                         IOLog("UKE GPUV%u: %s\n", at / 8, line);
+                    }
+                }
+                if (&native_adreno_ib_log && &native_adreno_ib_log_count) {
+                    const unsigned ibs = native_adreno_ib_log_count < 4 ? native_adreno_ib_log_count : 4;
+                    for (unsigned k = 0; k < ibs; ++k) {
+                        const volatile uint32_t *r = native_adreno_ib_log[(native_adreno_ib_log_count - 1 - k) & 3];
+                        IOLog("UKE GPUIB%d: fence=%u iova=%x%08x bytes=%u\n", k, r[0], r[2], r[1], r[3]);
+                        for (unsigned at = 0; at < 28; at += 7) {
+                            char line[72];
+                            snprintf(line, sizeof line, "%08x %08x %08x %08x %08x %08x %08x",
+                                     r[4 + at], r[4 + at + 1], r[4 + at + 2], r[4 + at + 3],
+                                     r[4 + at + 4], r[4 + at + 5], r[4 + at + 6]);
+                            IOLog("UKE GPUIB%d.%u: %s\n", k, at / 7, line);
+                        }
+                    }
+                }
+                if (&native_adreno_ib_log_wide && &native_adreno_ib_log_wide_status && &native_adreno_ib_log_count) {
+                    const unsigned ibs = native_adreno_ib_log_count < 4 ? native_adreno_ib_log_count : 4;
+                    for (unsigned k = 0; k < ibs; ++k) {
+                        const volatile uint32_t *r = native_adreno_ib_log_wide[(native_adreno_ib_log_count - 1 - k) & 3];
+                        IOLog("UKE GPUIBW%d: fence=%u iova=%x%08x bytes=%u status=%x\n", k, r[0], r[2], r[1], r[3],
+                              native_adreno_ib_log_wide_status[(native_adreno_ib_log_count - 1 - k) & 3]);
+                        for (unsigned at = 0; at < 256; at += 8) {
+                            char line[72];
+                            snprintf(line, sizeof line, "%08x %08x %08x %08x %08x %08x %08x %08x",
+                                     r[4 + at], r[4 + at + 1], r[4 + at + 2], r[4 + at + 3],
+                                     r[4 + at + 4], r[4 + at + 5], r[4 + at + 6], r[4 + at + 7]);
+                            IOLog("UKE GPUIBW%d.%u: %s\n", k, at / 8, line);
+                        }
                     }
                 }
             }
