@@ -147,6 +147,27 @@ extern "C" ShengGmuDbStatus ShengGmuCommandDbInputs(const uint8_t *, size_t, uin
 extern "C" AdrenoHfiStartupStatus ShengGmuBuildStartup(const ShengGmuVoteInputs *, AdrenoHfiStartupConfig *) __attribute__((weak));
 extern "C" volatile uint32_t sheng_gmu_build_fail;
 
+/* The upstream feature's stall evidence, exported by NativeAdrenoSubmit.cpp: [0] the fence that stopped, [1] its timed-out
+ * waits, then NativeAdrenoRing::stallState()'s CP words (RBBM_STATUS..STATUS3, INT, CP_HW_FAULT, CP_STATUS_1, PROTECT,
+ * RPTR/WPTR, IB1/IB2 bases and remaining words, BV RPTR/IB1/IB2). stall_mem is the SMMU fault record (FSR, FAR lo/hi,
+ * FSYNR0), then for BR IB1 / BV IB1 / BV IB2 17 words (dword index + 16 words), then the map handles under them. */
+extern "C" {extern volatile uint32_t native_adreno_stall[2 + 22];}
+extern "C" {extern volatile uint32_t native_adreno_stall_mem[4 + 3 * 17 + 4];}
+/* The last sixteen command streams the ring submitted: [seqno, start, end, total, words...]. */
+extern "C" {extern volatile uint32_t native_adreno_ring_log[16][4 + 112];}
+extern "C" {extern volatile uint32_t native_adreno_ring_log_count;}
+extern "C" uint32_t native_adreno_ring_window(uint32_t at,uint32_t count,uint32_t *out);
+/* Connection/table switching and maintenance counters from NativeAdrenoPublish.cpp and NativeAdrenoCpu.cpp. */
+extern "C" {extern volatile uint32_t native_adreno_table_switches[8];}
+extern "C" {extern volatile uint32_t native_adreno_mount_fail[4];}
+extern "C" {extern volatile uint32_t native_adreno_cp_aperture[4];}
+extern "C" {extern volatile uint32_t native_adreno_bits[2];}
+extern "C" {extern volatile uint64_t native_adreno_maint_phase[8][2];}
+/* msm hangcheck recovery: [0] hangs, [1] restarts, [2] failed restarts, [3] last hung fence, [4] last status, [5] replayed. */
+extern "C" {extern volatile uint32_t native_adreno_recovery[8];}
+/* The bridge's telemetry table (NativeAdrenoPublish.cpp): rows of text the Metal plugin streams as markers. */
+extern "C" {extern char native_adreno_metal_rows[48][96];}
+
 extern "C" {
 extern char boot_progress_ext[8][48];
 extern char boot_progress_ext_wide[2][112];
@@ -1159,6 +1180,50 @@ void metalRows() {
                  d.last_status & 0xfff, native_adreno_trace_stage, d.forced_unmaps);
         setRow(5, row);
     }
+    // The bridge's telemetry table (the plugin streams it as markers every six seconds): rows such as P0/P1 carry the
+    // last refusals' full text, V the pipeline/cache counters. Mirror changed rows into the kernel log so a dump keeps
+    // the detail the four on-screen rows cannot show.
+    {
+        static char logged[48][96];
+        for (unsigned i = 0; i < 48; ++i) {
+            const char *line = native_adreno_metal_rows[i];
+            if (!line[0] || __builtin_strlen(line) < 8 || !__builtin_memcmp(logged[i], line, 95)) continue;
+            __builtin_memcpy(logged[i], line, 96);
+            IOLog("UKE GPUT%u: %.90s\n", i, line);
+        }
+    }
+    // The upstream stall handler's snapshot, once per stalled fence: the SMMU fault record, the words around the BR/BV IB
+    // fetch points and the map handles under them. A handle at or above the first was mapped after the job, i.e. its memory
+    // was freed and reused under the GPU. This is the evidence that decides between a mapping-lifetime bug and a bad
+    // pipeline/descriptor; the same snapshot's CP words say whether an SMMU fault stalled the context at all.
+    {
+        static uint32_t loggedStall;
+        const uint32_t fence = native_adreno_stall[0];
+        if (fence && fence != loggedStall) {
+            loggedStall = fence;
+            const uint64_t far = (uint64_t(native_adreno_stall_mem[2]) << 32) | native_adreno_stall_mem[1];
+            IOLog("UKE GPUFLT: fence=%u waits=%u fsr=%x far=%llx fsynr=%x h=%x/%x/%x/%x\n", fence,
+                  native_adreno_stall[1], native_adreno_stall_mem[0], (unsigned long long)far, native_adreno_stall_mem[3],
+                  native_adreno_stall_mem[55], native_adreno_stall_mem[56], native_adreno_stall_mem[57], native_adreno_stall_mem[58]);
+            const volatile uint32_t *w = &native_adreno_stall[2];
+            IOLog("UKE GPUCP: rbbm=%x/%x/%x/%x int=%x fault=%x status=%x prot=%x rptr=%x wptr=%x"
+                  " ib1=%x%08x/%x ib2=%x%08x/%x bv=%x bvib1=%x/%x bvib2=%x\n",
+                  w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9],
+                  w[11], w[10], w[12], w[14], w[13], w[15], w[16], w[17], w[18], w[19]);
+            for (unsigned k = 0; k < 3; ++k) {
+                const unsigned at = 4 + k * 17;
+                for (unsigned half = 0; half < 2; ++half) {
+                    char line[72];
+                    snprintf(line, sizeof line, "%08x %08x %08x %08x %08x %08x %08x %08x",
+                             native_adreno_stall_mem[at + half * 8], native_adreno_stall_mem[at + half * 8 + 1],
+                             native_adreno_stall_mem[at + half * 8 + 2], native_adreno_stall_mem[at + half * 8 + 3],
+                             native_adreno_stall_mem[at + half * 8 + 4], native_adreno_stall_mem[at + half * 8 + 5],
+                             native_adreno_stall_mem[at + half * 8 + 6], native_adreno_stall_mem[at + half * 8 + 7]);
+                    IOLog("UKE GPUFLT%d.%u: %s\n", k, half, line);
+                }
+            }
+        }
+    }
 }
 // Exec observer: every successful exec is announced to kauth fileop listeners after the image was activated (code signature accepted).
 // This shows whether launchd ever started the owner job /private/var/ngpu/bin/adrenoprobed, and the last few programs it started.
@@ -1449,6 +1514,34 @@ void logGpuClock() {
           gfx, gfxcfg, gmu, gmucfg, hub, hubcfg);
 }
 
+// The driver's connection path: whether the context's table switching came up (feat branch), the CP-switch check, and how
+// many connections fell back to the kernel's space. tables=made/live tells whether per-process VMs are really in use.
+static void logConnections() {
+    IOLog("UKE GPU: conn switch=%x cp=%x mode=%u mount=%u/%x shared=%u tables=%u/%u in=%u out=%u\n",
+          native_adreno_table_switches[6], native_adreno_cp_aperture[2], native_adreno_cp_aperture[3],
+          native_adreno_mount_fail[0], native_adreno_mount_fail[1], native_adreno_mount_fail[2],
+          native_adreno_table_switches[2], native_adreno_table_switches[4],
+          native_adreno_bits[0], native_adreno_bits[1]);
+}
+// The driver's cache-maintenance phases: pool, allocate, map, submit, unmap, complete, table and diagnostic passes, each
+// with the number of runs and the KiB touched. A frame's cost that is not in the GPU's own time shows up here first.
+static void logMaintenance() {
+    IOLog("UKE GPU: maint pool=%llu/%lluk alloc=%llu/%lluk map=%llu/%lluk sub=%llu/%lluk unmap=%llu/%lluk cmp=%llu/%lluk tab=%llu/%lluk\n",
+          (unsigned long long)native_adreno_maint_phase[0][0],(unsigned long long)native_adreno_maint_phase[0][1],
+          (unsigned long long)native_adreno_maint_phase[1][0],(unsigned long long)native_adreno_maint_phase[1][1],
+          (unsigned long long)native_adreno_maint_phase[2][0],(unsigned long long)native_adreno_maint_phase[2][1],
+          (unsigned long long)native_adreno_maint_phase[3][0],(unsigned long long)native_adreno_maint_phase[3][1],
+          (unsigned long long)native_adreno_maint_phase[4][0],(unsigned long long)native_adreno_maint_phase[4][1],
+          (unsigned long long)native_adreno_maint_phase[5][0],(unsigned long long)native_adreno_maint_phase[5][1],
+          (unsigned long long)native_adreno_maint_phase[6][0],(unsigned long long)native_adreno_maint_phase[6][1]);
+}
+// msm hangcheck: whether a stall was ever declared and whether a board restart hook exists to recover from it. If hangs
+// rises while restarts stays 0, the GPU is hung and nothing can bring it back (native_adreno_set_restart is never called).
+static void logRecovery() {
+    IOLog("UKE GPU: rec hang=%u restart=%u fail=%u fence=%u status=%x replay=%u guilty=%u\n",
+          native_adreno_recovery[0], native_adreno_recovery[1], native_adreno_recovery[2],
+          native_adreno_recovery[3], native_adreno_recovery[4], native_adreno_recovery[5], native_adreno_recovery[6]);
+}
 void heartbeat() {
     // Row 4 from now on: seconds since the run ended, GX state, and (only with GX on) the GPU status words, so a photo
     // tells a live kernel from a hung one and shows whether the GPU stays idle.
@@ -1458,6 +1551,9 @@ void heartbeat() {
         // the msgbuf tail before the first userdata record is written.
         if (!(t % 30)) sheng_cpufreq_probe();
         if (!(t % 30)) logGpuClock();
+        if (!(t % 30)) logMaintenance();
+        if (!(t % 30)) logConnections();
+        if (!(t % 30)) logRecovery();
         if (t && !(t % 10)) {
             const uint32_t again = native_gpu_revote_now();
             if (!(t % 60)) IOLog("UKE GPU: revote %x\n", again);
@@ -1480,17 +1576,17 @@ void heartbeat() {
             // Row 3 (the load trace, finished by now): RBBM_STATUS1..3 (0x211..0x213; STATUS3 bit 24 SMMU stalled on fault),
             // CP_INTERRUPT_STATUS 0x823, CP_PROTECT_STATUS for BR/BV (0x824 / 0xa61) and the GPU context bank FSR (a terminated
             // translation fault does not stall the SMMU, so STATUS3 alone cannot rule one out).
-            char stall[64];
-            snprintf(stall, sizeof stall, "S%x/%x/%x I%x P%x/%x f%x a%x/%x c%x", gpuRd(0x0211), gpuRd(0x0212),
+            char stallRow[64], sqeRow[64];
+            snprintf(stallRow, sizeof stallRow, "S%x/%x/%x I%x P%x/%x f%x a%x/%x c%x", gpuRd(0x0211), gpuRd(0x0212),
                      gpuRd(0x0213), gpuRd(0x0823), gpuRd(0x0824), gpuRd(0x0a61), gpuFsr(), gActlr, gActlrSet, gSacr);
-            setRow(3, stall);
+            setRow(3, stallRow);
             // Row 2: each thread's SQE PC and the header of the packet it is on. a6xx_cp_hw_err_irq() reads CP_SQE_STAT_DATA after
             // selecting index 1 for the current opcode; index 0 is the PC and successive reads advance (crashdec).
             uint32_t sqe[4];
             gpuWr(0x0908, 0); sqe[0] = gpuRd(0x0909); sqe[1] = gpuRd(0x0909);
             gpuWr(0x0a87, 0); sqe[2] = gpuRd(0x0a88); sqe[3] = gpuRd(0x0a88);
-            snprintf(stall, sizeof stall, "Q br %x %08x bv %x %08x", sqe[0], sqe[1], sqe[2], sqe[3]);
-            setRow(2, stall);
+            snprintf(sqeRow, sizeof sqeRow, "Q br %x %08x bv %x %08x", sqe[0], sqe[1], sqe[2], sqe[3]);
+            setRow(2, sqeRow);
             // Once per hang, row 2 then shows instead the last submission's coherence sample (int-070), "C<submissions> c<first IB
             // word, kernel cacheable alias> u<DRAM before the CPU cache maintenance> v<DRAM after it> d<DRAM now>". int-069 found the
             // table entry right and DRAM holding the IB at hang time, yet the CP read a zero header: u=0 with c/v = 0x70970001 means
@@ -1504,6 +1600,41 @@ void heartbeat() {
                          native_adreno_coherence[1], native_adreno_coherence[2], native_adreno_coherence[3], uint32_t(w));
             }
             setRow(2, coherenceRow);
+            // Mirror the on-screen stall rows and the command streams into the kernel log: the screen is muted after the
+            // first presented frame, so this is the only way a hang leaves evidence.
+            static int ringDumped;
+            if (!ringDumped) {
+                ringDumped = 1;
+                const unsigned logs = native_adreno_ring_log_count < 16 ? native_adreno_ring_log_count : 16;
+                const unsigned show = logs < 4 ? logs : 4;
+                for (unsigned k = 0; k < show; ++k) {
+                    const volatile uint32_t *r = native_adreno_ring_log[(native_adreno_ring_log_count - 1 - k) & 15];
+                    IOLog("UKE GPUR%d: seq=%u start=%x end=%x total=%u\n", k, r[0], r[1], r[2], r[3]);
+                    for (unsigned at = 0; at < 32; at += 8) {
+                        char line[72];
+                        snprintf(line, sizeof line, "%08x %08x %08x %08x %08x %08x %08x %08x",
+                                 r[4 + at], r[4 + at + 1], r[4 + at + 2], r[4 + at + 3],
+                                 r[4 + at + 4], r[4 + at + 5], r[4 + at + 6], r[4 + at + 7]);
+                        IOLog("UKE GPUR%d.%u: %s\n", k, at / 8, line);
+                    }
+                }
+                uint32_t window[64];
+                const uint32_t rptr = gpuRd(A740_CP_RB_RPTR);
+                if (native_adreno_ring_window(rptr, 64, window)) {
+                    for (unsigned at = 0; at < 64; at += 8) {
+                        char line[72];
+                        snprintf(line, sizeof line, "%08x %08x %08x %08x %08x %08x %08x %08x",
+                                 window[at], window[at + 1], window[at + 2], window[at + 3],
+                                 window[at + 4], window[at + 5], window[at + 6], window[at + 7]);
+                        IOLog("UKE GPUV%u: %s\n", at / 8, line);
+                    }
+                }
+            }
+            if (!(t % 30)) {
+                IOLog("UKE GPUS: %s\n", row);
+                IOLog("UKE GPUT3: %s\n", stallRow);
+                IOLog("UKE GPUQ: %s\n", sqeRow);
+            }
         } else if (gxOn()) {
             // Without a stall, row 2 shows the coherence samples, so a passing run still shows whether a CPU cache held an IB.
             if (native_adreno_coherence[0]) {
