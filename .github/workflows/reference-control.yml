@@ -26,6 +26,8 @@ jobs:
   reference:
     runs-on: macos-26
     timeout-minutes: 60
+    env:
+      XNU_KERNEL_CHAINED_FIXUPS: '1'
     steps:
       - uses: actions/setup-python@v5
         with:
@@ -79,7 +81,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: macos-reference-inputs/build/xnu/fileset-reference
-          key: uke-reference-v1-${{ env.INPUT_SHA256 }}-${{ steps.tools.outputs.identity }}
+          key: uke-reference-chained-v1-${{ env.INPUT_SHA256 }}-${{ steps.tools.outputs.identity }}
 
       - name: Build only the upstream RELEASE LTO reference
         run: |
