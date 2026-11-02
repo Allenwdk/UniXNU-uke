@@ -1,0 +1,125 @@
+name: uke-ipados27-reference-control
+
+on:
+  push:
+    branches: [investigate/ipados27-reference-20261102]
+    paths: ['.github/workflows/reference-control.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write # Read the unpublished input release in this repository.
+
+concurrency:
+  group: uke-reference-control-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  INPUT_TAG: research-ipados27-reference-20261102
+  INPUT_SHA256: ba82b51472be56d3c3d8ad6fd7d69664d2edfb66e5e8afc87596345f00a01a1e
+  HOMEBREW_NO_AUTO_UPDATE: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  reference:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Download and verify the fixed reference inputs
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq \
+            '.[] | select(.tag_name == env.INPUT_TAG and .draft) | .id')
+          [[ "$release_id" =~ ^[0-9]+$ ]]
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq \
+            '.[] | select(.name | startswith("macos-reference-inputs.tar.gz.chunk")) | [.id, .name] | @tsv' > asset-list.tsv
+          python3 - <<'PY'
+          from pathlib import Path
+          from concurrent.futures import ThreadPoolExecutor
+          import os, re, subprocess
+          rows = [line.split('\t') for line in Path('asset-list.tsv').read_text().splitlines()]
+          assert len(rows) == 143
+          target = Path('input-parts')
+          target.mkdir()
+          def download(row):
+              ident, name = row
+              assert ident.isdigit() and re.fullmatch(r'macos-reference-inputs\.tar\.gz\.chunk\d{3}', name)
+              with (target / name).open('wb') as stream:
+                  subprocess.run(['gh', 'api', '-H', 'Accept: application/octet-stream',
+                                  f'repos/{os.environ["GITHUB_REPOSITORY"]}/releases/assets/{ident}'],
+                                 stdout=stream, check=True)
+          with ThreadPoolExecutor(max_workers=8) as pool:
+              list(pool.map(download, rows))
+          PY
+          cat input-parts/*.chunk[0-9][0-9][0-9] > inputs.tar.gz
+          printf '%s  inputs.tar.gz\n' "$INPUT_SHA256" | shasum -a 256 -c -
+          tar xzf inputs.tar.gz
+          python3 macos-reference-inputs/verify-inputs.py
+
+      - name: Record the Apple toolchain
+        id: tools
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun clang --version
+          xcrun clang --version | grep -q 'Apple clang'
+          for tool in make xcrun perl unifdef; do command -v "$tool"; done
+          clang_digest=$(shasum -a 256 "$(xcrun --find clang)" | awk '{print $1}')
+          printf 'identity=%s-%s\n' "$(uname -m)" "$clang_digest" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: macos-reference-inputs/build/xnu/fileset-reference
+          key: uke-reference-v1-${{ env.INPUT_SHA256 }}-${{ steps.tools.outputs.identity }}
+
+      - name: Build only the upstream RELEASE LTO reference
+        run: |
+          set -o pipefail
+          bash macos-reference-inputs/run-macos.sh 2>&1 | tee reference-build-console.log
+
+      - name: Collect the reference and build evidence
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          root = Path('macos-reference-inputs')
+          out = Path('reference-result')
+          out.mkdir(exist_ok=True)
+          for name in ('apple-clang-version.txt', 'xcode-version.txt',
+                       'upstream-revisions.json', 'input-sha256.json',
+                       'uke-reference-hooks.patch'):
+              path = root / name
+              if path.is_file():
+                  shutil.copy2(path, out / name)
+          console = Path('reference-build-console.log')
+          if console.exists():
+              shutil.copy2(console, out / console.name)
+          build = root / 'build/xnu/fileset-reference'
+          for pattern in ('mach.release.bcm2837.unstripped.*',
+                          '*/lto-build.log', '*/lto-command.json', '*/inputs.json',
+                          '*/omitted-unavailable-forced-exports.json',
+                          '*/lto-obj/RELEASE_ARM64_BCM2837/iokit/RELEASE/IOEventSource.cpo.json'):
+              for path in build.glob(pattern):
+                  if path.is_file():
+                      target = out / path.relative_to(build)
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copy2(path, target)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: uke-reference-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reference-result/
+          retention-days: 3
+          if-no-files-found: error
