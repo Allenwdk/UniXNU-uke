@@ -330,3 +330,23 @@ release `uke-port/releases/2026-11-03-ipados27-gpu-turnip-chains/`，vendor_boot
 
 证据：`uke-port/fixes/2026-11-03-ios27-gpu-dock-restart/` 的analysis.json、current-reports-unique.json、原IPS、device-loss-events.json、kernel-selected.txt、只读Data快照、统一日志筛选、原CoreImage反汇编/符号与library-load-analysis.log。
 下一步优先获得原库装载的实际URL/拒绝文本，并把GPU已有hang/recovery/fault记录与DeviceLost配对；保留mode2双ring、每进程VM、恢复与缓存策略，不用无证据的禁用开关掩盖症状。本轮没有新修复镜像，也没有进行宿主/QEMU渲染验证。
+
+
+## 2026-11-03：上游复核与GPU资源视图修正版已备，未刷
+
+用户要求继续修复图标慢、Dock respring与设置问题，并复核sheng。已重新fetch main：sheng ba66a66、core c1ecc5b、Adreno740 6fa7bae、Metal243d63c、SM8550 a9f45dc，与本轮底座相同；不存在更新的现成全套修复。
+历史CoreImage内核函数/externFunctionNames、完整运行时补丁、sheng ce7aae1抢占寄存器fenced重试已在本地，不能将其再次引入当作新修复。
+
+发现并修正代码层缺口：owner cryptex 的bindfs以源SystemOS union的上层vnode直接VNOP_LOOKUP/READDIR，却未保留源union下层。这样访问别名时会遗漏原OS中的CoreImage资源。新 `native-bindfs-source-union.patch` 仅让owner boot、源mount确为union的bind视图继承MNT_UNION；原VFS lookup/getdirentries/getattrlistbulk的lower遍历改从源union获取下层目录。普通bind语义、只读、MAC/目录访问检查和vnode引用管理保留。不复制原资源、不改CoreImage二进制。**本轮仍未回读失败调用的实际NSBundle URL，修正与实机全部加载失败的因果关系待验证**。
+
+设备同步sheng当前lite列表（coreduet、性能统计、Siri/duet/modelcatalog）及无相机cameracaptured禁用输入，保留IconServices/应用发布/Data类别。未引入与本问题无关的上游调度诊断开关。故障变化时将驱动已有recovery/fault/client记录写入持久日志，最多16条相关CoreImage失败路径；高开销逐帧/像素捕获仍关。
+GPU源码/用户态不变，保持mode2双ring、每进程VM、CP页表切换、缓存策略和DeviceLost后正常恢复。未通过关闭抢占、共享VM或吞错误规避；QSMMUv500的ACTLR仍按OEM原DT0x32b，没有套用ARM MMU500的寄存器假设。
+
+release `uke-port/releases/2026-11-03-ipados27-gpu-resource-view/` **已构建未刷**。
+core源码 `bfd70d9876d59abc00157b62d8b2ff00b60aaca5`，device源码 `d55d703ef1205e571c91d07314dd6ca68aeebd4d`；未push。
+boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`；vendor_boot SHA `24e777a883cc62dcf0e5afd8635373feb5be0fc02d74e9ab6bbef545e19e3ff1`、44859392B；最终内核SHA `a18d53857f46bd15b1e79fcdeb4fdb2f7bb88dfd51f08ed533d9cc5c3e522704`，CRC **25E7A2CAB891F66F**。
+正式kernel/prelink/payload通过，missing2/stubbed24精确集合不变；160MiB FAT、一次UEFI压缩往返和96MiB容量要求通过。用户态addon/trust复用已签名chained-fixups版本；未改Data seed或清缓存，未进行额外宿主/QEMU渲染验证。
+
+当前设备仍为取证用原厂四分区+active a+TWRP；本轮未刷任何设备分区。
+**图标延迟、Dock DeviceLost/respring与设置IOKit quiesce超时均未通过新候选真机验收**，不能称全部已修。下一步按当次授权刷成对四分区，验完整图标加载、设置上划Dock、应用切换与持续交互；失败则用新增的具体恢复/拒绝记录定位，保留原始boot现场。回退CPU基线ca-surface-track的成对命令见release README。
+证据 `uke-port/fixes/2026-11-03-ios27-gpu-upstream-repair/`：upstream-pins.json、上游板级源码与diff、patch before/after、正式构建日志和artifact-checks.json。
