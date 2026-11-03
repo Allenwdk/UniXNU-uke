@@ -211,3 +211,13 @@ boot保持原压缩loader，vendor_boot 44830720B，SHA `2bcddf06a514319bc8b23c0
 验收：应用不再显示下载占位、时钟/日历/天气等能直接打开；桌面和设置图标正常；再看对应小组件内容是否显示及更新。
 天气等联网数据缺失与小组件完全不呈现分开判断。若仍有WidgetRendererErrorDomain/1或插件所属应用拒绝，
 取新boot对照服务/应用注册和渲染；不跳过原PlugInKit限制、不清小组件数据库来假装修复。
+
+## 2026-11-03 19:53:57：应用/小组件组合候选已刷
+
+用户当次“刷吧”授权后，8SHA通过，TWRP b8a81f12经adb reboot bootloader，product uke/is-userspace no及四96MiB分区确认。
+boot_a/vendor_boot_a/boot_b/vendor_boot_b均OKAY；A槽回读a，rebootOKAY，结束2026-11-03T19:54:04.730929+08:00。
+release `uke-port/releases/2026-11-03-ipados27-gpu-widgets/`，屏幕预期CRC **7617327C1AD705CE**。
+boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`，vendor_boot SHA `2bcddf06a514319bc8b23c0b766b17d9776c596a3d04e62bd726593ec49261fe`。
+证据：同release的`flash-result-20261103-195357.json`及匹配flash log。没有主机userdata写入；本次启动的原应用注册/禁用列表/缓存写入属于正常持久Data行为。
+设备已退出recovery并重启候选；真实预置app打开、桌面/设置图标及小组件渲染待用户验证。
+验收先看app是否不再需下载且能打开，再看图标和小组件；若panic拍首行/BT，若仍占位/空白保留新启动日志，不能用刷写成功称功能已修。
