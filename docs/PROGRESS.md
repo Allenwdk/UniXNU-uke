@@ -1819,3 +1819,23 @@ release `uke-port/releases/2026-11-03-ipados27-gpu-turnip-chains/`，vendor_boot
 证据同release的 `flash-result-20261103-202932.json` 与匹配flash log；未主机写userdata，未清Data。
 设备已退出TWRP并重启修正版；完整图标、应用打开、小组件和持续交互仍待真机反馈，刷写成功不代表功能通过。
 验收观察桌面/设置完整图标、相册以外小组件、应用直接打开及约3分钟交互；若panic拍首行/BT，若仍卡死保留本boot现场再取匹配日志。
+
+
+## 2026-11-03：图标已出现但仍慢；Dock 操作后的界面服务重启已取证
+
+用户在 `gpu-turnip-chains`（vendor_boot SHA `896955d7570b660979befe12138e0832a39da1348cb54d526302d287a0e08502`、CRC72D32647A9779337）确认图标能显示，但桌面/设置都需很久；设置中上划呼出 Dock 后界面服务重启。用户明确指 respring。此版只达到“图标能出现”的局部进展，不能标为稳定或性能通过。
+设备经原厂boot/vendor_boot四分区+active a进入TWRP只读取证；**当前仍为原厂四分区+TWRP，新修复未构建/未刷**。未主机写userdata，保留原持久Data与缓存。
+
+配对原始环tag `20261103-203855-gpu-dock-restart`，SHA `24e91c1ca25aed8e760eaf5a12eab173f42b5573da2c6d7db634bf576f1a1a36`，195新CRC有效槽，1853未变旧槽排除。该次日志尾438.909757s；400.583126s backboardd[62]以SIGTERM15退出，随后backboardd[551]启动、SpringBoard[30]因backboardd respawn联动结束。此处按界面服务重启调查。
+
+同boot **027440E6-CA24-41A9-9981-7DD558908B91** 的统一日志已解析2,330,230条（另149,338条为上一boot，按UUID排除）；4个trace共2,479,568条。当前boot的两条QuartzCore日志明确报 `MTLCommandBuffer ... error = DeviceLost`，pid62，原始解析time89970854008/89970857711。解析time是带timesync转换的字段，不能直接拿它与内核uptime400s相减。
+上游 `NativeBridgeMetalFrontend.mm` 在真实runtime Metal error11后、完成回调交付后，按现有策略延迟500ms `kill(getpid(),SIGTERM)` 结束backboardd，launchd/FrontBoard重建界面。日志与该路径吻合；**导致DeviceLost的GPU故障/超时/恢复细节未持久化，不能据此归结抢占、SMMU或某个shader**。不关闭上游恢复或改成吞错误。
+
+当前boot两份独立iconservicesagent IPS：pid114/uptime220、pid501/uptime290，均SIGSEGV、FAR0x28，CI::MainProgramArgsQ-0/-2；指令为原CoreImage `ProgramNode::create_program_and_arguments` block+1136（image+0x1a82c）的 `str d0,[x8,#0x28]`，现场x8=0。其前序将虚函数返回的程序对象存入node+0x78，随后无NULL检查写耗时字段。已越过旧dyld装载栈溢出，当前是CoreImage程序创建失败后的空指针。
+同boot图标服务反复记录6类原库加载失败：ci_stdlib、ci_filters、ci_raw及三个_stitchable变体；随后服务重拉。能解释图标长时间等待与反复请求，但尚不能证明所有延迟由此产生。
+原OS中这些文件确实存在；用固定版本上游AIR容器读取器直接读取原文件，ci_stdlib为CI-kernel库（0个普通函数）、ci_stdlib_stitchable233函数、ci_filters_stitchable566函数，均可解析。**这仅排除这些原文件明显缺失/基础容器格式拒绝，不证明设备NSBundle定位、文件读取或运行时库创建成功**。CoreImage原internalLibraryWithName:device:先查NSBundle资源URL，存在时调用newLibraryWithURL:error:；本轮尚无该实际URL和底层拒绝文本，不盲加资源复制或路径伪装。
+
+设置另有同boot pid453/uptime290 IPS：FrontBoard `0x8BADF00D`，后台scene-update超过10秒；主线程在SystemConfiguration的SCDynamicStoreNotifyWait/等待IOKit quiesce，经Preferences的EthernetWatcher调用。此报告独立于GPU DeviceLost；二者因果关系未证实，不直接把所有问题归到设置或Dock。
+
+证据：`uke-port/fixes/2026-11-03-ios27-gpu-dock-restart/` 的analysis.json、current-reports-unique.json、原IPS、device-loss-events.json、kernel-selected.txt、只读Data快照、统一日志筛选、原CoreImage反汇编/符号与library-load-analysis.log。
+下一步优先获得原库装载的实际URL/拒绝文本，并把GPU已有hang/recovery/fault记录与DeviceLost配对；保留mode2双ring、每进程VM、恢复与缓存策略，不用无证据的禁用开关掩盖症状。本轮没有新修复镜像，也没有进行宿主/QEMU渲染验证。
