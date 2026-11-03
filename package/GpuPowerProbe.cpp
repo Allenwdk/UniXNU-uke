@@ -1660,12 +1660,13 @@ void gpuStart() {
     char row[64];
     uint32_t *c = native_gpu_cp;
     if (!NativeAdrenoGpuContextBringup || !NativeAdrenoGpuContextBuffers || !gSmmuMap) {setRow(6, "Q nolink"); return;}
-    // 1. The GPU's own context bank and buffers (arm-smmu-qcom: the GPU always gets bank 0; DT iommus SIDs 0 and 1).
+    // 1. Board GPU context and buffers: bank 0, uke nonsecure DT user SID 0 only.
+    // Ring count and process VM switching remain independent of the route count.
     NativeAdrenoGmuContextReport &q = native_gpu_context;
     // Before the bring-up: owned BOs on the IO-coherent path are not write-combined (the mode applies once the coherence proof passes).
     {unsigned owned = 0; PE_parse_boot_argn("sheng-gpu-owned-coherent", &owned, sizeof owned); native_adreno_owned_coherent = owned ? 1 : 0;}
     const IOReturn ctx = NativeAdrenoGpuContextBringup(reinterpret_cast<volatile uint8_t *>(gSmmuMap->getVirtualAddress()),
-        kSmmuWindow, 0, 2, 0, 0, 1, 1, gpuCtxProgress, &q);
+        kSmmuWindow, 0, 2, 0, 0, 1, UINT16_MAX, gpuCtxProgress, &q);
     // Q s<step> st<IOReturn> k<program>/<attach kit status> p<phase>e<enabled> r<route phase>v<verified> n<spans>
     snprintf(row, sizeof row, "Q s%u st%x k%u/%u p%ue%u r%uv%u n%u", q.step, unsigned(ctx), q.program_status, q.route_status,
              q.program_phase, q.program_enabled, q.route_phase, q.routes_verified, q.spans);

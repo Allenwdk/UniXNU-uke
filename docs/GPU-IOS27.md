@@ -101,3 +101,38 @@ boot `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`；vendor
 本次屏幕预期CRC **EC654707C10583A5**。fastboot对带AVB footer的紧凑vendor_boot自动发送98304KB，目标容量96MiB；日志完整保留。
 证据：`uke-port/releases/2026-11-03-ipados27-gpu-main/flash-result-20261103-190924.json`及匹配flash log、bootloader-transition-20261103-190904.json。
 实际启动、GPU渲染/呈现、触控上划、抢占和稳定性均待验；刷写成功不作为启动成功。已验收CPU版ca-surface-track保留回退。
+
+
+## 2026-11-03：GPU main 首次实机 panic 与单 user-route 候选
+
+用户报告 `Unhandled implementation specific error`，BT：
+`0xfffffff00af15438 0xdd8749300af137e4 0xfffffff00b604da0 0x2587a700b6181d8 0xb59831b00b60b17c 0x2297eab00b60c378`。
+用已刷完整内核75bfbf86…解析：`write32+0x4c` 的 `str w2,[x8,x1]`，调用者为
+`NativeAdrenoSmmuContext::attach+0x78 -> NativeAdrenoGpuContext::bringUp+0x2d0 -> NativeAdrenoGpuContextBringup+0x2ec`。
+顶部0xfffffff00af15438是panic调用返回地址，恰好下一函数边界；不能命名为handle_user_abort执行。
+确定为GPU stream attach期间MMIO写异常；缺x1/x2/x8与ESR/FAR，不能声称已确认SMR1或某个SID的具体写入。
+
+前版把sheng的SID0/1都租给GPU；uke原始DT只有非安全user SID0、独立安全SID2及GMU SID5。
+这是板级输入缺口。候选只附着user SID0，缺失第二route用UINT16_MAX表示；
+保留完整上游每进程VM、mode2双ring抢占、调度、内存/Metal路径。**此修正尚未实机证明消除panic**。
+此前文档“非安全0/1 fetch routes”不适用于uke，现由此节更正。
+
+### 本次recovery回读
+
+直接fastboot reboot recovery未提供可用shell；按既有流程临时刷原厂boot/vendor_boot四份、A槽并重启recovery，均OKAY。
+ADB重启服务后识别TWRP b8a81f12；只读userdata最后32MiB，未主机写userdata。
+raw SHA `9b41ad355ef3fa4cec3bf12e8a181f287d38417d3503ea6343764d1e3c1050dd`，原始/同tag解码：
+`reference/logs/ukelog/ukelog-20261103-192013-gpu-main-panic.bin`，`reference/logs/boot/boot-20261103-192013-gpu-main-panic.log`。
+2048槽CRC有效，但**新boot仅slot0..5/seq0..5六条**；slot6起seq2054等为旧环，不能取最高seq当本次启动。
+本次约52.004s日志窗口打开、53.47s用户态boot、末行57.760404s；没有持久保存GPU attach寄存器或panic。
+旧环的约5166s、HID overload和旧报告不作为本次GPU证据。审计 `uke-port/fixes/2026-11-03-ios27-gpu-smmu-user/readback.json`。
+
+### 新候选
+
+release `uke-port/releases/2026-11-03-ipados27-gpu-smmu-user/`；预期CRC **374A60FF5A4F1D52**，未刷。
+boot复用已验证压缩loader镜像，vendor_boot 44830720 B。
+boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`；vendor_boot SHA `676c49b546854cc39a8d762ddba6fde652c0a0f921fe163728f2351fb8a01125`；
+完整最终内核 SHA `853a19937d80a5859d0bc0601ed0dcaf08c99c48e5b55692261540fda7cbe1df`。
+正式kernel/prelink/payload及一次压缩往返通过，missing2/stubbed24保持；addon/trust/Data seed不变。
+当前设备为**原厂boot/vendor_boot四分区+TWRP**，留在recovery；并非在运行旧GPU版，也未刷此候选。
+下一步当次授权后刷候选四分区，检查能否越过stream attach，再验GPU/桌面；若同点再异常需精确故障偏移。

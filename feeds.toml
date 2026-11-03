@@ -14,7 +14,7 @@ commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 name = "sm7675"
 kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
-commit = "b6faf2282ea7a345b2d132c5274d572819f43036"
+commit = "5464caaacaf41af29af79d6ada4c32f3527c78b3"
 local = "../UniXNU-sm7675-common"
 
 # Board-pinned component variants for the iPadOS 27 line: the canonical GPU and
@@ -26,7 +26,7 @@ name = "Adreno740"
 kind = "driver"
 git = "https://github.com/UniXNU/Adreno740.git"
 # Upstream main 6fa7bae plus gen7_11_0 hardware profile.
-commit = "8d50beceb38d9d020e16a65309c7fd8486d1fdaf"
+commit = "aefcb4dd002895c4452e6271d09e98ffad4b3965"
 local = "../UniXNU/drivers/Adreno740"
 
 [[source]]

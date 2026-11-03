@@ -291,13 +291,14 @@ paths = ["board.toml", "scripts/prepare-uke-gmu.py", "scripts/build-adreno740-ki
 inputs = ["Real 0x43030b00/gen7_11_0, pinned gen71100 firmware, OEM DT and OEM gen7_11_0 source ed4ad0d1ad00.", "Upstream main Adreno740 6fa7bae, Metal 243d63c, GOP e47c1b8; existing 24A446 OS/SystemOS and immutable Data seed."]
 configuration = ["NATIVE_ADRENO enabled; per-process VM, preemption mode2, DCVS, BGRA8/SYSMEM and upstream transient GMEM policy.", "160 MiB raw FAT with standard UEFI compression; paired uke UEFI required."]
 procedure = ["Build kernel, UEFI, Turnip ios27, Metal ios27, addon/trust and payload; pack boot/vendor_boot.", "Only the compression round trip and required artifact/record checks; hardware tests follow delivery."]
-findings = ["OEM source supports preemption and a 2196 KiB record; historical candidate preemption=false is not a hardware limitation.", "Current 27-line GPU kernel/prelink and user-space builds pass; no current hardware GPU result is claimed."]
+findings = ["OEM source supports preemption and a 2196 KiB record; historical candidate preemption=false is not a hardware limitation.", "Current GPU main device boot panics during stream-attach MMIO write. Single-user SID0 candidate built; no hardware fix or rendering result yet."]
 completion = ["Real Metal rendering/presentation and unlock work on uke 24A446.", "Concurrent clients, CP preemption, teardown and persistent warm shader cache work on hardware."]
 limits = ["This is a host-built candidate. Historical iOS17 GPU results do not qualify this iPadOS27 stack.", "No frame-rate, long-run or restart acceptance has been measured; four partitions flashed on 2026-11-03; actual boot/GPU pending."]
-next_action = ["Use the paired candidate images and confirm real GPU rendering, presentation, multi-client scheduling and cache reuse."]
+next_action = ["Test the single user SID0 candidate CRC374A60FF5A4F1D52 after authorization; device currently stock four partitions plus TWRP. Confirm stream attach before GPU rendering."]
 evidence = [
  { kind = "host", reference = "docs/GPU-IOS27.md", result = "Kernel/prelink, UEFI, Turnip ios27, Metal arm64e/4K signing and compressed payload builds passed; hardware pending.", command = "./unixnu build kernel; ./unixnu build firmware; ./unixnu build payload", revision = "c131dd44c1f5aff6538251cd22b950e546d90647" },
  { kind = "device", reference = "docs/GPU-IOS27.md", result = "2026-11-03 19:09:27: four boot/vendor_boot flashes OKAY, slot a read back, reboot OKAY; actual boot and GPU pending. CRC EC654707C10583A5", command = "fastboot flash boot_a boot.img; fastboot flash vendor_boot_a vendor_boot.img; fastboot flash boot_b boot.img; fastboot flash vendor_boot_b vendor_boot.img; fastboot set_active a; fastboot reboot", revision = "0f436429f197779f72080076285468abda7948d3" },
+ { kind = "host", reference = "docs/GPU-IOS27.md", result = "SMMU single-user-route candidate builds; missing2/stubbed24 remain, compressed payload round trip passes. Not flashed. Six new ring records end57.760404s; no exact fault register persisted.", command = "./unixnu build kernel; ./unixnu build payload", revision = "aefcb4dd002895c4452e6271d09e98ffad4b3965" },
 ]
 
 [[area]]
