@@ -15,9 +15,7 @@ inputs = ["Format-2 resolver of the shared UniXNU checkout (schema_version = 2).
   "UniXNU-sm7675-common SoC layer and the ipados-27.0.1-24A446 OS profile (iPad17,3, XNU 12377.121.6, arm64e).",
   "24A446 kernelcache kernelcache.decompressed (sha256 38e6d9fa...) as the prelink reference.",
   "Catalog components with the board's fork pins in feeds.toml."]
-configuration = ["board.toml: schema_version 2, soc_source sm7675, os_profile ipados-27.0.1-24A446, kit uke.",
-  "Four-layer series arch:patches/xnu/series + soc:patches/xnu-12377/series + os:patches/xnu/series + device:patches/xnu-12377/series; uke_ipados27_defconfig is the active track and starts with GPU off (CPU rendering).",
-  "Archives: corecrypto 14, ArmDTPlatform, ArmCpu, AppleKeyStoreState, ShengUfs/VirtioMmioBlock/RamBlock/VerifiedRoot, the 24A446 fileset reference and the 24A446 Legacy display backend."]
+configuration = ["schema_version2, sm7675 SoC, ipados-27.0.1-24A446 arm64e, uke kit and uke_ipados27_defconfig; GPU enabled.", "Four-layer XNU patch series; current Adreno740/Metal/GOP pins are reachable on the user forks. Workspace-only paths belong in ignored local.toml."]
 procedure = ["./unixnu defconfig uke_ipados27_defconfig -D ../UniXNU-uke-build",
   "./unixnu fetch -D ../UniXNU-uke-build && ./unixnu status --json -D ../UniXNU-uke-build",
   "./unixnu build kernel -D ../UniXNU-uke-build && ./unixnu build payload -D ../UniXNU-uke-build",
@@ -29,8 +27,8 @@ findings = ["The format-1 patch path never applied the shared patches from a col
   "gpucomp27 ports the upstream display's refresh tick (GopFramebuffer 33e941a): startVsync/vsyncTick/armVsync, getRefreshAttributes at slot 301 and setDisplayRefreshProperties in registerService, with the builder binding _native_legacy_vsync_notify (0xfffffff005796720) and _native_legacy_set_refresh_properties (0xfffffff00579ebb8) after checking the original bytes; board.toml sets sheng-vsync=120 (armcpu-diagnostics dropped to stay at 987 of 1000 command-line bytes). The direct path now prints UKE DPU: flip n=... tb=... skip=... fb=... latch=...us max=...us vsync=... every 120 frames and the first eight UKE DPU: skip lines, so the next log separates compositor starvation from display-path loss.",
 ]
 completion = ["Status resolves arch, soc, os and device layers with the intended pins; the output path is out/uke/ipados-27.0.1-24A446/uke_ipados27/; kernel.macho is MH_FILESET/arm64e and prelinks against the 24A446 kernelcache."]
-limits = ["24A446 launchd Early boot complete is visible; Data write recovery, Block panic removal, cross-reboot persistence and desktop remain unqualified."]
-next_action = ["swap-dispatch flashed13:27:56 under current authorization, CRCE989F0CE55D5EB3F. Confirm real requested/powered, validation/transfer, panel and touch; after3min recover new log if no GUI. Desktop not verified."]
+limits = ["The reported interactive GPU27 symptoms are user-accepted on CRC90B6BC701210D9DB; no broad multi-client stress or cross-cold-boot cache qualification inferred."]
+next_action = ["Keep the accepted published pins and current GPU baseline; measure future stress/performance independently."]
 evidence = [
   { kind = "host", reference = "docs/PROGRESS.md", result = "swap-dispatch candidate CRCE989F0CE55D5EB3F: final original setter receives effective request0/1/0/1/1, schema74f2, original prelink gate and inputs preserved; not flashed.", command = "./unixnu build kernel && ./unixnu build payload; python3 uke-port/fixes/2026-11-03-swap-dispatch/pack.py", revision = "5ed46420025be331b51d98207ea6aa679faac9c7" },
   { kind = "host", reference = "docs/PROGRESS.md", result = "display-submit diagnostic built, CRC804CD0D45D379053, original missing2/stubbed24 exact sets unchanged, final snapshot uses24A446 fields and actual source dispatch retains IPC/PAC/results; NOT FLASHED per user request.", command = "./unixnu build kernel && ./unixnu build payload; python3 uke-port/fixes/2026-11-03-display-submit/pack.py", revision = "5ed46420025be331b51d98207ea6aa679faac9c7" },
@@ -53,8 +51,8 @@ findings = ["The boot manager displays the DT/initrd status through gUkeMemStatu
   "gUkeMemStatusGuid must be declared under [Guids] in both the DEC and the library INF.",
   "2026-11-02 source review: live ABL initrd 0xB2D51000..0xB7FFF41C overlaps the former DXE Heap 0xA8000000..0xC3A00000; sheng 66421cb reserves 0xA8000000..0xB8000000. Candidate reserves the handoff before SEC/DXE and starts the heap at 0xBAB00000; built; four partitions flashed and rebooted at 2026-11-02 01:38, user photo confirms kernel fold C43F1F3EC8168A4C and six tail samples, WINDOW delta=0 and overlap=0; later MMU/kernel execution unresolved."]
 completion = ["The FD builds, the menu boots the payload entry, and the device reaches the XNU entry point."]
-limits = ["upstream-reference entered the running kernel and reached IOService::_Dispatch, then PAC failure; iig-pac is host/QEMU verified only. Root/launchd/desktop and this candidate's panel behavior require device evidence."]
-next_action = ["client-vtable flashed08:29:06 CRCC0A17571D41F547C/vendore928ad23/final5dd8f9ac; fourOKAY/activea/readback/rebootOKAY. Confirm original client dispatch after removal of raw shadow-table rewrite, display/desktop and Data persistence. No reset/host userdata write, persist2 retained. Minimal host checks per user."]
+limits = ["Paired compressed-payload boot/vendor_boot reached the user-accepted 24A446 GPU system. Other devices, suspend/resume and long repeated-boot stress are not qualified by this report."]
+next_action = ["Use the paired UEFI decompression-capable boot and compressed vendor_boot; preserve raw FAT fallback and runtime overlap checks."]
 evidence = [
   { kind = "device", reference = "docs/PROGRESS.md", result = "the firmware menu and the uke boot entry run on hardware through the bring-up images", command = "fastboot boot boot.img", revision = "c77d613dc91fb54479242aa5d5902c48662b80d7" },
   { kind = "host", reference = "board.toml", result = "SILICIUM_UEFI.fd builds 3,145,728 bytes with the board defines", command = "./unixnu build firmware --skip-preflight --uefi ../uefi-uke -D ../UniXNU-uke-format2", revision = "4f4bf7e1f4ad56743562777becd7ac7d6714216c" },
@@ -171,7 +169,7 @@ evidence = [
 
 [[area]]
 id = "storage"
-status = "host-verified"
+status = "device-verified"
 components = ["ShengUfs", "RamBlock", "VirtioMmioBlock", "VirtioMmioConsole", "VerifiedRoot"]
 paths = ["board.toml", "package/SourceStorage.cpp", "package/SourceRootBinding.cpp", "package/SourceRootPolicies.cpp", "package/UfsDpuStubs.c", "package/UfsDpuTableStubs.c", "scripts/make-root-policy-27.py"]
 inputs = ["UFS host at 0x1d84000 (GCC windows 0x177000/0x19e000).",
@@ -185,8 +183,8 @@ findings = ["The display bank's stage-1 window functions (native_ufs_dpu_map/tab
   "The root policy hashes every 4 KiB block of the OS image: the host verification ran vr_host_block over all 2,347,008 blocks and the image sha256 equals the profile root (8a12cdad...); the 592-byte kernel.macho.vroot bundle's 544-byte manifest header is byte-identical to manifest.bin.",
   "The OS member of the IPSW is an 8.25 GB AEA archive that decrypts to the raw APFS image; on Linux build userdata reuses it through a .dmg.json cache record instead of the macOS aea tool (rules 7.22)."]
 completion = ["The kernel mounts the OS volume from the userdata window through the verified policy and bsd_init reaches launchd."]
-limits = ["Host-verified only: nothing on this line has run on hardware yet. The SystemOS policy is not generated (the profile marks it optional)."]
-next_action = ["Flash uke-port/releases/2026-10-30-ipados27-storage and check the source-storage root mount in the bring-up log."]
+limits = ["Original OS/SystemOS and persistent Data were used for the accepted GPU27 system. Power-loss recovery/failure injection was not newly tested."]
+next_action = ["Preserve the current authenticated OS/SystemOS and immutable Data seed; do not clear userdata during GPU publication."]
 evidence = [
   { kind = "host", reference = "board.toml", result = "kernel.macho carries _native_source_storage_start and _native_ufs_source_create; userdata-root.img is a v2 SHNGROOT with the OS window (8a12cdad...) and OS.vroot (575c24fb...)", command = "./unixnu build kernel && ./unixnu build userdata --object OS.vroot=<policy>/manifest.bin -D ../UniXNU-uke-build", revision = "a8da9009d43f6c679ebd46903810906afa8ce906" },
   { kind = "device", reference = "docs/PROGRESS.md", result = "the 17.7.11 line mounted its owner Data volume through the NativeUfs transport (historical; not the source-storage path)", command = "fastboot boot boot.img", revision = "c77d613dc91fb54479242aa5d5902c48662b80d7" },
@@ -240,8 +238,8 @@ findings = ["2026-11-03 ca-surface-track: user explicitly confirms normal upward
   "2026-10-30 (branch uke-b3a8-scanout, GopFramebuffer 4458e4d, image gpucomp72, built not flashed): the upstream feat display refuses the render server's two-plane frame, so the spelling joins nativeScanoutFormat with its own 5-bytes-a-texel bound (native_legacy_b3a8_bounds) instead of the 4 B/px model its pixel-unit stride can never satisfy; plane 0 is scanned through the same VIG pipes with the ten-bit source word ((firmware word & ~0x100) | 0x4000 = 0x000276ff, unpack 0x03020001) and only that plane's 27,340,800-byte prefix mapped, and native_legacy_convert_xr10 decodes it on the CPU when the pipes are not reachable. The direct path also needed the display bank window back: its argument is NativeUfs's uke-dpu-scanout, which the 2026-10-30 02:16 move to the upstream chain dropped while keeping only the display's sheng-dpu-scanout, so from gpucomp50 on every frame took the copy path; board.toml now sets both (sheng-dpu-scanout=2 uke-dpu-scanout=1) at 974 of 1000 command-line bytes, dropping offline-legacy-base-present, which only the retired NativeMobileDisplay read.",
 ]
 completion = ["A known frame appears with correct geometry and colors and stays up."]
-limits = ["Current 27-line acceptance is user-confirmed upward swipe without freeze; duration, all-app coverage, cross-reboot stability and GPU acceleration are outside this report.", "Historical separate GPU-track limitation: The GPU compositor now renders through the mainline stack (Adreno740 5c8c145, ArmSmmu4K 3ba9245, AdrenoMetal ce5e19e, Turnip rebuilt for the new driver ABI); uke-dpu-scanout=3 scans the compositor's BGRA surfaces directly with a one-frame delay, about 15 fps on device.", "Historical separate GPU-track limitation: GPU commit-to-complete averages 51 ms (9.7 commits/s, worst 1.1 s) over 8892 commits, with 6 failed commits; STATUS3 bit24 (SMMU stalled) during KaleidoscopePoster blur effects, recovered by the upstream stall handler after about 1 s.", "Historical separate GPU-track limitation: b3a8 two-plane frames now present through the direct path; the CPU plane decode remains only for a board without the display bank's stage-1 window.", "Historical separate GPU-track limitation: The direct path still polls CTL_FLUSH synchronously (cap 100 ms, measured about 1 ms) and delays one frame; the upstream non-blocking latch timer is not ported yet and the display/DRAM bandwidth vote is still missing."]
-next_action = ["Preserve ca-surface-track as the 27-line interactive baseline; continue other feature or longer-duration validation when requested."]
+limits = ["User confirms boot, icons/widgets and Settings/Dock interactions on GPU27 CRC90B6BC701210D9DB. Historical iOS17 frame-rate/stall numbers do not describe this build. No instrumented display throughput or long-run stress inference."]
+next_action = ["Retain accepted upstream fence/cancellation and requested-scanout behavior; collect future timing under a separately defined workload."]
 evidence = [
   { kind = "device", reference = "docs/PROGRESS.md", result = "User report: 这次正常了，不会卡死。记录一下吧; ca-surface-track CRC0485290E96ACC9B3, final988d162c178a8b02eaffe7cc9aefe833918868e4f23567f10adc9cde5bdcb3e6. Original evidence: release/user-observation.json. Scope: current upward swipe without freeze, duration unspecified. Revision is the working-tree base; full image SHA identifies the tested local repair.", command = "python3 uke-port/fixes/2026-11-03-ca-surface-track/record-user-success.py", revision = "5ed46420025be331b51d98207ea6aa679faac9c7" },
   { kind = "host", reference = "docs/PROGRESS.md", result = "swap-dispatch candidate CRCE989F0CE55D5EB3F: final original setter receives effective request0/1/0/1/1, schema74f2, original prelink gate and inputs preserved; not flashed.", command = "./unixnu build kernel && ./unixnu build payload; python3 uke-port/fixes/2026-11-03-swap-dispatch/pack.py", revision = "5ed46420025be331b51d98207ea6aa679faac9c7" },
@@ -294,7 +292,7 @@ procedure = ["Build kernel, UEFI, Turnip ios27, Metal ios27, addon/trust and pay
 findings = ["Real gen7_11_0 GPU stack preserves upstream features and uses original OS resources. Turnip chained fixups avoids prior dyld stack overflow; scoped CoreImage nil-result library retry is present.", "On CRC90B6BC701210D9DB the user confirms all previously reported boot/icon/widget/Settings/Dock UI-restart symptoms resolved. Device result, not just flash transport."]
 completion = ["Real Metal rendering/presentation and unlock work on uke 24A446.", "Concurrent clients, CP preemption, teardown and persistent warm shader cache work on hardware."]
 limits = ["Acceptance is the user's direct report on the exact flashed image; no fresh post-fix logs or instrumented frame-time figures were collected this turn.", "Long-run multi-client stress and cache reuse across repeated cold boots remain independently unmeasured."]
-next_action = ["Maintain CRC90B6BC701210D9DB as the accepted GPU27 interactive baseline; publish the tested source and reachable pins to main. Future performance/concurrency/reboot-cache measurements are separate work; keep the failed source-union VFS experiment reverted."]
+next_action = ["Current accepted GPU27 baseline CRC90B6BC701210D9DB is published to the seven user-fork mains; divergent old mains saved as documented. No remaining reported icon/widget/Settings/Dock blocker. Future frame-time, multi-client stress and repeated cold-boot cache measurements are separate work."]
 evidence = [
  { kind = "host", reference = "docs/GPU-IOS27.md", result = "Kernel/prelink, UEFI, Turnip ios27, Metal arm64e/4K signing and compressed payload builds passed; hardware pending.", command = "./unixnu build kernel; ./unixnu build firmware; ./unixnu build payload", revision = "c131dd44c1f5aff6538251cd22b950e546d90647" },
  { kind = "device", reference = "docs/GPU-IOS27.md", result = "2026-11-03 19:09:27: four boot/vendor_boot flashes OKAY, slot a read back, reboot OKAY; actual boot and GPU pending. CRC EC654707C10583A5", command = "fastboot flash boot_a boot.img; fastboot flash vendor_boot_a vendor_boot.img; fastboot flash boot_b boot.img; fastboot flash vendor_boot_b vendor_boot.img; fastboot set_active a; fastboot reboot", revision = "0f436429f197779f72080076285468abda7948d3" },
@@ -371,16 +369,14 @@ components = ["DarwinBoot", "XnuPrelink", "VerifiedRoot"]
 paths = ["board.toml", "scripts/build-session-image.sh"]
 inputs = ["Stock vendor_boot DTB with the board's dtb_node patches (splash reservation, payload at 0x1000000).",
   "Trust cache bundle and the recorded Data seed."]
-configuration = ["[payload]: volume UKEESP, 94 MiB, loader firmware, panic_screen false, root_policies kernel.macho.vroot; the vendor_boot partition is 96 MiB.",
-  "[bootimg.image]: v4 header, page 4096; the stock DTB keeps its /chosen and gains the initrd window 0x1000000..0x7000000."]
+configuration = ["160MiB raw FAT, payload.compression=uefi; EDK II standard UEFI compression transport in vendor_boot. Paired uke UEFI expands into reserved0xA8000000..0xB2000000 after overlap checks.", "Android v4 vendor_boot retains original DTB/table/bootconfig/vbmeta. Accepted boot1519616B and vendor_boot44859392B fit the96MiB partitions."]
 procedure = ["./unixnu build payload --kernel kernel.macho --unique-chip-id HEX -D ../UniXNU-uke-build",
   "./unixnu bootimg --uefi ../uefi-uke --dtb ../uke-port/data/vendor_boot.dtb --ramdisk none -D ../UniXNU-uke-build"]
 findings = ["The v4 header parsing and the existing-/chosen tolerance are in unixnu bootimg (core 5525d18); the boot image carries an empty ramdisk because the payload is the vendor_boot vendor ramdisk.",
   "payload, boot, vendor_boot and userdata all build on Linux; only the Data skip-setup seed still needs macOS."]
 completion = ["payload.img contains kernel.macho, its ADT, the trust cache, the Data seed and kernel.macho.vroot; boot.img boots from the stock DTB."]
-limits = ["Host-only verification; the platform seed is not stored in any repository and was substituted for the structural build.",
-  "The 94 MiB payload leaves about 200 KB in the 96 MiB vendor_boot partition."]
-next_action = ["Flash the 2026-10-30-ipados27-storage release and confirm the FAT volume handoff."]
+limits = ["Exact binary identity is the accepted release manifest and CRC90B6BC701210D9DB; later documentation/pin commits do not imply a rebuilt image."]
+next_action = ["Use the paired accepted images and preserved CPU rollback. Keep the original Data seed and owner trust inputs."]
 evidence = [
   { kind = "host", reference = "board.toml", result = "payload.img 94 MiB (sha256 e368e3f3...) and boot.img 1,515,520 bytes (sha256 9b04ce75...) over the stock vendor_boot DTB", command = "./unixnu build payload && ./unixnu bootimg --uefi ../uefi-uke --dtb ../uke-port/data/vendor_boot.dtb --ramdisk none", revision = "a8da9009d43f6c679ebd46903810906afa8ce906" },
   { kind = "device", reference = "docs/GPU-PORT.md", result = "the fmt2 test image booted to userland on hardware with the recovered platform seed and the Data seed handoff", command = "fastboot flash boot_a vendor_boot_a && fastboot set_active a && fastboot reboot", revision = "bdb1af9a7100367cde283ff5408681de8fbbcfe3" },
@@ -399,8 +395,8 @@ procedure = ["Boot with boot-progress=2 and read the menu status, then the kerne
 findings = ["The panic screen, ramoops print and the last-panic line work; the jetsam OOM vs corpse messages are distinguished in the log.",
   "The migration's own diagnostics: from-scratch kernel builds and the ADT baseline diff run on the host."]
 completion = ["Failures leave a readable panic line on screen and in the log."]
-limits = ["Historical log device evidence is from the 17/GPU track. client-vtable 27 did not link or enable the writer; recovered 708 records are stale. New 27 log disk records verified09:51, 137 new CRC-valid slots. Desktop and panic persistence remain pending."]
-next_action = ["Persistent-log flashed09:43:30; read only the new tail records from recovery and compare against the old-ring snapshot before diagnosis."]
+limits = ["Fresh UKELLOG1 and sameboot Data reports were recovered for prior failing27 builds. Current success is direct user feedback; post-fix fault counters were not recaptured this publication turn."]
+next_action = ["Keep bounded client/recovery reasons available for any new failure; high-cost frame/pixel capture remains disabled."]
 evidence = [
   { kind = "device", reference = "docs/PROGRESS.md", result = "swap-dispatch flashed13:27:56 after5SHA/four96MiB checks, all fourOKAY, set_activea/current-slot a/rebootOKAY, CRCE989F0CE55D5EB3F. No host userdata writes; requested/backend/GUI outcomes pending.", command = "python3 uke-port/fixes/2026-11-03-swap-dispatch/flash.py", revision = "5ed46420025be331b51d98207ea6aa679faac9c7" },
   { kind = "device", reference = "docs/PROGRESS.md", result = "13:06:33 tail readback sha d8e8331b...,123 fresh CRC-valid slots0..122,1925 unchanged slots excluded. Backboardd original SwapBegin/End/Wait and default Mach port succeed, validate/transfer0; TWRP retained, no host userdata write.", command = "python3 uke-port/fixes/2026-11-03-display-submit-readback/read-ring.py", revision = "5ed46420025be331b51d98207ea6aa679faac9c7" },
