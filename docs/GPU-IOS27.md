@@ -259,3 +259,13 @@ boot `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`，vendor
 当前设备为原厂四分区+TWRP，留recovery；此候选未刷。验收先看原应用能否打开、图标是否出现，
 再看小组件与持续交互是否卡住；若仍失败需区分容器Code72是否消失和图标服务的真实失败。
 回退优先使用用户已确认“不panic”的SID0版（仍缺图标/应用），或已验收CPU版ca-surface-track。
+
+## 2026-11-03 20:08:21：Data类别元数据候选已刷
+
+用户当次“刷吧”授权；8SHA通过，recovery b8a81f12经adb reboot bootloader，核product uke/is-userspace no及四96MiB分区。
+boot_a/vendor_boot_a/boot_b/vendor_boot_b均OKAY，A槽回读a，rebootOKAY，结束2026-11-03T20:08:28.691922+08:00。
+release `uke-port/releases/2026-11-03-ipados27-gpu-data-class/`，预期CRC **72D32647A9779337**。
+boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`，vendor_boot SHA `a5d93b473f70685d629d031b0a6d93379e279c58a2b90a11a7fe400d32ea9557`。
+证据同release的`flash-result-20261103-200821.json`及匹配flash log。没有主机userdata写入；原持久Data/app注册/类别xattr写入在正常启动期发生。
+设备已退出TWRP并重启本候选；容器Code72是否消失、app打开/图标/小组件/卡死效果仍待实机。
+验应用能否直接打开、图标是否出现、小组件及连续交互；失败保留新boot日志，新panic拍首行/BT。
