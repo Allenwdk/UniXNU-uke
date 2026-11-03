@@ -9,13 +9,14 @@ os_profile = "ipados-27.0.1-24A446"
 description = "Xiaomi Pad 7"
 kit = "uke"                      # the package/ of this repository appears as kits/uke in the build tree
 
-# The first-milestone component selection: the shared platform, kernel and
+# iPadOS 27 GPU integration: the shared platform, kernel and
 # keystore pieces only. Storage, display, input and GPU join as their iPadOS 27
-# archives are ported (the resolver requires an archive entry for every selected
+# archives are selected (the resolver requires an archive entry for every selected
 # component with a kernel-stage recipe).
 [components]
 include = [
   "ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState",
+  "Adreno740", "AdrenoMetal", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "AirNir", "Sm7675Platform",
   "GopFramebuffer", "QcomGeniSpi", "ShengNovatekTouch", "ShengHidInput",
   "ShengUfs", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "SoftwareAES",
 ]
@@ -67,6 +68,10 @@ archives = [
   # Compile the source HID adapter before binding it to the original 24A446 IOHIDDevice.
   "component:ShengHidInput",
   # Upstream fixed-address display/HID adapters are relocated by XnuPrelink.
+  "prepare-uke-gmu.py",
+  "component:Adreno740",
+  "build-adreno740-kits.py",
+  "build-adreno740-accelerator.py",
   "build-native-legacy-display-27.py",
   # Match the stripped Apple kernel against the real upstream RELEASE/LTO reference.
 ]
@@ -106,7 +111,7 @@ preempt_record_bytes = "0x225000"  # 2196 KiB
 gmu_pool_base = "0xc8000000"
 gmu_pool_bytes = "0x2000000"
 ubwc_version = 4
-ubwc_swizzle = 3                  # levels 2 and 3
+ubwc_swizzle = 6                  # levels 2 and 3
 highest_bank_bit = 16
 gmu_core_clock_hz = 220000000     # GMU core clock target for the A732
 gmu_hub_clock_hz = 200000000
@@ -184,7 +189,8 @@ trust_cache_sha256 = ["dc655bcb2ddfaea214f9ec83659b3fc8d8b658bafac2b5a004fb4179a
 volume = "UKEESP"
 # The 24A446 fileset kernel is ~91 MiB; the stock vendor_boot partition is 96 MiB, so the FAT volume
 # sits near the ceiling (payload + DTB + table must stay under it).
-size_mib = 94
+size_mib = 160
+compression = "uefi"
 # Historical FAT geometry/split workarounds are retained for this diagnostic to avoid changing
 # multiple boot inputs. The old 65,536-cluster truncation explanation was withdrawn after the
 # ABL initrd/DXE heap overlap review; see docs/status/initrd-lifetime-review-2026-11-02.md.
@@ -210,8 +216,7 @@ text_fixups = [
   "dyld_shared_cache_arm64e.01,43ef4b4,0000000000000000,f37bc1a8ff0f5fd6",
 ]
 
-# No owner-built Metal addon in the iPadOS 27 CPU-rendering path: the payload carries no
-# kernel.macho.gpuaddon and the kernel args below never enable the Metal device.
+# NativeAdrenoMetal is delivered by the matching --gpu-addon and --owner-trust-cache inputs.
 kernel_args = [
   "-v",
   "serial=3",
@@ -221,9 +226,15 @@ kernel_args = [
   # Show XNU text; kprintf enqueues rather than drawing with interrupts masked.
   "-uketextconsole",
   "-ukedeferredconsole",
-  "uke-ignition-trace=1",
+  "sheng-gpu-power=9",
+  "sheng-gpu-metal=1",
+  "sheng-gpu-preempt=2",
+  "sheng-gpu-dcvs=1",
+  "sheng-fb-gpu=1",
+  "sheng-fb-bgra=1",
+  "sheng-gpu-addon=1",
   "kt_fixed_zones=120",
-  # Legacy display family (GopFramebuffer): CPU composition, GOP/DPU presentation.
+  # Original display family with GPU composition and fence-controlled GOP/DPU presentation.
   "offline-legacy-register=1",
   "offline-legacy-gop=1",
   "offline-legacy-unit-scale=2",
@@ -256,10 +267,8 @@ kernel_args = [
   # Existing UKELLOG1 writer: recovery reads the last 32 MiB of userdata.
   "sheng-log=1",
   "sheng-crashlog=1",
-  "uke-display-trace=1",
   "native-ufs-root=1",
   # Existing upstream detail screen for the next root-preparation failure.
-  "native-ufs-diagnostics=1",
   # Board policy carried over from the 17.7.11 line.
   "sheng-lite=1",
   "sheng-aks=1",
@@ -270,8 +279,7 @@ kernel_args = [
   "ml-timeout-lock-panic-scale=40",
   "use_contiguous_hint=0",
 ]
-# No text_fixups in the 27 path: the 21H461 list addresses the iOS 17 dyld cache; 24A446 needs its
-# own investigation (if any) after the desktop is up.
+# The existing 24A446 SW surface fixups remain available to software clients.
 
 [payload.adt]
 tool = "scripts/make-uke-adt.py"

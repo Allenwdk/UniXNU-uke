@@ -12,9 +12,8 @@ CONFIG_XNU_DT_PANIC_REGION=y
 # The owned GopFramebuffer legacy display backend (CPU composition, GOP/DPU presentation).
 CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
 
-# The GPU is off in the first CPU-rendering milestone: no NATIVE_ADRENO, no Metal
-# addon. Re-enable together with the Adreno740/AdrenoMetal feat archives.
-# CONFIG_XNU_NATIVE_ADRENO is not set
+# Upstream GPU backend with the gen7_11_0 board profile and matching Metal addon.
+CONFIG_XNU_NATIVE_ADRENO=y
 
 # Source storage: the UFS runtime is built from the public IOStorageFamily source and authenticates the
 # 24A446 OS/SystemOS policies. Only signed headers travel in the payload; hash tables are .vroot objects

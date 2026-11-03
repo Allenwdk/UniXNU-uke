@@ -285,22 +285,18 @@ evidence = [
 
 [[area]]
 id = "gpu"
-status = "planned"
-components = ["Adreno740", "AdrenoMetal", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "Sm8550Platform", "AirNir"]
-paths = ["board.toml", "scripts/prepare-uke-gmu.py", "docs/GPU-PORT.md"]
-inputs = ["Adreno 732 (chip 0x43030b00, gen7-11-0) with the gen71100 firmware triplet pinned in proprietary-files.txt.",
-  "GMU pool 0xC8000000/32 MiB adopted with a write-combine mapping (a plain mapping aborts on DC ZVA)."]
-configuration = ["[gpu]: the A732 clock plan (9 power levels), gmu_chip_id 0x70b0000, ubwc 4, highest_bank_bit 16.",
-  "Kernel arguments offline-mobile-graphics-client=0 sheng-gpu-power=9 sheng-gpu-metal=1 (the desktop track)."]
-procedure = ["Build the GPU archives and boot the staged modes; read the G1..G0/P0/S0/heartbeat counters."]
-findings = ["Staged modes 1/3/4/5/6/7/8/9 pass: GMU SMMU context Ready, command DB v1 parses p0, PLL1 locked, GX off/on with the perf vote, the Metal publish, and the user stream with F0 r3b/3b G0 q3 u0.",
-  "A successful pool adopt needs an adopted_pool guard or the VM fallback returns kIOReturnBusy; the secure SMMU stream SMR write aborts, so the context is single-route."]
-completion = ["The Metal accelerator publishes and a user stream renders; the scanout shows frames."]
-limits = ["Out of scope on the 27 line: NATIVE_ADRENO is off and the board runs with CPU rendering; the 17.7.11 GPU bring-up (modes 1-9, Metal publish, DPU scanout) is kept here as history."]
-next_action = ["Revisit after the 27 desktop is up: port the feat/ipados27-gpu-parity driver stack and carry over the b3a8 scanout findings."]
+status = "host-verified"
+components = ["Adreno740", "AdrenoMetal", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "Sm7675Platform", "Sm8550Platform", "AirNir"]
+paths = ["board.toml", "scripts/prepare-uke-gmu.py", "scripts/build-adreno740-kits.py", "package/GpuPowerProbe.cpp", "docs/GPU-IOS27.md"]
+inputs = ["Real 0x43030b00/gen7_11_0, pinned gen71100 firmware, OEM DT and OEM gen7_11_0 source ed4ad0d1ad00.", "Upstream main Adreno740 6fa7bae, Metal 243d63c, GOP e47c1b8; existing 24A446 OS/SystemOS and immutable Data seed."]
+configuration = ["NATIVE_ADRENO enabled; per-process VM, preemption mode2, DCVS, BGRA8/SYSMEM and upstream transient GMEM policy.", "160 MiB raw FAT with standard UEFI compression; paired uke UEFI required."]
+procedure = ["Build kernel, UEFI, Turnip ios27, Metal ios27, addon/trust and payload; pack boot/vendor_boot.", "Only the compression round trip and required artifact/record checks; hardware tests follow delivery."]
+findings = ["OEM source supports preemption and a 2196 KiB record; historical candidate preemption=false is not a hardware limitation.", "Current 27-line GPU kernel/prelink and user-space builds pass; no current hardware GPU result is claimed."]
+completion = ["Real Metal rendering/presentation and unlock work on uke 24A446.", "Concurrent clients, CP preemption, teardown and persistent warm shader cache work on hardware."]
+limits = ["This is a host-built candidate. Historical iOS17 GPU results do not qualify this iPadOS27 stack.", "No frame-rate, long-run or restart acceptance has been measured; no flashing performed."]
+next_action = ["Use the paired candidate images and confirm real GPU rendering, presentation, multi-client scheduling and cache reuse."]
 evidence = [
-  { kind = "device", reference = "docs/GPU-PORT.md", result = "mode 9 passes with the kernel Metal publish (M ... s5/0 r1) and the user stream heartbeat F0 r3b/3b G0 q3 u0", command = "fastboot boot vendor_boot_uke_gpu_m9l.img", revision = "c77d613dc91fb54479242aa5d5902c48662b80d7" },
-  { kind = "host", reference = "proprietary-files.txt", result = "the gen71100 firmware triplet hashes match the board pins", command = "sha256sum .cache/firmware/uke-gpu/*", revision = "23c2926941405e7df8097a6bca6ee8348a39c787" },
+ { kind = "host", reference = "docs/GPU-IOS27.md", result = "Kernel/prelink, UEFI, Turnip ios27, Metal arm64e/4K signing and compressed payload builds passed; hardware pending.", command = "./unixnu build kernel; ./unixnu build firmware; ./unixnu build payload", revision = "c131dd44c1f5aff6538251cd22b950e546d90647" },
 ]
 
 [[area]]

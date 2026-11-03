@@ -511,10 +511,11 @@ KITS = ROOT / 'kits/uke'
 board_objects = []
 for stem, extra in [('CpuFreqProbe', ()),
                     ('TouchProbe', ('-I', str(ROOT / 'drivers/QcomGeniSpi'), '-I', str(ROOT / 'drivers/ShengNovatekTouch'))),
-                    ('DpuProbe', ())]:
+                    ('DpuProbe', ()),
+                    ('GpuPowerProbe', tuple(x for d in ('drivers/Adreno740', 'kits/ArmSmmu4K', 'kits/AdrenoFirmware', 'kits/AdrenoPM4', 'kits/Sm7675Platform', 'build/sheng-gmu', 'build/sheng-gpu-smmu') for x in ('-I', str(ROOT / d))))]:
     compile_cpp(KITS / (stem + '.cpp'), board_dir / (stem + '.o'), extra)
     board_objects.append(board_dir / (stem + '.o'))
-for stem in ('BootProcessProbe', 'BootUiTraceProbe', 'LegacyDisplayStubs'):
+for stem in ('UkeGpuExport', 'BootLatencyTrace', 'BootProcessProbe', 'BootUiTraceProbe', 'LegacyDisplayStubs'):
     compile_c(KITS / (stem + '.c'), board_dir / (stem + '.o'))
     board_objects.append(board_dir / (stem + '.o'))
 # Touch transport, protocol and the vendor firmware object generated from the device cache.

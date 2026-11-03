@@ -8,7 +8,7 @@
     "gmu_cgc_mode": "0x00020202",
     "preempt_record_bytes": "0x225000",
     "ubwc_version": 4,
-    "ubwc_swizzle": 3,
+    "ubwc_swizzle": 6,
     "highest_bank_bit": 16,
     "gpu_base": "0x3d00000",
     "gpu_size": "0x40000",
@@ -223,7 +223,7 @@
     "quirks": {
       "cached_coherent": true,
       "hw_apriv": true,
-      "preemption": false,
+      "preemption": true,
       "ifpc": false
     },
     "bcms": [
@@ -420,6 +420,7 @@
     "dt": "live uke DT dump (private physical evidence, hashes only)",
     "register_map": "pinned ianchb/sm8550-mainline 42f3b40c",
     "catalog": "public A732 patch; no device run",
-    "hardware_registers_observed": false
+    "hardware_registers_observed": false,
+    "preemption": "OEM gen7_11_0 adreno-gpulist.h at ed4ad0d1ad00b755af2fe61387dcc5397ad20b8f: ADRENO_PREEMPTION, ctxt_record_size=2196 KiB; hardware run pending"
   }
 }

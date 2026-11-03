@@ -14,7 +14,7 @@ commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 name = "sm7675"
 kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
-commit = "c4463748d52539cf9f95227f5a248ed31eb6e1ac"
+commit = "b6faf2282ea7a345b2d132c5274d572819f43036"
 local = "../UniXNU-sm7675-common"
 
 # Board-pinned component variants for the iPadOS 27 line: the canonical GPU and
@@ -25,24 +25,24 @@ local = "../UniXNU-sm7675-common"
 name = "Adreno740"
 kind = "driver"
 git = "https://github.com/UniXNU/Adreno740.git"
-# Upstream feat/ipados27-gpu-parity tip (2026-10-30).
-commit = "c0a2f392a49b7363b26811189cb62d7d0f9e4b8a"
+# Upstream main 6fa7bae plus gen7_11_0 hardware profile.
+commit = "8d50beceb38d9d020e16a65309c7fd8486d1fdaf"
 local = "../UniXNU/drivers/Adreno740"
 
 [[source]]
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
-# Upstream feat/ipados27-gpu-parity tip (2026-10-30): the CPU path's display backend.
-commit = "96046db8b09bd2440a6a6903343307defd97a039"
+# Upstream main e47c1b8 plus the qualified 24A446 requested-state fix.
+commit = "5137bbe9abf8175835898144089b5bff2166684d"
 local = "../UniXNU/drivers/GopFramebuffer"
 
 [[source]]
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/UniXNU/AdrenoMetal.git"
-# Upstream feat/ipados27-gpu-parity tip (2026-10-30); not built in the CPU milestone.
-commit = "278333f4a5c8c026dec8e8c277c741c0d909cc77"
+# Upstream main 243d63c, full iOS 27 frontend.
+commit = "887d48ec9f1da52caf6021d02a808fe0782f09b6"
 local = "../UniXNU/drivers/AdrenoMetal"
 
 [[source]]
@@ -64,3 +64,8 @@ commit = "24f1f3fbed6feff42e1ca02e2ce386a5c3c36da8"
 name = "ShengNovatekTouch"
 kind = "driver"
 local = "drivers/NativeNovatekTouch"
+
+[[source]]
+name = "Sm7675Platform"
+kind = "kit"
+local = "../UniXNU-sm7675-common/kits/Sm7675Platform"

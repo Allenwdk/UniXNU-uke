@@ -1773,3 +1773,8 @@ wrapper仅放在原__TEXT两个section之间60B零padding的前56B（0x1847ef484
 - 验收范围仅为用户此次确认的正常上划/不卡死；没有给出运行时长或覆盖的应用，不扩展为长时间、所有应用、跨重启或GPU加速验收。本轮只维护记录，未操作设备。
 
 本次合成卡死任务已按用户可见结果完成。后续从此基线继续其它功能与日常使用验证，不再把上划卡死列为当前未解决阻塞。
+
+
+## 2026-11-03: upstream-main iPadOS 27 GPU candidate
+
+See GPU-IOS27.md. Full host build and compressed paired-image candidate; hardware pending. CPU interactive rollback remains ca-surface-track. No flash or userdata reset performed.

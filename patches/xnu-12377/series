@@ -55,3 +55,7 @@ uke-owner-boot-set-recheck.patch
 
 # Read-only observation of the original user-client result and submitted sizes.
 uke-display-call-trace.patch
+
+zzzzzz-sheng-latency-trace.patch
+zzzzzzzz-sheng-exit-latency.patch
+zzzzzzzzz-sheng-unnest-trace.patch

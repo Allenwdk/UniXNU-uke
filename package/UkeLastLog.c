@@ -463,6 +463,8 @@ uke_last_log_writer(void *arg, wait_result_t result)
 static void
 uke_last_log_start(void)
 {
+	extern void uke_gpu_export_start(void);
+	uke_gpu_export_start();
 	uint32_t enabled = 0;
 	thread_t thread;
 

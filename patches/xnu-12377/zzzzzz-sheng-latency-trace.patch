@@ -1,0 +1,18 @@
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -922,6 +922,7 @@
+  *	Returns:
+  *		KERN_SUCCESS if exception is handled by any of the handlers.
+  */
++void (*sheng_user_fault_hook)(int, const int64_t *, unsigned);
+ int debug4k_panic_on_exception = 0;
+ kern_return_t
+ exception_triage(
+@@ -933,6 +934,7 @@
+ 	task_t   task   = current_task();
+ 
+ 	assert(codeCnt > 0);
++	if (__improbable(sheng_user_fault_hook != NULL)) sheng_user_fault_hook(exception, code, codeCnt);
+ 
+ 	if (VM_MAP_PAGE_SIZE(task->map) < PAGE_SIZE) {
+ 		DEBUG4K_EXC("thread %p task %p map %p exception %d codes 0x%llx 0x%llx\n",

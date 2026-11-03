@@ -623,3 +623,10 @@ def main():
 
 if __name__ == '__main__':
     main()
+    smmu_out = ROOT / 'build/sheng-gpu-smmu'
+    smmu_out.mkdir(parents=True, exist_ok=True)
+    (smmu_out / 'ShengGpuSmmuSource.h').write_text(
+        '#include <stdint.h>\n#define SHENG_GPU_SMMU_BASE UINT64_C(0x3da0000)\n'
+        '#define SHENG_GPU_SMMU_BYTES 0x40000u\n#define SHENG_GPU_SMMU_GPU_STREAMS 2u\n'
+        '#define SHENG_GPU_SMMU_ACTLR 0x32bu\n'
+        '#define SHENG_GPU_SMMU_GMU_SID 5u\nstatic const uint16_t sheng_gpu_smmu_sids[2]={0,1};\n')
