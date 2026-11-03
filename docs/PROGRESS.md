@@ -1778,3 +1778,33 @@ wrapper仅放在原__TEXT两个section之间60B零padding的前56B（0x1847ef484
 ## 2026-11-03: upstream-main iPadOS 27 GPU candidate
 
 See GPU-IOS27.md. Full host build and compressed paired-image candidate; hardware pending. CPU interactive rollback remains ca-surface-track. No flash or userdata reset performed.
+
+
+## 2026-11-03：Data-class 实机失败，图标服务崩溃已定位，Turnip 装载修正待真机
+
+用户反馈仍卡死、无桌面/设置图标，仅时钟三根指针；小组件只有一个相册出现。Data-class 不算功能通过。
+本次只读回读 tag `20261103-201642-gpu-render-failure`，新环 SHA `44fc101768cfe9140f87a2a559253abf9734de47109289d91b0e24c034246aa4`；160 新槽、1888 未变旧槽排除，尾部 371.026379s，触控心跳仍到 361.797769s。
+不能据用户“卡死”推断整个内核停止；当前环未见新 panic，界面卡死机制仍需下一轮定位。
+
+同 boot `AAB5DAA8-B5C0-422B-8BF3-C8422E6B8082` 的统一日志解析 2,294,448 条，选取 15,671 条；
+选取日志中未再找到前版的容器 Code72/Failed to set data protection class。此结果有解析范围限制，不称所有应用/容器均已验收。
+同 boot 真正的 `iconservicesagent-1970-01-01-080323.0002.ips`：pid406，incident `982CEC80-48D8-44E0-BB5C-B914E34BE861`，uptime190，连续崩溃4次。
+`com.apple.iconservices.cleanup` 532KiB 工作队列线程在 dyld `__chkstk_darwin_probe` 触发 `Thread stack size exceeded`/SIGBUS，FAR `0x16f22b1f0` 落入该线程4KiB guard。
+栈从 IconServices → IconRendering → RenderBox → MTLCreateSystemDefaultDevice → NativeAdrenoMetal → metal2vulkan `Device::system_default_with` → dlopen Turnip → dyld `withChainStarts`；尚未进入图标 GPU 绘制。
+
+旧签名 Turnip 使用 `LC_DYLD_INFO_ONLY`，无 `LC_DYLD_CHAINED_FIXUPS`，bind_size=430272、mappedSize=17448960。
+Apple dyld 的旧 arm64e 兼容分支在栈上临时分配 `bind_size + (mappedSize/4096)*2 + 512`，算得 **439304 字节**，与真实 IPS 的 x8=439304、x12=439312 精确一致。
+源码对应 [MachOAnalyzer::withChainStarts](https://github.com/apple-oss-distributions/dyld/blob/main/common/MachOAnalyzer.cpp)，本次读取副本保存在审计目录。
+这是直接证实的图标服务加载崩溃原因；不能据此保证已解释所有小组件空白或系统卡死。
+
+修正：core `a8dd110` 对 ios27 Turnip 链接显式加 `-Wl,-fixup_chains`，Meson 已有构建目录也显式更新参数。
+保留完整上游 Mesa/metal2vulkan 补丁、pin、PAC、渲染与缓存策略，不添加历史 copied.rs 或功能裁剪。
+Turnip 与插件正式重建、4KiB 签名；插件 CDHash 保持 `a259eef2e91b3d968de46d0c01238ab560b883db`，Turnip 新 CDHash `4c99a9d1bbd46b7d9ff05f4a611c62067fd9afaf`。
+最终 addon 内的签名库包含 `LC_DYLD_CHAINED_FIXUPS`，无旧 dyld info；4210 个签名页哈希与信任包匹配，原 IPSW trust 模块逐份保持。
+
+release `uke-port/releases/2026-11-03-ipados27-gpu-turnip-chains/` **已构建未刷**；boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`，vendor_boot SHA `896955d7570b660979befe12138e0832a39da1348cb54d526302d287a0e08502`，44859392B <96MiB。
+最终内核与 Data-class 一致，SHA `378a8c07deafad6cd49f13bf43a75b9b33ba8468e4b820a4f292635e255caf8c`，CRC **72D32647A9779337** 也相同，必须按 vendor_boot/addon SHA 区分版本。
+保留应用发布、Data 类别元数据兼容、原 Data seed；未清数据库或写设备 userdata。160MiB FAT 与标准UEFI压缩运输完成，一次压缩往返通过。
+当前设备为原厂四分区+active a+TWRP（取证用），新候选未部署。
+下一轮看桌面/设置完整图标、原应用打开、Photos 以外小组件以及持续交互；同 boot 再查图标服务是否还崩溃。卡死仍在则沿新现场继续定位，不提前称全部修复。
+证据目录 `uke-port/fixes/2026-11-03-ios27-gpu-render-failure/`，含只读 Data 快照、真实 IPS、解析索引、装载格式对比和 artifact-checks.json。
