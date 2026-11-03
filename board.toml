@@ -271,8 +271,8 @@ kernel_args = [
   # Existing upstream detail screen for the next root-preparation failure.
   # Board policy carried over from the 17.7.11 line.
   "sheng-lite=1",
-  # Publish the original OS staged applications and their WidgetKit extensions.
-  "owner-staged-apps=1",
+  # Staged apps and unencrypted Data metadata use the upstream board defaults
+  # in BootWatchdogPolicy.c; explicit boot arguments can override them.
   "sheng-aks=1",
   "sheng-disable-watchdogd=1",
   "sheng-smp=1",

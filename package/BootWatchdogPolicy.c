@@ -34,6 +34,10 @@ static const char lite_jobs[]=
  // obliteration is a data-wipe daemon with nothing to do here. IconServices stays enabled
  // as in current upstream: both system icons and widget resources need the real service.
  "com.apple.fairplayd.A2,com.apple.passd,com.apple.mobile.obliteration,";
+// Upstream board defaults are parsed after the command line (which wins).
+// The existing owner Data volume is unencrypted: retain the file-protection
+// class metadata callers set, using the already linked VFS compatibility path.
+char PE_builtin_boot_args[] = "owner-staged-apps=1 owner-dataprotect=1";
 static char policy[2048],jobs[200];
 volatile int sheng_watchdog_policy_status=-1;
 

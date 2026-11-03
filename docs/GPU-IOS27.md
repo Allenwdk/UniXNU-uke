@@ -221,3 +221,41 @@ boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`，ve
 证据：同release的`flash-result-20261103-195357.json`及匹配flash log。没有主机userdata写入；本次启动的原应用注册/禁用列表/缓存写入属于正常持久Data行为。
 设备已退出recovery并重启候选；真实预置app打开、桌面/设置图标及小组件渲染待用户验证。
 验收先看app是否不再需下载且能打开，再看图标和小组件；若panic拍首行/BT，若仍占位/空白保留新启动日志，不能用刷写成功称功能已修。
+
+## 2026-11-03：组合候选失败复核——应用发布成功，数据容器类别设置失败
+
+本次新环69条seq0..68，另1979槽与上一dump相同排除，末记录188.199309s；没有在这份新环看到内核panic。
+用户见卡死，仅据此不能确认内核停机、GPU挂起或界面服务阻塞。
+原始环/配对boot日志tag：20261103-195951-gpu-widgets-failure，证据在uke-port/fixes/2026-11-03-ios27-gpu-widgets-failure/。
+
+实际/Applications已经枚举MobileTimer/MobileCal/Weather，说明owner-staged-apps发布生效；
+实际disabled.plist也已无两条IconServices禁用项。前两个修正生效不等于应用注册完成或图标恢复。
+iconservicesagent124/341/354多次真实退出并重拉，但未在本次Data找到同boot独立IPS；旧backboardd报告已排除。
+
+同boot **59FF5F2A-3581-404A-AFD3-EC989C03DEC2** 的MobileInstallation日志有21条
+“Failed to set data protection class … MIContainerManagerErrorDomain Code72 UNSUPPORTED”，涉及应用/WidgetKit容器。
+VFS原F_SETPROTECTIONCLASS/F_GETPROTECTIONCLASS走VNOP_SETATTR/GETATTR；
+已链接的上游owner-dataprotect=1兼容实现通过xattr在未加密可写卷保存类别，但当前未启用。
+这是现在可直接接通的上游输入缺口，不声称它已经解释全部iconservices崩溃或卡死。
+
+新候选按上游PE_builtin_boot_args提供owner-staged-apps=1 owner-dataprotect=1；
+命令行仍可覆盖。保持原应用/信任链、Data seed、文件权限与sandbox，未启用加密或伪造硬件密钥。
+不清用户Data/小组件数据库；仅让原容器服务所设类别能按已有上游实现回读。
+当前设备为原厂四分区+TWRP；修正候选正式构建中，未刷。
+
+## 2026-11-03：未加密Data类别元数据候选已备，未刷
+
+release `uke-port/releases/2026-11-03-ipados27-gpu-data-class/`，预期CRC **72D32647A9779337**。
+按上游PE_builtin_boot_args提供`owner-staged-apps=1 owner-dataprotect=1`，显式命令行仍可覆盖；
+启用已经链接的VNOP_GETATTR/SETATTR xattr类别兼容实现，保留未加密卷事实，不改变文件权限、sandbox或信任链。
+应用发布与IconServices保持，GPU driver/plugin、原Data seed和owner trust保持，未清用户Data/WidgetKit配置。
+正式kernel/prelink/payload及一次压缩往返通过，missing2/stubbed24保持，命令行978B。
+boot `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`，vendor_boot `a5d93b473f70685d629d031b0a6d93379e279c58a2b90a11a7fe400d32ea9557`，44830720B；
+完整最终内核 `378a8c07deafad6cd49f13bf43a75b9b33ba8468e4b820a4f292635e255caf8c`。
+原始新环SHA `89c60be540835638fd9729786cbd2ff05a68874f366dbbdd4af6388479aa2e08`，69新槽/1979旧槽按上次dump排除；同boot59FF5F2A…解析2167188条。
+当前明确根因边界是容器类别设置Code72 UNSUPPORTED；**尚无这版图标/app/卡死修复效果证明**。
+图标服务的同boot独立IPS未保存，不能拿旧backboardd或旧17线iconservices报告补充成新根因。
+
+当前设备为原厂四分区+TWRP，留recovery；此候选未刷。验收先看原应用能否打开、图标是否出现，
+再看小组件与持续交互是否卡住；若仍失败需区分容器Code72是否消失和图标服务的真实失败。
+回退优先使用用户已确认“不panic”的SID0版（仍缺图标/应用），或已验收CPU版ca-surface-track。
