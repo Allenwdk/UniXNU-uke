@@ -25,8 +25,8 @@ local = "../UniXNU-sm7675-common"
 name = "Adreno740"
 kind = "driver"
 git = "https://github.com/UniXNU/Adreno740.git"
-# Upstream main 6fa7bae plus gen7_11_0 hardware profile.
-commit = "aefcb4dd002895c4452e6271d09e98ffad4b3965"
+# Upstream main 6fa7bae plus gen7_11_0 profile and bounded failure records.
+commit = "1858e770ef59f318d3381a6287db1a050d2055e6"
 local = "../UniXNU/drivers/Adreno740"
 
 [[source]]
@@ -41,8 +41,8 @@ local = "../UniXNU/drivers/GopFramebuffer"
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/UniXNU/AdrenoMetal.git"
-# Upstream main 243d63c, full iOS 27 frontend.
-commit = "887d48ec9f1da52caf6021d02a808fe0782f09b6"
+# Upstream main 243d63c plus conditional iOS 27 Core Image library retry.
+commit = "10a077a8b4de9b8333069089e808ab8ad2cba8bd"
 local = "../UniXNU/drivers/AdrenoMetal"
 
 [[source]]
