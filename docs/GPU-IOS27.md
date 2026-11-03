@@ -136,3 +136,13 @@ boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`；ve
 正式kernel/prelink/payload及一次压缩往返通过，missing2/stubbed24保持；addon/trust/Data seed不变。
 当前设备为**原厂boot/vendor_boot四分区+TWRP**，留在recovery；并非在运行旧GPU版，也未刷此候选。
 下一步当次授权后刷候选四分区，检查能否越过stream attach，再验GPU/桌面；若同点再异常需精确故障偏移。
+
+## 2026-11-03 19:26:55：SID0路由修正候选已刷入
+
+用户当次“刷吧”授权；8SHA通过，recovery b8a81f12经adb reboot bootloader，核product uke/is-userspace no及四个0x6000000分区。
+boot_a/vendor_boot_a/boot_b/vendor_boot_b均OKAY，set_active a及current-slot a回读成功，rebootOKAY，结束2026-11-03T19:27:02.659507+08:00。
+候选 `uke-port/releases/2026-11-03-ipados27-gpu-smmu-user/`，预期屏幕CRC **374A60FF5A4F1D52**。
+boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`；vendor_boot SHA `676c49b546854cc39a8d762ddba6fde652c0a0f921fe163728f2351fb8a01125`。
+证据同release的`flash-result-20261103-192655.json`及匹配flash log。未主机写userdata；运行后的Data/addon/cache写入遵循原持久机制。
+设备已退出TWRP并重启候选；实际越过stream attach、GPU呈现和桌面待用户验证，不能把刷写成功当panic已修。
+新panic拍首行/BT，重点比较是否仍在SMMU write32/attach；无panic测试上划/触摸。
