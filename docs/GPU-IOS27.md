@@ -92,3 +92,12 @@ not establish these results. GPU throughput/frame pacing has not been measured.
 The existing UKELLOG1 writer is preserved. Optional GPU cache exports use the
 upstream chunk transport over NativeUfs's existing bounded export region; the
 completed descriptor is recorded as `UKE GPU EXPORT` in the kernel log.
+
+## 2026-11-03 19:09:24–19:09:27：GPU main 已按当次授权刷入
+
+用户“设备在rec 刷吧”授权本次GPU候选。8项SHA通过；recovery b8a81f12经adb reboot bootloader进入bootloader；product uke、is-userspace no、四分区均0x6000000。
+boot_a/vendor_boot_a/boot_b/vendor_boot_b均OKAY，A槽回读为a，reboot OKAY；未写userdata分区。
+boot `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`；vendor_boot `88fbb144595130c7b5290960376c01f66c2227c917c51c283fea39e8ba0b88e5`。
+本次屏幕预期CRC **EC654707C10583A5**。fastboot对带AVB footer的紧凑vendor_boot自动发送98304KB，目标容量96MiB；日志完整保留。
+证据：`uke-port/releases/2026-11-03-ipados27-gpu-main/flash-result-20261103-190924.json`及匹配flash log、bootloader-transition-20261103-190904.json。
+实际启动、GPU渲染/呈现、触控上划、抢占和稳定性均待验；刷写成功不作为启动成功。已验收CPU版ca-surface-track保留回退。

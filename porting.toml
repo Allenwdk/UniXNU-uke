@@ -293,10 +293,11 @@ configuration = ["NATIVE_ADRENO enabled; per-process VM, preemption mode2, DCVS,
 procedure = ["Build kernel, UEFI, Turnip ios27, Metal ios27, addon/trust and payload; pack boot/vendor_boot.", "Only the compression round trip and required artifact/record checks; hardware tests follow delivery."]
 findings = ["OEM source supports preemption and a 2196 KiB record; historical candidate preemption=false is not a hardware limitation.", "Current 27-line GPU kernel/prelink and user-space builds pass; no current hardware GPU result is claimed."]
 completion = ["Real Metal rendering/presentation and unlock work on uke 24A446.", "Concurrent clients, CP preemption, teardown and persistent warm shader cache work on hardware."]
-limits = ["This is a host-built candidate. Historical iOS17 GPU results do not qualify this iPadOS27 stack.", "No frame-rate, long-run or restart acceptance has been measured; no flashing performed."]
+limits = ["This is a host-built candidate. Historical iOS17 GPU results do not qualify this iPadOS27 stack.", "No frame-rate, long-run or restart acceptance has been measured; four partitions flashed on 2026-11-03; actual boot/GPU pending."]
 next_action = ["Use the paired candidate images and confirm real GPU rendering, presentation, multi-client scheduling and cache reuse."]
 evidence = [
  { kind = "host", reference = "docs/GPU-IOS27.md", result = "Kernel/prelink, UEFI, Turnip ios27, Metal arm64e/4K signing and compressed payload builds passed; hardware pending.", command = "./unixnu build kernel; ./unixnu build firmware; ./unixnu build payload", revision = "c131dd44c1f5aff6538251cd22b950e546d90647" },
+ { kind = "device", reference = "docs/GPU-IOS27.md", result = "2026-11-03 19:09:27: four boot/vendor_boot flashes OKAY, slot a read back, reboot OKAY; actual boot and GPU pending. CRC EC654707C10583A5", command = "fastboot flash boot_a boot.img; fastboot flash vendor_boot_a vendor_boot.img; fastboot flash boot_b boot.img; fastboot flash vendor_boot_b vendor_boot.img; fastboot set_active a; fastboot reboot", revision = "0f436429f197779f72080076285468abda7948d3" },
 ]
 
 [[area]]
