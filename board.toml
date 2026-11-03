@@ -271,8 +271,8 @@ kernel_args = [
   # Existing upstream detail screen for the next root-preparation failure.
   # Board policy carried over from the 17.7.11 line.
   "sheng-lite=1",
-  # The GPU path needs IconServices; the legacy lite policy otherwise disables it.
-  "sheng-iconservices=1",
+  # Publish the original OS staged applications and their WidgetKit extensions.
+  "owner-staged-apps=1",
   "sheng-aks=1",
   "sheng-disable-watchdogd=1",
   "sheng-smp=1",

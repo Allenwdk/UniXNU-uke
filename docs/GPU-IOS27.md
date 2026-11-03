@@ -178,3 +178,36 @@ GPU addon、trust和原Data seed保持，payload正式构建和一次压缩往�
 
 审计`uke-port/fixes/2026-11-03-ios27-gpu-icons/`含原policy、上游对照、同boot报告、原始disabled.plist及回读清单。
 下一步验收桌面/设置图标；若仍缺，再查服务实际启动和Metal首个拒绝，不清空Data或重跑无关测试。
+
+## 2026-11-03：小组件与系统应用占位符调查
+
+用户补充：除设置以外应用显示需要手动下载且不能打开。当前24A446原OS镜像有52个完整staged_system_apps，
+包括时钟/日历/天气/地图及WidgetKit扩展；当前已刷参数没有owner-staged-apps=1，发布路径处于关闭。
+同boot93FF011F-553F-470A-AC00-37F23975F04F中chronod114、pkd178、WidgetRenderer_Default347实际已运行，
+禁用列表没有widget/chrono/PlugInKit标签。小组件不是直接被lite禁用。
+PlugInKit将Batteries、ScreenTime、GameCenter等内置appex拒绝为“不在所属应用内”；
+WidgetRenderer反复返回WidgetRendererErrorDomain/1。单条iokit-open-user-client拒绝日志也不能单独证明GPU权限失败，
+上游驱动有实际原检查结果采样后的服务/客户端grant，须区分记录和最终结果。
+解析5个tracev3共3803221条，当前boot2495322条，旧boot1307899条分开。选定事件在
+uke-port/fixes/2026-11-03-ios27-gpu-widgets/selected-widget-events.json；完整索引/只读Data在gpu-icons审计目录。
+
+修正采用已经链接的上游owner-staged-apps=1：在Data覆盖OS的/private/var之前，
+将原OS staged目录作为只读union发布到/Applications，原LaunchServices缓存刷新与bindfs_vget负责重新注册。
+不下载、不复制伪造app、不清Data或小组件数据库，不改应用代码/信任链/原插件限制。
+IconServices禁用条目按最新上游从lite策略移除，替代上一份只加sheng-iconservices=1的未刷候选；
+其余lite列表保持。两处均是已证实的输入/策略缺口，仍不能宣称所有小组件错误会由此一起消失。
+当前设备保持原厂四分区+TWRP；新组合候选构建中，未刷。
+
+## 2026-11-03：预置应用/小组件组合候选已备未刷
+
+release `uke-port/releases/2026-11-03-ipados27-gpu-widgets/`，CRC **7617327C1AD705CE**。
+修正：已有owner-staged-apps=1发布52个原OS应用/扩展；旧lite禁用图标服务逻辑按最新上游移除。
+上一份仅加sheng-iconservices=1的gpu-iconservices候选未刷，现由此版取代；不再需要该参数。
+正式kernel/prelink/payload和一次压缩往返通过，missing2/stubbed24保持，参数998B。
+boot保持原压缩loader，vendor_boot 44830720B，SHA `2bcddf06a514319bc8b23c0b766b17d9776c596a3d04e62bd726593ec49261fe`；
+完整最终内核SHA `3a5952693fb60c8b2b059e58f45f35537d17b3195ff25b7df1f4f579f5941756`。GPU插件/驱动、trust和原Data seed保持。
+当前设备留原厂四分区+TWRP；新候选**未刷，应用/小组件效果未验证**。
+
+验收：应用不再显示下载占位、时钟/日历/天气等能直接打开；桌面和设置图标正常；再看对应小组件内容是否显示及更新。
+天气等联网数据缺失与小组件完全不呈现分开判断。若仍有WidgetRendererErrorDomain/1或插件所属应用拒绝，
+取新boot对照服务/应用注册和渲染；不跳过原PlugInKit限制、不清小组件数据库来假装修复。
