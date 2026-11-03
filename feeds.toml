@@ -8,42 +8,35 @@ ref = "main"
 # (scripts/build-sheng-source-storage.py pins the same revision). 315 (e45fbe3) is the 17-line tree.
 commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 
-# The SM7675 (cliffs) SoC layer, shared with future boards. Local until the
-# repository is published; the commit pin replaces the local override then.
+# Shared SM7675 SoC layer, pinned to the published user-accepted source.
 [[source]]
 name = "sm7675"
 kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
-commit = "5464caaacaf41af29af79d6ada4c32f3527c78b3"
-local = "../UniXNU-sm7675-common"
+commit = "7f857a825a3c1f0882a50eaa824249c714d9679d"
 
-# Board-pinned component variants for the iPadOS 27 line: the canonical GPU and
-# input modules are the upstream feat/ipados27-gpu-parity tips; the GPU driver
-# stays out of the build (CPU rendering) but the display module supplies the
-# 24A446 legacy-display backend. The touch source stays the board's own fork.
+# Published iPadOS27 GPU pins: full upstream main plus the accepted uke
+# hardware/ABI fixes. Local development paths belong in ignored local.toml.
 [[source]]
 name = "Adreno740"
 kind = "driver"
-git = "https://github.com/UniXNU/Adreno740.git"
+git = "https://github.com/Allenwdk/NativeAdreno.git"
 # Upstream main 6fa7bae plus gen7_11_0 profile and bounded failure records.
-commit = "1858e770ef59f318d3381a6287db1a050d2055e6"
-local = "../UniXNU/drivers/Adreno740"
+commit = "22abfe46098e568fd0a66e1e358f021f2c0e964f"
 
 [[source]]
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
 # Upstream main e47c1b8 plus the qualified 24A446 requested-state fix.
-commit = "5137bbe9abf8175835898144089b5bff2166684d"
-local = "../UniXNU/drivers/GopFramebuffer"
+commit = "f3e29a2401cf1242b4e2eaf2b89ef2dd2fcacbaa"
 
 [[source]]
 name = "AdrenoMetal"
 kind = "driver"
-git = "https://github.com/UniXNU/AdrenoMetal.git"
+git = "https://github.com/Allenwdk/AdrenoMetal.git"
 # Upstream main 243d63c plus conditional iOS 27 Core Image library retry.
-commit = "10a077a8b4de9b8333069089e808ab8ad2cba8bd"
-local = "../UniXNU/drivers/AdrenoMetal"
+commit = "854f99a49e88febb52d4105baa88a4db4c27718b"
 
 [[source]]
 name = "ShengUfs"
@@ -64,8 +57,3 @@ commit = "24f1f3fbed6feff42e1ca02e2ce386a5c3c36da8"
 name = "ShengNovatekTouch"
 kind = "driver"
 local = "drivers/NativeNovatekTouch"
-
-[[source]]
-name = "Sm7675Platform"
-kind = "kit"
-local = "../UniXNU-sm7675-common/kits/Sm7675Platform"

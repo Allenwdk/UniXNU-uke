@@ -1,5 +1,22 @@
 # uke iPadOS 27 GPU candidate (2026-11-03)
 
+## 2026-11-03：当前27线GPU版本通过用户真机验收
+
+用户原话：“这版本上述问题都解决了 写文档然后推送到main吧”。本次确认对应22:31:33刷入的 `2026-11-03-ipados27-gpu-coreimage-resources`，CRC **90B6BC701210D9DB**。
+已解决此前报告的Apple标志无法进入系统、桌面/设置图标缺失和加载慢、小组件加载异常，以及设置中上划Dock/应用切换导致的界面服务重启。该版本成为当前27线GPU可交互基线；17线gpucomp49和27线CPU ca-surface-track保留作历史/应急回退。
+
+- boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`。
+- vendor_boot SHA `cd41b67e983f2d7032d78831a1efb929931f417a1b598346101625e6ed37e2b6`，44859392B。
+- 完整最终内核SHA `47202fe27876b4af9a9a21dfa8e715af02430888f3e47ed1702a71eb5b4ddda1`。
+- 核心修复：Turnip chained fixups、原应用发布与Data类别元数据、CoreImage原nil时的标准原库加载重试；正常抢占/VM/缓存/故障恢复保持。失败的全局VFS source-union实验已撤回，不在验收源码中。
+- GPU代码：Adreno740 `1858e770ef59f318d3381a6287db1a050d2055e6`，Metal `10a077a8b4de9b8333069089e808ab8ad2cba8bd`，GOP `5137bbe9abf8175835898144089b5bff2166684d`，SoC `5464caa`，UEFI `c2004da`。发布时新增文档/依赖指向提交，不改变已验收代码。
+
+验收依据是用户真机反馈；本次未重新读取修复后的日志/计数器，不把上游能力配置等同压力验证。精确帧耗时、长时间/多客户端压力、跨冷启动缓存复用仍待单独量测。
+证据：release内 `user-observation-success.json`、`manifest.json`、`flash-result-20261103-223133.json` 与匹配flash log。此前文档中“待验/未刷/无法进系统”均为历史阶段，以本节为当前结论。
+
+用户要求发布当前测试通过的代码到main。有分叉的目标远端main先原样保存到新分支，再以当前版本覆盖；能快进的直接推送，不把旧分叉源码合回已验收树。发布结果另记本次publish-result.json。
+
+
 This is a complete source/build candidate, not a hardware qualification. The
 interactive CPU rollback remains `2026-11-03-ipados27-ca-surface-track`.
 No flashing or device I/O was performed for this GPU candidate.
@@ -388,3 +405,8 @@ release `uke-port/releases/2026-11-03-ipados27-gpu-coreimage-resources/`，CRC *
 证据 `flash-result-20261103-223133.json` 与匹配flash log；未清Data，未主机写userdata。失败的resource-view仍标撤回，不再部署。
 设备已重启新定向修复，实际是否越过Apple标志、图标加载是否加快、设置上划Dock/应用切换是否respring仍待真机反馈；不把部署结果当bug已修证明。
 验收顺序：进桌面 → 桌面/设置完整图标首次加载 → 设置上划Dock与应用切换 → 约3分钟连续交互。失败保留本boot并回读NativeAdreno client/recovery；panic拍首行/BT。GPU DeviceLost底层原因与设置IOKit等待仍需实机结果。
+
+
+## main发布的源码获取
+
+本次源码依赖固定到用户仓可获取的版本：Adreno740（远端NativeAdreno）`22abfe4`、AdrenoMetal `854f99a`、GOP `f3e29a2`、SoC `7f857a8`；与验收二进制相比这些新增提交只更新README。原编译commit及镜像证据见 [版本记录](releases/2026-11-03-gpu-coreimage-resources.json)。全局VFS实验已撤回。设备feeds不再要求外部本地路径，工作区覆盖放在忽略的local.toml；SoC自带kits/Sm7675Platform自动发现。

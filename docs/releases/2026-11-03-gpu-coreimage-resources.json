@@ -1,0 +1,71 @@
+{
+  "device": "uke",
+  "os_profile": "ipados-27.0.1-24A446",
+  "release": "2026-11-03-ipados27-gpu-coreimage-resources",
+  "acceptance": {
+    "recorded_at": "2026-11-03T23:02:16.601532+08:00",
+    "original_user_message": "这版本上述问题都解决了 写文档然后推送到main吧",
+    "release": "2026-11-03-ipados27-gpu-coreimage-resources",
+    "kernel_crc": "90B6BC701210D9DB",
+    "boot_sha256": "2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328",
+    "vendor_boot_sha256": "cd41b67e983f2d7032d78831a1efb929931f417a1b598346101625e6ed37e2b6",
+    "kernel_final_sha256": "47202fe27876b4af9a9a21dfa8e715af02430888f3e47ed1702a71eb5b4ddda1",
+    "acceptance_basis": "Direct user hardware confirmation after the 22:31:33 flash",
+    "accepted": [
+      "Boot beyond Apple logo into system",
+      "Desktop and Settings icons display with prior loading issue resolved",
+      "Settings and upward Dock/app transition no longer show the reported UI-service restart",
+      "Previously reported blank widget/loading issues resolved within user-reported scope"
+    ],
+    "not_measured": [
+      "Instrumented frame-time and cold/warm load durations",
+      "Long-duration and multi-client stress",
+      "Cache reuse across repeated cold boots"
+    ],
+    "boot_uuid_after_fix": null,
+    "new_log_readback_after_acceptance": false
+  },
+  "built_sources": {
+    "core": "e528959d7288fffef05ee84f3a3c588a433cafd5",
+    "device": "c624e8f72433d0cba8e64fe9eed2ecbff1f7fbe6",
+    "soc": "5464caaacaf41af29af79d6ada4c32f3527c78b3",
+    "Adreno740": "1858e770ef59f318d3381a6287db1a050d2055e6",
+    "AdrenoMetal": "10a077a8b4de9b8333069089e808ab8ad2cba8bd",
+    "GopFramebuffer": "5137bbe9abf8175835898144089b5bff2166684d",
+    "UEFI": "c2004dade5bea5ea8172268c0f8294b1724cd133",
+    "ArmSmmu4K": "83969cd874503e65997ff7639f7dcf3d0a92cd17",
+    "AdrenoPM4": "282606b528b2595bc4274ea7490b62b323f35a5f",
+    "AdrenoFirmware": "20ad3d7aca14bd46aecab6335c780f5413fa054b",
+    "AirNir": "b356371a74cd158c2902f4886f373ebb0f833a36"
+  },
+  "published_dependencies": {
+    "Adreno740": "22abfe46098e568fd0a66e1e358f021f2c0e964f",
+    "AdrenoMetal": "854f99a49e88febb52d4105baa88a4db4c27718b",
+    "GopFramebuffer": "f3e29a2401cf1242b4e2eaf2b89ef2dd2fcacbaa",
+    "sm7675": "7f857a825a3c1f0882a50eaa824249c714d9679d"
+  },
+  "bootloader_pair": {
+    "boot_sha256": "2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328",
+    "vendor_boot_sha256": "cd41b67e983f2d7032d78831a1efb929931f417a1b598346101625e6ed37e2b6",
+    "kernel_sha256": "47202fe27876b4af9a9a21dfa8e715af02430888f3e47ed1702a71eb5b4ddda1",
+    "crc": "90B6BC701210D9DB"
+  },
+  "checks": {
+    "prelink_missing_exact_set_unchanged": true,
+    "prelink_stubbed_exact_set_unchanged": true,
+    "prelink_missing": 2,
+    "prelink_stubbed": 24,
+    "addon_and_trust_match_payload": true,
+    "final_signed_plugin_and_turnip_cdhash_match": true,
+    "final_signed_chained_fixups": true,
+    "signature_page_bytes": 4096,
+    "compression_roundtrip_verified": true,
+    "raw_FAT_bytes": 167772160,
+    "vendor_boot_bytes": 44859392,
+    "kernel_crc": "90B6BC701210D9DB",
+    "kernel_sha256": "47202fe27876b4af9a9a21dfa8e715af02430888f3e47ed1702a71eb5b4ddda1",
+    "hardware_tested": false
+  },
+  "withdrawn_release": "2026-11-03-ipados27-gpu-resource-view",
+  "qualification": "Publication changes documentation and reachable dependency refs only; runtime sources match the user-accepted build."
+}

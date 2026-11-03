@@ -4,7 +4,7 @@ schema_version = 1
 name = "uke"
 soc = "SM7675"
 os_profile = "ipados-27.0.1-24A446"
-summary = "Uke iPadOS27: ca-surface-track user confirms normal upward-swipe entry without freeze. Original SW IOSurface factory now registers non-NULL results via original track_surface; NULL/retain/PAC/assert preserved. Current CPU-rendered interactive baseline release2026-11-03-ipados27-ca-surface-track, final988d162c, vendor150b5c06, CRC0485290E96ACC9B3. User report saved; duration/app coverage/cross-reboot/GPU not inferred."
+summary = "Uke iPadOS27/24A446 GPU baseline CRC90B6BC701210D9DB: user confirms prior boot, icon/widget loading, Settings and Dock UI-restart symptoms resolved. No instrumented latency, long-run concurrency or repeated-cold-boot cache measurements inferred. See docs/GPU-IOS27.md."
 
 [[area]]
 id = "configuration"
@@ -285,16 +285,16 @@ evidence = [
 
 [[area]]
 id = "gpu"
-status = "host-verified"
+status = "device-verified"
 components = ["Adreno740", "AdrenoMetal", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "Sm7675Platform", "Sm8550Platform", "AirNir"]
 paths = ["board.toml", "scripts/prepare-uke-gmu.py", "scripts/build-adreno740-kits.py", "package/GpuPowerProbe.cpp", "docs/GPU-IOS27.md"]
 inputs = ["Real 0x43030b00/gen7_11_0, pinned gen71100 firmware, OEM DT and OEM gen7_11_0 source ed4ad0d1ad00.", "Upstream main Adreno740 6fa7bae, Metal 243d63c, GOP e47c1b8; existing 24A446 OS/SystemOS and immutable Data seed."]
 configuration = ["NATIVE_ADRENO enabled; per-process VM, preemption mode2, DCVS, BGRA8/SYSMEM and upstream transient GMEM policy.", "160 MiB raw FAT with standard UEFI compression; paired uke UEFI required."]
 procedure = ["Build kernel, UEFI, Turnip ios27, Metal ios27, addon/trust and payload; pack boot/vendor_boot.", "Only the compression round trip and required artifact/record checks; hardware tests follow delivery."]
-findings = ["OEM source supports preemption and a 2196 KiB record; historical candidate preemption=false is not a hardware limitation.", "User confirms SID0 candidate no longer panics, observes30-90fps; desktop and Settings icons missing. No instrumented performance acceptance."]
+findings = ["Real gen7_11_0 GPU stack preserves upstream features and uses original OS resources. Turnip chained fixups avoids prior dyld stack overflow; scoped CoreImage nil-result library retry is present.", "On CRC90B6BC701210D9DB the user confirms all previously reported boot/icon/widget/Settings/Dock UI-restart symptoms resolved. Device result, not just flash transport."]
 completion = ["Real Metal rendering/presentation and unlock work on uke 24A446.", "Concurrent clients, CP preemption, teardown and persistent warm shader cache work on hardware."]
-limits = ["This is a host-built candidate. Historical iOS17 GPU results do not qualify this iPadOS27 stack.", "No frame-rate, long-run or restart acceptance has been measured; four partitions flashed on 2026-11-03; actual boot/GPU pending."]
-next_action = ["Scoped CoreImage original-nil standard-library retry CRC90B6BC701210D9DB flashed2026-11-03 22:31:33 under explicit 刷入新修复版. Four flashes/current-slot a/reboot OKAY; no old rollback. Verify beyond Apple logo, full icons and latency, Settings upward Dock/app switching/3min interaction. Actual DeviceLost/Settings IOKit root causes remain unqualified; recover fresh NativeAdreno client/recovery reasons if failure."]
+limits = ["Acceptance is the user's direct report on the exact flashed image; no fresh post-fix logs or instrumented frame-time figures were collected this turn.", "Long-run multi-client stress and cache reuse across repeated cold boots remain independently unmeasured."]
+next_action = ["Maintain CRC90B6BC701210D9DB as the accepted GPU27 interactive baseline; publish the tested source and reachable pins to main. Future performance/concurrency/reboot-cache measurements are separate work; keep the failed source-union VFS experiment reverted."]
 evidence = [
  { kind = "host", reference = "docs/GPU-IOS27.md", result = "Kernel/prelink, UEFI, Turnip ios27, Metal arm64e/4K signing and compressed payload builds passed; hardware pending.", command = "./unixnu build kernel; ./unixnu build firmware; ./unixnu build payload", revision = "c131dd44c1f5aff6538251cd22b950e546d90647" },
  { kind = "device", reference = "docs/GPU-IOS27.md", result = "2026-11-03 19:09:27: four boot/vendor_boot flashes OKAY, slot a read back, reboot OKAY; actual boot and GPU pending. CRC EC654707C10583A5", command = "fastboot flash boot_a boot.img; fastboot flash vendor_boot_a vendor_boot.img; fastboot flash boot_b boot.img; fastboot flash vendor_boot_b vendor_boot.img; fastboot set_active a; fastboot reboot", revision = "0f436429f197779f72080076285468abda7948d3" },
@@ -314,6 +314,7 @@ evidence = [
  { kind = "device", reference = "docs/GPU-IOS27.md", result = "resource-view user reports Apple-logo boot failure. New88 CRC-valid ring records/1960 old excluded;bootDC81CB84 parsed2503065 entries. launchd Early boot83.933s,lsd99 high94pct CPU, kernel/Touch continues226.736s; actual lsd loop not proven. Broad changes reverted. User rejects rollback-only result; old image not flashed, stock four/TWRP retained for capture.", command = "Read-only recovery ring/Data capture and sameboot trace parsing", revision = "0a22d26034642e6c4698783d6b1295ec89bb6c56" },
  { kind = "host", reference = "docs/GPU-IOS27.md", result = "New scoped iOS27 CI original-nil standard-library retry compiled with original retained-return ABI; runtime/pins/features unchanged. Kernel1858e77 persists bounded failures; Metal10a077a signed with matching trust. Formal kernel/plugin/payload pass,missing2/stubbed24 exact unchanged;one compression roundtrip,160MiB FAT, vendor_boot44859392B. CRC90B6BC701210D9DB; unflashed, actual icon latency/Dock/Settings outcomes unqualified.", command = "./unixnu build kernel; python3 scripts/build-adreno-metal-plugin.py --target ios27 --no-replay; ./unixnu build payload", revision = "10a077a8b4de9b8333069089e808ab8ad2cba8bd" },
  { kind = "device", reference = "docs/GPU-IOS27.md", result = "Scoped CI repair CRC90B6BC701210D9DB four boot/vendor_boot flash OKAY/current-slot a/reboot OKAY at2026-11-03 22:31:33 under explicit new-repair authorization. Two SHA/uke/nonuserspace/four96MiB bounds pass; Data FUSE unmounted/no host userdata write. Boot/icons/Dock/Settings effects pending; no old rollback executed.", command = "python3 uke-port/fixes/2026-11-03-ios27-gpu-coreimage-resources/flash.py", revision = "10a077a8b4de9b8333069089e808ab8ad2cba8bd" },
+ { kind = "device", reference = "docs/GPU-IOS27.md", result = "User explicitly confirms all prior reported symptoms resolved on the exact CRC90B6BC701210D9DB build flashed22:31:33: boot beyond Apple, desktop/Settings icons and widgets load, Settings upward Dock/app interaction no longer causes the reported UI restart. vendor_bootcd41b67e. No extra long-run/frame-time/reboot-cache coverage inferred.", command = "User hardware feedback after flash-result-20261103-223133.json; record user-observation-success.json", revision = "10a077a8b4de9b8333069089e808ab8ad2cba8bd" },
 ]
 
 [[area]]
