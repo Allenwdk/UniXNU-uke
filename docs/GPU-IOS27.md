@@ -361,3 +361,30 @@ release `uke-port/releases/2026-11-03-ipados27-gpu-resource-view/`，屏幕预�
 证据同release的 `flash-result-20261103-212112.json` 和匹配flash log；未主机写userdata，未清Data。没有增加宿主/QEMU测试轮次。
 设备已退出recovery并重启修正版；真实图标加载、设置IOKit等待、Dock respring与持续交互效果仍待用户反馈，刷写成功只代表部署通过。
 验桌面/设置图标加载速度，设置中上划Dock/切换应用，以及约3分钟连续交互；respring保留新boot日志，panic拍首行与BT。
+
+
+## 2026-11-03：resource-view实机回归已撤回；继续交付定向CoreImage修复
+
+用户反馈resource-view版CRC ED9AFCA7B8824CBE卡Apple标志、无法进入系统；该release已标withdrawn/do_not_flash，不能再作为可用候选。用户明确拒绝“仅回退能开机”作为任务结果，要求继续修bug。**没有刷回旧GPU镜像，设备分区仍是取证时恢复的原厂boot/vendor_boot四份**；本轮未刷新的实验候选。
+
+已保存新环tag `20261103-212731-gpu-resource-regression`，SHA `42cbd5b2062f9aae499517bcccf7ceefab80c78dab773eb99b6c29f20615a6bb`，88新CRC有效槽/1960未变旧槽排除；新boot `DC81CB84-E8B0-450E-A446-C4E12B9C2BA2`统一日志解析2,503,065条。launchd在83.933158s完成Early boot，backboardd实际swap1..3接受；内核触控/看门狗到226.736525s仍推进。lsd99线程602最近约94% CPU、累计102.695926s（内核91.677806s），系统应用扫描264个/CoreServices22个；**这不是内核未启动，也不能仅凭高CPU证明具体死循环位置**。新boot未找到独立崩溃IPS；旧lsd模拟报告按boot排除。Data只读快照已保存，未主机写userdata。
+
+撤回core VFS改动 `0a22d26`、组合后台策略/板级观测 `a89c607`。core的patch/profile/scripts与原chains底座保持，新增修复不再改变全局VFS语义或后台策略；“source-union缺口就是全部图标问题”的前述因果判断未获实机证实，现明确作失败假设。
+
+新定向实现（Metal `10a077a8b4de9b8333069089e808ab8ad2cba8bd`）：保留原CoreImage `internalLibraryWithName:device:` 结果；仅iOS27、本前端设备、原nil、8个已知CI原库名时，从标准框架路径通过原 `newLibraryWithURL:error:`重试。保持原helper直接返回newLibrary结果的+1所有权；nil/真实错误继续传递，成功不伪造。不改CoreImage二进制、不复制资源。
+内核 `1858e770ef59f318d3381a6287db1a050d2055e6` 只在真实恢复时落盘已有fence/restart/fault结果，原marker NUL结束时保留有界拒绝摘要；正常调度/抢占/VM/恢复路径不变。**这为Dock DeviceLost保留原因，不称底层GPU故障已修**。设置IOKit quiesce超时也仍未证明已解决。
+
+release `uke-port/releases/2026-11-03-ipados27-gpu-coreimage-resources/` **完整构建未刷**，CRC **90B6BC701210D9DB**；vendor_boot `cd41b67e983f2d7032d78831a1efb929931f417a1b598346101625e6ed37e2b6`、44859392B；最终内核 `47202fe27876b4af9a9a21dfa8e715af02430888f3e47ed1702a71eb5b4ddda1`。core `e528959d7288fffef05ee84f3a3c588a433cafd5`，设备pin `c624e8f72433d0cba8e64fe9eed2ecbff1f7fbe6`。插件CDHash `a461aff051a2cd13bfedfd1264b7009d5c2b101e`，Turnip `4c99a9d1bbd46b7d9ff05f4a611c62067fd9afaf`；匹配owner trust与原Data seed保持。
+正式kernel/ios27插件/payload通过，missing2/stubbed24精确集合不变，最终签名输入/chained fixups、160MiB FAT与一次UEFI压缩往返/镜像容量通过；未增加多轮宿主/QEMU渲染测试。
+最新连接检查adb/fastboot均未枚举；最后受控状态为active a+原厂四分区+TWRP。新修复没有刷写授权/部署结果。下一步接回设备并按当次授权刷新版，验越过Apple、完整图标加载、设置上划Dock、切换应用与持续交互；再用真实CI recovered/refused和GPU恢复原因继续修，而非以“能开机”结题。
+证据 `uke-port/fixes/2026-11-03-ios27-gpu-coreimage-resources/`（构建/打包），`uke-port/fixes/2026-11-03-ios27-gpu-resource-regression/`（原始环、Data、统一日志与analysis.json）。
+
+
+## 2026-11-03 22:31:33：CoreImage定向原库修复版已刷
+
+用户通过“刷入新修复版”明确授权本次候选（并非旧版回退）。设备recovery b8a81f12已接回，Data只读FUSE卸载后adb reboot bootloader；boot/vendor_boot两SHA、product uke/is-userspace no、四96MiB容量确认通过。
+boot_a/vendor_boot_a/boot_b/vendor_boot_b均OKAY，A槽回读a，rebootOKAY，结束 `2026-11-03T22:31:41.284460+08:00`。
+release `uke-port/releases/2026-11-03-ipados27-gpu-coreimage-resources/`，CRC **90B6BC701210D9DB**；vendor_boot SHA `cd41b67e983f2d7032d78831a1efb929931f417a1b598346101625e6ed37e2b6`，44859392B。
+证据 `flash-result-20261103-223133.json` 与匹配flash log；未清Data，未主机写userdata。失败的resource-view仍标撤回，不再部署。
+设备已重启新定向修复，实际是否越过Apple标志、图标加载是否加快、设置上划Dock/应用切换是否respring仍待真机反馈；不把部署结果当bug已修证明。
+验收顺序：进桌面 → 桌面/设置完整图标首次加载 → 设置上划Dock与应用切换 → 约3分钟连续交互。失败保留本boot并回读NativeAdreno client/recovery；panic拍首行/BT。GPU DeviceLost底层原因与设置IOKit等待仍需实机结果。
