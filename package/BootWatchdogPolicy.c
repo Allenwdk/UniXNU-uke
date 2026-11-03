@@ -31,13 +31,18 @@ static const char lite_jobs[]=
  "com.apple.findmy.findmybeaconingd,com.apple.familycircled,com.apple.financed,com.apple.softwareupdateservicesd,"
  "com.apple.ndoagent,com.apple.biomesyncd,com.apple.email.maild,com.apple.amsengagementd,com.apple.adid,com.apple.eyereliefd,"
  // Crash or respawn loops seen on hardware (int-176): fairplayd.A2 is KeepAlive and exits at once (22 launches in 6 minutes), passd crashes,
- // obliteration is a data-wipe daemon with nothing to do here. IconServices stays enabled
- // as in current upstream: both system icons and widget resources need the real service.
- "com.apple.fairplayd.A2,com.apple.passd,com.apple.mobile.obliteration,";
+ // obliteration is a data-wipe daemon with nothing to do here. iconservicesagent also dies in CI::GLContext::init, but disabling it leaves
+ // the icons missing (seen on hardware), so it stays enabled. coreduetd keeps one thread above 50 % of a core for the whole boot
+ // (the kernel's "burning CPU" report in i480 to i556), holding a big core and the P domain at its top clock.
+ "com.apple.fairplayd.A2,com.apple.passd,com.apple.mobile.obliteration,com.apple.coreduetd,"
+ // Advice and statistics services with nothing to advise on here (untagged-3f2bd680: PerfPowerServices alone held 1.8 of 7 CPUs while it
+ // wrote its power database, BackgroundShortcutRunner 0.3 to 0.5 all boot, duetexpertd 0.17 in Safari). Temporarily disabled to measure.
+ "com.apple.PerfPowerServices,com.apple.PerfPowerServicesExtended,com.apple.perfpowermetricd,com.apple.siriinferenced,"
+ "com.apple.siriknowledged,com.apple.siriactionsd,com.apple.duetexpertd,com.apple.modelcatalogd";
 // Upstream board defaults are parsed after the command line (which wins).
 // The existing owner Data volume is unencrypted: retain the file-protection
 // class metadata callers set, using the already linked VFS compatibility path.
-char PE_builtin_boot_args[] = "owner-staged-apps=1 owner-dataprotect=1";
+char PE_builtin_boot_args[] = "owner-staged-apps=1 owner-dataprotect=1 sheng-disable-jobs=com.apple.cameracaptured";
 static char policy[2048],jobs[200];
 volatile int sheng_watchdog_policy_status=-1;
 
