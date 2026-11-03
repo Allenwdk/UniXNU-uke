@@ -146,3 +146,35 @@ boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`；ve
 证据同release的`flash-result-20261103-192655.json`及匹配flash log。未主机写userdata；运行后的Data/addon/cache写入遵循原持久机制。
 设备已退出TWRP并重启候选；实际越过stream attach、GPU呈现和桌面待用户验证，不能把刷写成功当panic已修。
 新panic拍首行/BT，重点比较是否仍在SMMU write32/attach；无panic测试上划/触摸。
+
+## 2026-11-03：图标缺失定位与IconServices候选
+
+用户确认SID0版“不panic”，观察30–90帧；桌面/设置图标均不显示。按用户反馈记录本次交互和panic消失，不扩展为性能测量或完整GPU验收。
+
+### 实机证据
+
+- 本次环280条新记录seq0..279，其余1768槽与上次逐槽相同排除；末行609.450951s，未见新panic。
+- 原始环`reference/logs/ukelog/ukelog-20261103-193902-gpu-icons.bin`，SHA `5f141a510bf6d5d2071b2a518c4948edda3189d089087dc56d7c36b6ff689246`；同tag boot解码已去旧槽。
+- Data只读快照generation2、2887207已写页，传输11826360320B；seed身份588bd73f…不变。主机未写userdata。
+- Data原始`/private/var/db/com.apple.xpc.launchd/disabled.plist`两标签
+  `com.apple.iconservicesagent=true`、`com.apple.iconservices.iconservicesagent=true`，审计`disabled-observed.plist`。
+- 最新内核实际链接的旧BootWatchdogPolicy，在sheng-lite=1且缺sheng-iconservices=1时加入这两条；
+  当前999B前的参数串978B确实缺该开关。最新sheng main ba66a66明确已让图标服务保持启用。
+- 同boot `93FF011F-553F-470A-AC00-37F23975F04F`、24A446的Preferences/DockFolderViewService/lsd报告
+  记录“Failed to get the icon cache path”。这些是header is_simulated=1/bug_type308的os_fault，**不当作进程退出**。
+- 被环目录反复列出的iconservicesagent-080240.0004.ips实际是21H461，排除为旧17线报告。
+
+这是当前可直接修正的服务禁用缺口；GPU纹理/编译问题并未由这次日志证实。
+
+### 修正与交付
+
+仅在板级参数加已有`sheng-iconservices=1`，原policy每次boot用O_TRUNC重写禁用列表，
+移除两标签后由原launchd启动真实服务。不手改Data、造缓存或禁用sandbox，不重编GPU。
+候选`uke-port/releases/2026-11-03-ipados27-gpu-iconservices/`已打包**未刷**，参数999B（<1000）；
+boot/完整最终kernel与SID0版逐字节保持，CRC仍 **374A60FF5A4F1D52**，因此CRC不能区分本次配置。
+vendor_boot SHA **0eaefe1d35722ae1242ed2555a7ccd3a62fba7b65aee7c58822ea697ba35cc1c**，44830720B；
+GPU addon、trust和原Data seed保持，payload正式构建和一次压缩往返通过。
+当前设备是临时原厂boot/vendor_boot四分区+TWRP，停留recovery；本修正真实图标效果待用户后续授权刷入验证。
+
+审计`uke-port/fixes/2026-11-03-ios27-gpu-icons/`含原policy、上游对照、同boot报告、原始disabled.plist及回读清单。
+下一步验收桌面/设置图标；若仍缺，再查服务实际启动和Metal首个拒绝，不清空Data或重跑无关测试。
