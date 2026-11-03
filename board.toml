@@ -16,8 +16,8 @@ kit = "uke"                      # the package/ of this repository appears as ki
 [components]
 include = [
   "ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState",
-  "GopFramebuffer", "QcomGeniSpi", "ShengNovatekTouch",
-  "ShengUfs", "VirtioMmioBlock", "RamBlock", "VerifiedRoot",
+  "GopFramebuffer", "QcomGeniSpi", "ShengNovatekTouch", "ShengHidInput",
+  "ShengUfs", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "SoftwareAES",
 ]
 
 # The target OS image comes from the `ipados-27.0.1-24A446` profile (iPad17,3 / J820AP,
@@ -30,10 +30,12 @@ include = [
 first_lba = 0x2d3000
 last_lba = 0x3b147fa
 lba_bytes = 4096
-# The OS root only: the 24A446 policy signs the OS image, and the profile marks SystemOS optional. The
-# hash table rides as the OS.vroot data object (--object OS.vroot=<policy>/manifest.bin).
+# ShengUfs requires distinct OS and SystemOS windows; both are present in 24A446.
+# Raw hash tables only: --object OS.vroot=<OS>/manifest.bin:544 and SystemOS.vroot=<SystemOS>/manifest.bin:544.
+# The signed 544-byte headers travel separately as kernel.macho.vroot.
 windows = [
   { name = "OS", component = "OS" },
+  { name = "SystemOS", component = "Cryptex1,SystemOS" },
 ]
 
 [kernel]
@@ -55,15 +57,18 @@ archives = [
   "component:ArmCpu",
   "build-libpthread-kernel.py",
   "component:AppleKeyStoreState",
+  # Reuse full SoftwareAES; the next builder qualifies the actual 24A446 PAC/size ABI.
+  "component:SoftwareAES",
+  "build-software-aes-27.py",
   # Source storage: ShengUfs against the public IOStorageFamily, the Data RAM block and the verify target.
   "component:VirtioMmioBlock",
   "component:ShengUfs",
   "component:RamBlock",
-  # The 24A446 prelink matches calls against a symbol-bearing RELEASE build of the same source.
-  "build-fileset-reference-27.py",
-  # The owned display backend and its probes; the HID source driver waits for the DriverKit HID headers
-  # (weak stubs stand in until then).
+  # Compile the source HID adapter before binding it to the original 24A446 IOHIDDevice.
+  "component:ShengHidInput",
+  # Upstream fixed-address display/HID adapters are relocated by XnuPrelink.
   "build-native-legacy-display-27.py",
+  # Match the stripped Apple kernel against the real upstream RELEASE/LTO reference.
 ]
 
 # Adreno 732 (uke) board values for the native GPU driver. The driver carries
@@ -133,6 +138,14 @@ sha256 = "1294992888e8c7c7fcd8a6d0a672cc666eff3c95e666ce5840db7e03edcc500d"
 # the `ipados-27.0.1-24A446` profile: the 24A446 kernelcache is an MH_FILESET with stripped symbols,
 # so the profile's XnuPrelink emitter and fileset-reference path apply instead of the 21H461 values.
 
+# Use the content-pinned Apple-clang RELEASE/LTO comparison from Actions run
+# 41449626495. Rebuild that reference when its XNU/SDK/archive inputs change.
+[kernel.prelink]
+# Owner-authenticated SystemOS startup replaces Apple-hardware Ignition preparation.
+# Retain Image4 code as a dependency; do not start its hardware-key service.
+roots = ["com.apple.AppleFSCompression.AppleFSCompressionTypeZlib", "com.apple.driver.AppleARMPlatform", "com.apple.driver.AppleARMWatchdogTimer", "com.apple.driver.AppleAudioClockLibs", "com.apple.driver.AppleEffaceableStorage", "com.apple.driver.AppleIISController", "com.apple.driver.AppleM2ScalerCSCDriver", "com.apple.driver.AppleMobileFileIntegrity", "com.apple.driver.ApplePMGR", "com.apple.driver.IODARTFamily", "com.apple.filesystems.apfs", "com.apple.iokit.CoreAnalyticsFamily", "com.apple.iokit.IOAVFamily", "com.apple.iokit.IOAudio2Family", "com.apple.iokit.IOCECFamily", "com.apple.iokit.IOCryptoAcceleratorFamily", "com.apple.iokit.IOGPUFamily", "com.apple.iokit.IOHDCPFamily", "com.apple.iokit.IOMobileGraphicsFamily", "com.apple.iokit.IOReportFamily", "com.apple.iokit.IOSlowAdaptiveClockingFamily", "com.apple.iokit.IOStorageFamily", "com.apple.iokit.IOSurface", "com.apple.kec.Libm", "com.apple.kec.corecrypto", "com.apple.kext.AppleMatch", "com.apple.kext.CoreTrust", "com.apple.security.AppleImage4", "com.apple.security.sandbox", "com.apple.iokit.IOHIDFamily", "com.apple.iokit.IOHIDEventDriver"]
+extra_args = ["--fileset-reference", "build/xnu/fileset-reference-apple/2f9eabe43241bb9b64d367151d79d660e81e3ec7fee8399c3f37a0f5ba3b5aa8.macho", "--allow-missing"]
+
 [firmware]
 config = "uke"                   # Resources/Configs/uke.toml in the Mu-Silicium checkout (--uefi)
 dsc = "Platforms/Xiaomi/ukePkg/uke.dsc"
@@ -165,19 +178,38 @@ BUILDID_STRING = "uke-research"
 # The ramdisk of the boot image: a FAT volume with the UniXNU config, the kernel, its device tree and
 # the optional trust cache and Data seed. The loader (DarwinBoot) is part of the firmware volume.
 [payload]
+# Exact original 24A446 StaticTrustCache + SystemTrustCache modules.
+# Original modules remain byte-for-byte; the historical 21H461 owner bundle is not an input here.
+trust_cache_sha256 = ["dc655bcb2ddfaea214f9ec83659b3fc8d8b658bafac2b5a004fb4179a25c89bf"]
 volume = "UKEESP"
 # The 24A446 fileset kernel is ~91 MiB; the stock vendor_boot partition is 96 MiB, so the FAT volume
 # sits near the ceiling (payload + DTB + table must stay under it).
 size_mib = 94
+# Historical FAT geometry/split workarounds are retained for this diagnostic to avoid changing
+# multiple boot inputs. The old 65,536-cluster truncation explanation was withdrawn after the
+# ABL initrd/DXE heap overlap review; see docs/status/initrd-lifetime-review-2026-11-02.md.
 loader = "firmware"
 title = "uke first boot: source 4K XNU to console"
 dram_size = "0x240000000"            # XNU VM DRAM: the full 9 GiB high range (0x8C0000000-0xB00000000)
 dram_base = "0x8C0000000"            # high DRAM range 0x8C0000000-0xB00000000; the ADT writes /chosen/dram-base
 skip_setup_tool = "scripts/seed-data-skip-setup.py"   # used by --skip-setup
-panic_screen = false
+# On: the panic screen draws a panic that happens before the video console exists. Every panic before
+# this was invisible on uke (no UART); the screen costs one text cave in the kernel image.
+panic_screen = true
 # The signed root-policy bundle (build-sheng-source-storage.py): with XNU_SOURCE_STORAGE_TABLES=userdata only the
 # 544-byte headers travel here as kernel.macho.vroot; the hash tables live in the userdata image as OS.vroot.
 root_policies = "{tree}/build/sheng-source-storage/root-policies.bin"
+# 24A446 CPU compositor: register IOSurface-backed SW surfaces through the original
+# Context::track_surface before the first push. Original bytes must match; the
+# signature validator and original factory/NULL/retain/PAC paths remain in use.
+text_fixups = [
+  "dyld_shared_cache_arm64e.01,42c8718,7f2303d5f85fbca9f65701a9f44f02a9,7f2303d55a9b0414f65701a9f44f02a9",
+  "dyld_shared_cache_arm64e.01,43ef484,00000000000000000000000000000000,f37bbfa9f30300aa9e0000107f2303d5",
+  "dyld_shared_cache_arm64e.01,43ef494,00000000000000000000000000000000,f85fbca9a264fb17c00000b4e10300aa",
+  "dyld_shared_cache_arm64e.01,43ef4a4,00000000000000000000000000000000,e00313aaf30301aa7f68f497e00313aa",
+  "dyld_shared_cache_arm64e.01,43ef4b4,0000000000000000,f37bc1a8ff0f5fd6",
+]
+
 # No owner-built Metal addon in the iPadOS 27 CPU-rendering path: the payload carries no
 # kernel.macho.gpuaddon and the kernel args below never enable the Metal device.
 kernel_args = [
@@ -186,7 +218,10 @@ kernel_args = [
   "debug=0x14e",
   # uke has no UART: kprintf goes to the framebuffer video console.
   "-enable_kprintf_spam",
+  # Show XNU text; kprintf enqueues rather than drawing with interrupts masked.
   "-uketextconsole",
+  "-ukedeferredconsole",
+  "uke-ignition-trace=1",
   "kt_fixed_zones=120",
   # Legacy display family (GopFramebuffer): CPU composition, GOP/DPU presentation.
   "offline-legacy-register=1",
@@ -197,12 +232,14 @@ kernel_args = [
   "offline-legacy-transfer=1",
   "offline-legacy-cpu-present=1",
   "offline-legacy-phase=4",
-  "offline-legacy-noconsole=1",
+  "offline-legacy-noconsole=0",
   # Input: touch at stage 4, HID reports, polled frame path.
   "offline-hid-home=1",
   "offline-hid-input=1",
   "sheng-touch=4",
   "sheng-touch-hid=1",
+  # Backboardd accepts a Digitizer/Touch Screen service, not keyboard-first HID.
+  "sheng-touch-split=1",
   "sheng-touch-poll=1",
   # Display client, APFS load and the display refresh tick.
   "offline-mobile-graphics-client=1",
@@ -215,7 +252,14 @@ kernel_args = [
   "sheng-vsync=120",
   # Storage: source-storage UFS root (the 24A446 OS policy travels as kernel.macho.vroot and OS.vroot).
   "native-source-storage=1",
+  "sheng-data-persist=2",
+  # Existing UKELLOG1 writer: recovery reads the last 32 MiB of userdata.
+  "sheng-log=1",
+  "sheng-crashlog=1",
+  "uke-display-trace=1",
   "native-ufs-root=1",
+  # Existing upstream detail screen for the next root-preparation failure.
+  "native-ufs-diagnostics=1",
   # Board policy carried over from the 17.7.11 line.
   "sheng-lite=1",
   "sheng-aks=1",
@@ -266,7 +310,7 @@ props = [
   { name = "linux,initrd-start", type = "x", value = ["0x1000000"] },
   # The 24A446 payload is 94 MiB (0x5E00000) at 0x1000000; UkeBootMemoryDxe publishes this range as the
   # FAT volume, so the end must cover it (the 17-line image said 0x6000000 for an 80 MiB payload).
-  { name = "linux,initrd-end", type = "x", value = ["0x7000000"] },
+  { name = "linux,initrd-end", type = "x", value = ["0xe000000"] },
 ]
 
 [device_tree]
@@ -276,9 +320,16 @@ include_dirs = ["soc:dts"]
 # Board ADT overrides on top of the OS profile identity (the make-uke-adt.py
 # baseline). The panic log and the GMU pool ride as top-level nodes.
 [adt.chosen.u32]
+# No Apple CTRR on this board; XNU TUNABLES requires an explicit 32-bit value.
+# 0 truthfully describes absent CTRR, rather than claiming hardware text lockdown.
+kernel-ctrr-to-be-enabled = 0
 embedded-panic-log-size = 0x380000
 
-# No /chosen/boot-manifest-hash: the 24A446 source-storage runtime supplies the owner boot set.
+# Owner image-set identity, derived from the fully verified signed OS/SystemOS policies.
+# This is explicitly owner-domain metadata, not an Apple ticket identity.
+[adt.chosen.bytes]
+boot-manifest-hash = "148316f0bb4484b19cda323503ffcb454fcc96d089087cd1f140725337c7cb8c435b86e560c193df76821ca121e262e9"
+owner-boot-manifest-domain = "5665726966696564526f6f742e4f776e6572426f6f745365742e763100"
 
 [adt.defaults.u32]
 sleep-disabled = 1

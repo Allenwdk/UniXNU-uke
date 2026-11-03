@@ -1,0 +1,100 @@
+--- a/bsd/kern/kern_newsysctl.c
++++ b/bsd/kern/kern_newsysctl.c
+@@ -69,6 +69,7 @@
+ 
+ #include <kern/counter.h>
+ #include <kern/startup.h>
++#include <kern/thread.h>
+ #include <sys/param.h>
+ #include <sys/buf.h>
+ #include <sys/kernel.h>
+@@ -107,6 +108,26 @@
+ /* Bounded, opt-in observation of the unchanged AppleImage4 ignition handler. */
+ TUNABLE(bool, uke_ignition_trace, "uke-ignition-trace", false);
+ static unsigned uke_ignition_trace_queries;
++static thread_t uke_ignition_trace_thread;
++static unsigned uke_ignition_wait_counts[4];
++static bool uke_ignition_trace_busy;
++
++/* Observe only the active traced sysctl thread; no allocation or result change. */
++void
++uke_ignition_wait_trace(unsigned kind, uint64_t argument)
++{
++	thread_t traced = os_atomic_load(&uke_ignition_trace_thread, acquire);
++	if (kind < 1 || kind > 4 || traced == THREAD_NULL ||
++	    traced != current_thread() ||
++	    !os_atomic_cmpxchg(&uke_ignition_trace_busy, false, true, acquire)) {
++		return;
++	}
++	if (os_atomic_inc_orig(&uke_ignition_wait_counts[kind - 1], relaxed) < 2) {
++		static const char * const names[] = {"gate try-close", "gate result", "gate wait deadline", "IOSleep ms"};
++		kprintf("UKE IGN: %s %llu\n", names[kind - 1], (unsigned long long)argument);
++	}
++	os_atomic_store(&uke_ignition_trace_busy, false, release);
++}
+ 
+ static LCK_GRP_DECLARE(sysctl_lock_group, "sysctl");
+ static LCK_RW_DECLARE(sysctl_geometry_lock, &sysctl_lock_group);
+@@ -1977,12 +1998,16 @@
+ 	    ptrauth_function_pointer_type_discriminator(typeof(oid_handler)));
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
+-	if (ignition_trace) kprintf("UKE IGN: ignition_blob dispatch\n");
++	if (ignition_trace) {
++		kprintf("UKE IGN: ignition_blob dispatch\n");
++		os_atomic_store(&uke_ignition_trace_thread, current_thread(), release);
++	}
+ 	if ((oid->oid_kind & CTLTYPE) == CTLTYPE_NODE) {
+ 		i = oid_handler(oid, name + indx, (int)(namelen - indx), req);
+ 	} else {
+ 		i = oid_handler(oid, oid->oid_arg1, oid->oid_arg2, req);
+ 	}
++	if (ignition_trace) os_atomic_store(&uke_ignition_trace_thread, THREAD_NULL, release);
+ 	error = i;
+ 	if (ignition_trace) kprintf("UKE IGN: ignition_blob returned %d\n", error);
+ 
+--- a/osfmk/kern/locks.c
++++ b/osfmk/kern/locks.c
+@@ -63,6 +63,7 @@
+ #include <kern/misc_protos.h>
+ #include <kern/zalloc.h>
+ #include <kern/thread.h>
++extern void uke_ignition_wait_trace(unsigned, uint64_t);
+ #include <kern/processor.h>
+ #include <kern/sched_prim.h>
+ #include <kern/debug.h>
+@@ -3502,8 +3503,10 @@
+ lck_mtx_gate_try_close(__assert_only lck_mtx_t *lock, gate_t *gate)
+ {
+ 	LCK_MTX_ASSERT(lock, LCK_MTX_ASSERT_OWNED);
+-
+-	return gate_try_close(gate);
++	uke_ignition_wait_trace(1, 0);
++	int result = gate_try_close(gate);
++	uke_ignition_wait_trace(2, (uint64_t)result);
++	return result;
+ }
+ 
+ /*
+@@ -3641,6 +3644,7 @@
+ lck_mtx_gate_wait(lck_mtx_t *lock, gate_t *gate, lck_sleep_action_t lck_sleep_action, wait_interrupt_t interruptible, uint64_t deadline)
+ {
+ 	LCK_MTX_ASSERT(lock, LCK_MTX_ASSERT_OWNED);
++	uke_ignition_wait_trace(3, deadline);
+ 
+ 	if (lck_sleep_action & LCK_SLEEP_UNLOCK) {
+ 		return gate_wait(gate,
+--- a/iokit/Kernel/IOLib.cpp
++++ b/iokit/Kernel/IOLib.cpp
+@@ -1456,9 +1456,11 @@
+ /*
+  * Spin for indicated number of milliseconds.
+  */
++extern "C" void uke_ignition_wait_trace(unsigned, uint64_t);
+ void
+ IOSleep(unsigned milliseconds)
+ {
++	uke_ignition_wait_trace(4, milliseconds);
+ 	delay_for_interval(milliseconds, kMillisecondScale);
+ }
+ 

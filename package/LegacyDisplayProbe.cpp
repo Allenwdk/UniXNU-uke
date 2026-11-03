@@ -18,6 +18,9 @@
 #include <mach/kmod.h>
 #include <machine/machine_routines.h>
 extern "C" kmod_info_t g_kernel_kmod_info;
+#if __has_feature(ptrauth_calls)
+extern "C" void native_legacy_display_sample27(const char *);
+#endif
 /* The panic screen copies its message here (scripts/xnu-panic-screen.c, address resolved by the patcher): the screen parks the
  * panic's CPU but the probe's heartbeat thread keeps running on another one, so the message reaches the log there even when the
  * panel cannot be read and the pram hand-off does not land. */
@@ -361,6 +364,10 @@ struct ClientStat {
     uintptr_t original_external,original_register;
 };
 static ClientStat seenClients[kSeenClients];static unsigned seenClientCount;
+// The legacy slot-168/175 observer is for the unsigned arm64 ABI only.
+// arm64e signs both the object vptr and address-diversified vtable entries;
+// raw table copying and old selector adaptations cannot be used there.
+#if !__has_feature(ptrauth_calls)
 typedef IOReturn (*ExternalFn)(IOUserClient *,uint32_t,IOExternalMethodArguments *,IOExternalMethodDispatch *,OSObject *,void *);
 typedef IOReturn (*RegisterFn)(IOUserClient *,mach_port_t,UInt32,UInt32);
 static ClientStat *statFor(IOUserClient *client) {
@@ -508,6 +515,7 @@ static void interpose(IOUserClient *client,int pid) {
     ++seenClientCount;
     *reinterpret_cast<uintptr_t **>(client)=copy;
 }
+#endif // legacy unsigned-vtable interposition
 // The display object's state words the original wait selector tests (offsets 5832..5864, as dwords), for the log.
 extern "C" unsigned native_legacy_state_words(char *out,unsigned cap) {
     out[0]=0;
@@ -541,9 +549,15 @@ extern "C" unsigned native_legacy_clients_dump(char *out,unsigned cap) {
     return at;
 }
 void native_legacy_client_observed(IOReturn status,IOUserClient *client) {
+#if !__has_feature(ptrauth_calls)
     if(client && !status)interpose(client,native_legacy_client_pid);
+#endif
     native_legacy_client_status=status;native_legacy_client_object=(uintptr_t)client;
     if(client)strlcpy(native_legacy_client_class,client->getMetaClass()->getClassName(),sizeof(native_legacy_client_class));
+#if __has_feature(ptrauth_calls)
+    // 24A446 fields come from the generated fixture, not the iOS 17 offsets.
+    native_legacy_display_sample27("client-open");
+#else
     {
         // Adoption state at the moment a client opens: the +0x1618 default
         // surface and the +0x1620 temporary one the original slot299 created.
@@ -557,6 +571,7 @@ void native_legacy_client_observed(IOReturn status,IOUserClient *client) {
         printf("UKE: display client status=%x pid=%d surface=%p temp=%p sid=%u\n",
             (unsigned)status,native_legacy_client_pid,surface,temp,(unsigned)sid);
     }
+#endif
     native_legacy_client_checkpoint();
 }
 __attribute__((noinline)) bool native_legacy_gop_mapping_observed(IOService *object,IOMemoryMap *mapping,uint32_t width,uint32_t height) {
@@ -765,7 +780,9 @@ void native_legacy_display_late_probe(void) {
         native_legacy_stage=4;IOPlatformDevice *nub=new IOPlatformDevice;
         native_legacy_nub=(uintptr_t)nub;bool nubAttached=false,nubStarted=false,attached=false,started=false;
         IORegistryEntry *displayTreeParent=nullptr;bool dtAttached=false;
-        IOService *parent=IOService::getResourceService();
+        // IOPlatformDevice delegates compareName/getResources to its provider
+        // as an IOPlatformExpert. IOResources cannot supply that vtable ABI.
+        IOPlatformExpert *parent=OSDynamicCast(IOPlatformExpert,IOService::getPlatform());
         IODeviceMemory *memory=IODeviceMemory::withRange(video.v_baseAddr,video.v_rowBytes*video.v_height);
         OSArray *ranges=OSArray::withCapacity(1);
         if(nub && memory && ranges && parent && nub->init()) {

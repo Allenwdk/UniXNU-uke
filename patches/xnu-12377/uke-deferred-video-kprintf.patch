@@ -1,0 +1,164 @@
+--- a/pexpert/arm/pe_kprintf.c
++++ b/pexpert/arm/pe_kprintf.c
+@@ -10,6 +10,7 @@
+ #include <machine/machine_routines.h>
+ #include <pexpert/pexpert.h>
+ #include <kern/debug.h>
++#include <console/serial_protos.h>
+ #include <kern/simple_lock.h>
+ #include <os/log_private.h>
+ #include <libkern/section_keywords.h>
+@@ -95,6 +96,21 @@
+ /* Prevent CPP from breaking the definition below */
+ #undef kprintf
+ #endif
++
++/* The normal framebuffer sink must not draw while kprintf masks IRQs. */
++static bool kprintf_deferred_console;
++
++__startup_func
++static void
++kprintf_deferred_console_init(void)
++{
++	boolean_t enabled = FALSE;
++	if (PE_kputc == console_write_unbuffered &&
++	    PE_parse_boot_argn("-ukedeferredconsole", &enabled, sizeof(enabled))) {
++		kprintf_deferred_console = enabled;
++	}
++}
++STARTUP(KPRINTF, STARTUP_RANK_LAST, kprintf_deferred_console_init);
+ 
+ static int      cpu_last_locked = 0;
+ 
+@@ -126,7 +142,9 @@
+ 			cpu_last_locked = cpu_number();
+ 		}
+ 
+-		_doprnt_log(fmt, &listp, PE_kputc, 16);
++		/* Panic/debugger output keeps the original synchronous sink. */
++		bool deferred = kprintf_deferred_console && !kernel_debugger_entry_count;
++		_doprnt_log(fmt, &listp, deferred ? console_write_deferred : PE_kputc, 16);
+ 
+ 		simple_unlock(&kprintf_lock);
+ 
+@@ -144,6 +162,9 @@
+ 		}
+ #endif
+ 		ml_set_interrupts_enabled(state);
++		if (deferred) {
++			console_deferred_wakeup();
++		}
+ 		va_end(listp);
+ 
+ #pragma clang diagnostic push
+--- a/osfmk/console/serial_protos.h
++++ b/osfmk/console/serial_protos.h
+@@ -87,6 +87,9 @@
+ extern bool enable_dklog_serial_output;
+ 
+ void console_init(void);
++/* Nonblocking hardware-deferred kprintf sink; full screen queue is best effort. */
++void console_write_deferred(char c);
++void console_deferred_wakeup(void);
+ 
+ int _serial_getc(bool wait);
+ int _vcgetc(bool wait);
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -43,6 +43,8 @@
+ #include <console/video_console.h>
+ #include <console/serial_protos.h>
+ #include <kern/startup.h>
++#include <kern/thread_call.h>
++#include <pexpert/pexpert.h>
+ #include <kern/thread.h>
+ #include <kern/cpu_data.h>
+ #include <kern/sched_prim.h>
+@@ -480,6 +482,87 @@
+ 		}
+ 	} while (nchars_out > 0);
+ }
++
++/*
++ * Reuse the console ring and its flush mutex for a port without a UART.  The
++ * kprintf producer holds IRQs off: it may reserve/copy, never drain or wait for
++ * framebuffer rendering.  The normal os_log copy is independent of this ring.
++ */
++static thread_call_data_t console_deferred_call;
++static bool console_deferred_ready;
++static uint64_t console_deferred_dropped;
++
++void
++console_write_deferred(char c)
++{
++	bool dropped = true;
++	if (disableConsoleOutput) {
++		return;
++	}
++	if (!is_console_initialized()) {
++		/* Before console_init/SMP, retain the single-CPU early sink. */
++		console_write_unbuffered(c);
++		return;
++	}
++	/* An IRQ can interrupt the ordinary ring writer: never spin here. */
++	if (lck_ticket_lock_try(&console_ring.write_lock, &console_lck_grp)) {
++		if (console_ring.used < console_ring.len) {
++			*console_ring.write_ptr++ = c;
++			if (console_ring.write_ptr == console_ring.buffer + console_ring.len) {
++				console_ring.write_ptr = console_ring.buffer;
++			}
++			console_ring.used++;
++			dropped = false;
++		}
++		lck_ticket_unlock(&console_ring.write_lock);
++	}
++	if (dropped) {
++		/* Busy/full screen queue must not stall an IRQ-masked caller. */
++		os_atomic_inc(&console_deferred_dropped, relaxed);
++	}
++}
++
++void
++console_deferred_wakeup(void)
++{
++	if (os_atomic_load(&console_deferred_ready, acquire)) {
++		thread_call_enter(&console_deferred_call);
++	}
++}
++
++static void
++console_deferred_flush(__unused thread_call_param_t p0,
++    __unused thread_call_param_t p1)
++{
++	bool pending;
++	/* THREAD_CALL_OPTIONS_ONCE prevents concurrent callback instances. */
++	console_ring_try_empty(false);
++	lck_ticket_lock(&console_ring.write_lock, &console_lck_grp);
++	pending = console_ring.used != 0;
++	lck_ticket_unlock(&console_ring.write_lock);
++	if (pending) {
++		/* Respect the existing MAX_TOTAL_FLUSH_SIZE turn limit. */
++		console_deferred_wakeup();
++	}
++}
++
++__startup_func
++static void
++console_deferred_init(void)
++{
++	boolean_t enabled = FALSE;
++	if (!is_console_initialized() || console_is_serial() ||
++	    !PE_parse_boot_argn("-ukedeferredconsole", &enabled, sizeof(enabled)) ||
++	    !enabled) {
++		return;
++	}
++	thread_call_setup_with_options(&console_deferred_call, console_deferred_flush,
++	    NULL, THREAD_CALL_PRIORITY_KERNEL, THREAD_CALL_OPTIONS_ONCE);
++	os_atomic_store(&console_deferred_ready, true, release);
++	console_deferred_wakeup();
++}
++/* THREAD_CALL is ready and the startup thread has enabled IRQs/preemption. */
++STARTUP(EARLY_BOOT, STARTUP_RANK_LAST, console_deferred_init);
+ 
+ /**
+  * Notify the console subystem that all following console writes should skip

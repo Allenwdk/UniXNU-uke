@@ -22,6 +22,11 @@
 #include <kern/thread.h>
 #include <kern/clock.h>
 #include <kern/sched_prim.h>
+#if defined(UKE_SOURCE_STORAGE_LOG)
+#include <kern/kalloc.h>
+// BSD compilation omits the Mach-private section of kern/thread.h.
+extern void thread_terminate_self(void);
+#endif
 #include <pexpert/pexpert.h>
 
 extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation,
@@ -45,7 +50,13 @@ struct uke_crash_scan_state {
 static uint8_t ukeCrashDirents[UKE_CRASH_DIR_BYTES] __attribute__((aligned(8)));
 static char ukeCrashText[UKE_CRASH_READ_BYTES + 1] __attribute__((aligned(8)));
 #define UKE_CRASH_FULL_BYTES (640 * 1024)
+#if defined(UKE_SOURCE_STORAGE_LOG)
+// The fileset's native __DATA has a fixed gap before retained kext data.
+// Allocate this optional scratch buffer only when the scan worker is enabled.
+static char *ukeCrashFull;
+#else
 static char ukeCrashFull[UKE_CRASH_FULL_BYTES] __attribute__((aligned(8)));
+#endif
 #define UKE_CRASH_WINDOW_BYTES (12 * 1024)
 static char ukeCrashWindow[UKE_CRASH_WINDOW_BYTES + 1] __attribute__((aligned(8)));
 static uint64_t ukeCrashSeen[UKE_CRASH_SEEN];
@@ -534,6 +545,13 @@ uke_crash_log_thread(void *arg, wait_result_t result)
 
 	int baseline = 0;
 	uke_crash_sleep(60000);
+#if defined(UKE_SOURCE_STORAGE_LOG)
+	ukeCrashFull = kalloc_data(UKE_CRASH_FULL_BYTES, Z_WAITOK | Z_ZERO);
+	if (ukeCrashFull == NULL) {
+		printf("UkeCrash: report scratch allocation failed\n");
+		thread_terminate_self();
+	}
+#endif
 	for (;;) {
 		uke_crash_scan(&baseline);
 		uke_crash_sleep(90000);

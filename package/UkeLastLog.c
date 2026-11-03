@@ -27,7 +27,11 @@ extern unsigned int gPanicSize;
 extern int desiredvnodes;
 extern uint64_t sane_size;
 extern void uke_crash_log_start(void);
+#if defined(UKE_SOURCE_STORAGE_LOG)
+extern volatile uint32_t boot_log_rounds;
+#else
 extern void pe_print_last_panic_again(void);
+#endif
 
 #define UKE_LAST_LOG_INTERVAL_MS 500
 
@@ -339,6 +343,9 @@ uke_ufs_publish(void)
 	}
 	(void)native_ufs_log_sync();
 	ukeUfsSeq++;
+#if defined(UKE_SOURCE_STORAGE_LOG)
+	boot_log_rounds++;
+#endif
 	ukeUfsCursor = (ukeUfsCursor + UKE_UFS_RECORD_BLOCKS) % ukeUfsBlocks;
 	ukeUfsCursor -= ukeUfsCursor % UKE_UFS_RECORD_BLOCKS;
 }
@@ -433,11 +440,13 @@ uke_last_log_writer(void *arg, wait_result_t result)
 			IOLog("UkeLastLog: vnodes desired=%d sane=%llu\n",
 			    desiredvnodes, (unsigned long long)sane_size);
 		}
+#if !defined(UKE_SOURCE_STORAGE_LOG)
 		if (tick == 4) {
 			/* Now that kprintf output reaches msgbuf, repeat the previous
 			 * boot's panic text so it lands in the userdata window. */
 			pe_print_last_panic_again();
 		}
+#endif
 		uke_last_log_write();
 		// The userdata copy is paced separately: the 32 MiB window only holds
 		// 2048 records, so at the pram writer's 500 ms rate it would wrap every

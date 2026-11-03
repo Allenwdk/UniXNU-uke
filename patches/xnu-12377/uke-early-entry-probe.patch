@@ -1,0 +1,19 @@
+--- a/osfmk/arm64/start.s	2026-10-31 13:54:28.238262357 +0800
++++ b/osfmk/arm64/start.s	2026-10-31 13:54:28.238429652 +0800
+@@ -232,6 +232,16 @@
+ 	.globl EXT(_start)
+ LEXT(_start)
+ 	ARM64_PROLOG
++	/* UniXNU bring-up probe: paint a magenta band below the loader bar at the kernel entry. */
++	movz	x9, #0xE3BC, lsl #16
++	mov	w10, #0x00FF
++	movk	w10, #0xFFFF, lsl #16
++	mov	x11, #0x20000
++.Lunixnu_entry_probe:
++	str	w10, [x9], #4
++	subs	x11, x11, #1
++	b.ne	.Lunixnu_entry_probe
++	dsb	sy
+ 	b	EXT(start_first_cpu)
+ 
+ 

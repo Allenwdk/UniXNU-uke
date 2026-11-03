@@ -478,7 +478,10 @@ extern volatile uint32_t native_touch_edge_stats[4];      // [0] edge hook insta
 // BootProgress's on-screen row, weak: the GPU defconfig builds without that archive and then this no-op wins.
 extern "C" __attribute__((weak)) void native_progress_touch_line(const char *) {}
 // Upstream NativeHidInput's button sink, weak no-op here: uke has no PMIC button source yet.
-extern "C" __attribute__((weak)) void native_buttons_set_sink(void (*)(void *, uint32_t), void *) {}
+// Uke has no button-event producer in this bring-up target. Define the optional
+// registration hook outright: authenticated weak imports otherwise survive the
+// native link as a dyld bind, which a self-contained boot kernel cannot resolve.
+extern "C" void native_buttons_set_sink(void (*)(void *, uint32_t), void *) {}
 extern "C" {
 extern volatile uint32_t native_hid_stage, native_hid_resource_found;   // HidInputProbe: where the HID gate stopped
 extern volatile int native_hid_load_status, native_hid_matching_load_status;
@@ -631,6 +634,8 @@ static void touchThread(void *, wait_result_t) {
         mark(*s, 11);
         uint32_t lastCounter = 0xffffffffu;
         unsigned tick = 0, rowTick = 0, hbTick = 0;
+        uint64_t consoleHeartbeatNs = 0;
+        bool consoleHeartbeatPrinted = false;
         s->mn = 0; s->mx = 0;
         // Event driven (upstream sheng int-189): the controller pulses its interrupt line (GPIO 54, rising edge,
         // devicetree novatek,irq-gpio flags 0x2001) for every frame, the TLMM raises its summary interrupt, the
@@ -701,9 +706,17 @@ static void touchThread(void *, wait_result_t) {
                     native_touch_last_x, native_touch_last_y, native_hid_input_results[3], native_hid_input_events[6],
                     (int)native_hid_input_results[6], native_touch_edge_stats[0], native_touch_edge_stats[1],
                     native_touch_edge_stats[2], native_touch_irq_stats[1]);
-                IOLog("UKE TCH: hb %s\n", hb);
                 native_progress_touch_line(hb);
-                if (hbTick == 127)   // once: the HID gate state (HidInputProbe)
+                uint64_t nowNs;
+                absolutetime_to_nanoseconds(mach_absolute_time(), &nowNs);
+                const bool firstHeartbeat = !consoleHeartbeatPrinted;
+                // Keep sampling and the diagnostic state fresh; limit only screen log traffic.
+                if (firstHeartbeat || nowNs - consoleHeartbeatNs >= UINT64_C(10000000000)) {
+                    consoleHeartbeatNs = nowNs;
+                    consoleHeartbeatPrinted = true;
+                    IOLog("UKE TCH: hb %s\n", hb);
+                }
+                if (firstHeartbeat)   // once: the HID gate state (HidInputProbe)
                     IOLog("UKE TCH: hid stage%u load%d match%d classes %u %u %u %u %u res%u meta%d obj%llx e%u,%u,%u,%u,%u,%u,%u,%u\n",
                         native_hid_stage, native_hid_load_status, native_hid_matching_load_status,
                         native_hid_class_sizes[0], native_hid_class_sizes[1], native_hid_class_sizes[2],

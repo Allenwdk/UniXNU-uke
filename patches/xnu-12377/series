@@ -1,9 +1,57 @@
-# Board patches for xnu-12377, one per line in application order.
-# Phase 1: the Darwin 26 spawn-attribute layout every daemon needs, the
-# ptrauth-null qualifier form upstream LLVM rejects, and the 4 KiB stack shift
-# the XnuPrelink review sites bind.
-darwin26-posix-spawn-attrs.patch
+# Board patches for xnu-12377 — sheng upstream, verbatim.
+#
+# This series is UniXNU-sheng origin/main's patches/xnu-12377/series, in its own order and
+# unmodified, so the whole boot chain (start.s → arm_init → static_if → arm_vm_init → pmap)
+# is sheng's design: T0SZ_USER=17 user pmaps, the TCR_EL1_KVA_ENTRY switch in arm_init_tramp,
+# and pmap_apply_user_tcr() in arm_vm_init. There is no board framebuffer console in this tree;
+# that is deliberate, it is what sheng boots with.
+#
+# Device-specific code lives outside the kernel series (drivers/, package/, dts/, defconfig),
+# not here.
+#
+# native-ptrauth-null-portability.patch stays because it is a toolchain fix, not a kernel
+# change: Apple clang accepts a fourth __ptrauth argument that upstream LLVM (the Linux
+# toolchain this build uses) rejects.
 native-ptrauth-null-portability.patch
-native-4k-stack-shift.patch
-# Source storage starts after vfsinit when the device has the runtime (weak import).
+
+# --- UniXNU-sheng origin/main patches/xnu-12377/series, verbatim ---
+zzye-sheng-cpu-idle.patch
+zzyf-sheng-amp.patch
+zzyd-sheng-audio-addon-mount.patch
 source-storage-runtime.patch
+zzzz-sheng-ipados27-bringup.patch
+zzzzz-sheng-ipc-trace.patch
+zzzzz-sheng-ioconnect-trace.patch
+zzzzz-sheng-contig-trace.patch
+
+# --- uniXNU device adaptation: the video console must find our GOP framebuffer ---------------
+# sheng's DarwinBoot equivalent passes the framebuffer base with the low-bit "physical" marker
+# XNU expects; ours hands over a clean physical address (0xE3940000), so initialize_screen()
+# treats it as a virtual address and never maps it. Without these two the kernel reaches
+# vcattach(), decides there is no video, switches to a serial console this board does not have,
+# and every kprintf is dropped. Taken verbatim from the iOS 17 line
+# (UniXNU-uke/patches/xnu/zzzzz-video-console-physical-fb.patch and zzzzzz-video-console-text.patch).
+uke-video-console-physical-fb.patch
+uke-video-console-text.patch
+
+# --- uke diagnostic only: live high-VA checkpoints before and across VM bootstrap ---
+uke-vm-init-checkpoints.patch
+
+# IRQ-masked kprintf enqueues into the existing console ring; a thread call drains it.
+# Preserve the synchronous panic/debugger path and existing framebuffer mappings.
+uke-deferred-video-kprintf.patch
+
+# Bounded observation only; leaves original Image4 policy and handler intact.
+uke-ignition-sysctl-trace.patch
+
+# Observe gate versus ready polling only on the traced sysctl thread.
+uke-ignition-wait-trace.patch
+
+# Observe original Image4 service start and its native AES matching dependency.
+uke-image4-service-trace.patch
+
+# Recheck early owner identity against both actual authenticated media.
+uke-owner-boot-set-recheck.patch
+
+# Read-only observation of the original user-client result and submitted sizes.
+uke-display-call-trace.patch

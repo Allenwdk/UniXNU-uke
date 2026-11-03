@@ -1,5 +1,9 @@
 # 触控（Novatek NT36532）移植记录 — uke
 
+## 2026-11-03 / 27线最新
+
+已出图，但用户滑动无响应。新日志坐标/304次HID报告result0正常；本次boot851FECBA…的backboardd明确将主Usage1/6的组合设备视为键盘并忽略digitizer事件。已准备仅启用上游sheng-touch-split=1的独立Digitizer/Touch Screen候选，未刷、真实手势待验。内核与已出图版本一致，CRC不变；详见工作区docs/status/ipados27-touch-classification-2026-11-03.md，release 2026-11-03-ipados27-touch-split。下文2026-10-25状态和NativeHidInput版本事实属于17线历史，27线实际使用ShengHidInput feed24f1f3fb。
+
 触摸控制器是 Novatek NT36532（SPI），面板 o82。驱动按上游 sheng（UniXNU-sheng）架构移植：`NativeNovatekTouch`（协议 + 纯算法，vendored 在设备仓 `drivers/NativeNovatekTouch`）+ `NativeGeniSpi`（GENI SPI 引擎，核心仓子模块）+ `package/TouchProbe.cpp`（板级探针/帧循环）+ `package/TouchBoard.h`（板级常量）+ `NativeHidInput`（HID 数字化源，核心仓子模块）。
 
 ## 现状（2026-10-25）
@@ -79,3 +83,15 @@ UKE TCH: fail step <N> code <M>      # 任一步失败
 - TCH 心跳/阶段行是 IOLog→msgbuf，`offline-legacy-noconsole` 只静音屏幕输出；配合 `c2f0582`（msgbuf 镜像进 userdata）可从主机侧读全量日志。
 - `unixnu.toml` 1121 B 正常（已验证 v3 镜像 1148 B 工作正常，"~1102 B 丢参数"的坑不适用于这条 payload 路径）。
 - Y 镜像常量 `TB_TOUCH_AXIS_MAX_Y=20319` 与可能的 X 镜像/XY 交换：等真实手势判定，一次改一个。
+
+
+## 2026-11-03 13:43:32：touch-split已获当次授权刷入
+
+用户当次明确“刷吧”。刷前5SHA和porting13区通过，vendor_boot精确为5d252ad4973bd9361b66534781d49df2f6e068ba4bdff5d073fbcfb8eb29a821。TWRP执行adb reboot bootloader后核b8a81f12/productuke/is-userspaceno及四个96MiB分区界限。boot_a/vendor_boot_a/boot_b/vendor_boot_b均OKAY，set_active a及current-slot a回读通过，rebootOKAY。
+
+- 时间：2026-11-03T13:43:32.842168+08:00 至 2026-11-03T13:43:39.568251+08:00。
+- 仅增加sheng-touch-split=1；922B参数，final483206b8…保持，CRC仍为**E989F0CE55D5EB3F**，不能单用CRC区别配置。
+- 部署证据：uke-port/releases/2026-11-03-ipados27-touch-split/flash-result-20261103-134332.json和匹配flash log，进bootloader记录在审计目录bootloader-transition.json。
+- host未刷写/初始化userdata；正常XNU运行期仍保持Data与尾部日志写入。仅刷写/重启成功，新触摸设备匹配、分类与真实滑动尚待验收。
+
+后续：确认仍能出图，实测上滑/横向滑动/点击，说明是否有响应及方向是否正确。若无响应，至少运行三分钟并反复实际滑动后回fastboot，核独立Offline touch digitizer、0x0d/4分类及unsupported digitizer是否消失；不凭HID报告0宣称手势成功。panic拍完整首行/BT。

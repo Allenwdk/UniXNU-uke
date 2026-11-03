@@ -1,5 +1,9 @@
 # 从 recovery 读取 XNU 日志（userdata 窗口）
 
+> **2026-11-03 / 27线更正**：08:29的client-vtable未带sheng-log=1，也没把UkeLastLog链接到source-storage，不能套用下文“board已含”判断。09:32读得708条是旧GPU环，已留档排除。09:43:30 persistent-log修复四分区已刷（CRC A25A761D7FCC72B3），现已链writer/crashprobe并开启参数，实际落盘待新TWRP回读。源码/参数/设备新记录三者都要核。根交接：docs/status/ipados27-persistent-log-2026-11-03.md。
+
+> 本次旧环基线：reference/logs/ukelog/ukelog-20261103-0930-client-vtable.bin；读取新环后逐slot比较，截断到确定的新记录，再解码。下文“写满211条”只适用于历史那次dump，不能作为通用的新旧分界。
+
 适用于 uke（Xiaomi Pad 7）。XNU 里没有 adb/fastboot，测试结束后必须由人按键进 fastboot；日志由 `UkeLastLog` 每 2 s 写到 userdata 最后 32 MiB 的环形窗口，在 TWRP 下用 dd 读出。
 
 ## 前提
@@ -152,3 +156,12 @@ for i in range(len(a) // 16384):
 - 刷完 addon5 后直接跑 `scripts/check-gpu-addon-boot.py <log>`：它把上面这些判据一次跑完（`--mode probe` 要求探针的 `K` 行非空；`--mode stable` 另外拒绝 68f1/68f2/68f3）。
 
 刷机（两种 UEFI 启动镜像都可配 200 GiB packed Data seed）：`fastboot flash boot boot_uke_usbdal2.img`、`fastboot flash vendor_boot vendor_boot_uke_addon5.img`（CA 映射实验用 `vendor_boot_uke_addon5_map2.img`；iconservices 兜底用 `vendor_boot_uke_addon5_noicon.img`；画面黑/旧帧用 `vendor_boot_uke_addon5_fbgpu.img`）、`fastboot set_active a`、`fastboot reboot`。
+
+
+## 2026-11-03 09:51：27线userdata尾部日志实机回读通过
+
+- 09:43:30 persistent-log（final436c6c82… / vendor_boot a0e126c0… / CRCA25A761D7FCC72B3）启动后，用户回fastboot。原厂四分区+A槽回读/reboot recovery成功；ADB libusb默认后端出现closed/reset，重启server并用ADB_LIBUSB=0后shell恢复。
+- 09:51:14按live userdata=471908312个512B扇区，只读末尾32MiB，SHA e5bde46c78c26de2d9dffb14dddc4c4afcdcc1b648b21b9229e33e6a3c5ede2b。与09:32旧环逐slot比较，仅slot0..136改变；137条新记录seq0..136全部magic/CRC通过，其余1911槽逐字节相同。只解码新slot，不混入slot137之后的旧GPU记录。
+- 本轮log49.664755s明确UkeLastLog打开绝对LBA61941755/8192块，末行321.876064s。日志写入/跨重启到TWRP回读实机通过，桌面仍未通过。原始ukelog-20261103-095114-persistent-log.bin与同tag clean.log归reference/logs/{ukelog,boot}/；证据uke-port/fixes/2026-11-03-persistent-log-readback/readback.json。
+- 49.730875s原始日志有uke-fb默认表面status0/valid1、3200x2136/stride12800/27340800B。后续observer的surface/temp=0来自旧17线0x1618/0x1620，27 fixture default_surface=0x1b58，不是表面未创建证明。优先追真实用户态显示服务契约。
+- 设备现为原厂boot/vendor_boot四分区+TWRP；本轮host未写userdata。正常Data与日志写入是此前XNU运行期行为。

@@ -139,7 +139,8 @@ def kernel_symbols(kernel):
     table = {}
     for line in subprocess.run([nm, '-n', kernel], capture_output=True, text=True, check=True).stdout.splitlines():
         parts = line.split()
-        if len(parts) == 3:
+        # A kernel collection prints a "Symbols for <entry>:" header per fileset entry (upstream sheng fix).
+        if len(parts) == 3 and all(c in '0123456789abcdef' for c in parts[0]):
             table.setdefault(int(parts[0], 16), parts[2])
     return table
 
@@ -187,7 +188,9 @@ def assemble_c(source, va, workdir, symbols):
         # can still patch the panic screen.
         font_dir = ROOT / 'scripts'
     obj, elf, binary = (workdir / name for name in ('panic.o', 'panic.elf', 'panic.bin'))
-    definitions = []
+    # Keep older, smaller entry layouts usable; the active no-reset image has
+    # verified spare padding for six bounded frame links.
+    definitions = [f'-DPANIC_TRACE_FRAMES={6 if PANIC_CAVE_END - va >= 2704 else 0}']
     for macro, name, width in (('MAX_MEM', '_max_mem', 8),
                                ('PAGE_TOTAL', '_vm_page_pages', 4),
                                ('PAGE_FREE', '_vm_page_free_count', 4)):
@@ -226,7 +229,7 @@ def assemble_c(source, va, workdir, symbols):
             raise SystemExit('Invalid _uke_panic_flush')
         definitions.append(f'-DUKE_PANIC_FLUSH={flush:#x}UL')
     subprocess.run([clang, '--target=aarch64-none-elf', '-ffreestanding', '-fno-builtin', '-fno-stack-protector',
-                    '-mgeneral-regs-only', '-fno-pic', '-mcmodel=tiny', '-Oz', f'-DVINFO={VINFO_VA:#x}UL',
+                    '-mgeneral-regs-only', '-mno-outline-atomics', '-fno-pic', '-mcmodel=tiny', '-Oz', f'-DVINFO={VINFO_VA:#x}UL',
                     *definitions, f'-I{font_dir}', '-c', source, '-o', obj], check=True)
     script = workdir / 'panic.ld'
     script.write_text('SECTIONS { . = %#x; .text : { *(.text.a_entry) *(.text.a_common) *(.text*) *(.rodata*) } /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.ARM.*) } }\n' % va)
@@ -322,6 +325,14 @@ def rebase(kernel, data):
         CAVES = {stage: va + delta for stage, va in CAVES.items()}
         PANIC_VA += delta
         VINFO_VA += delta
+    # A plain one-branch _start leaves 116 unused bytes before the historical
+    # caves. Reclaim exactly one 96-byte slot only after verifying every byte;
+    # kernels with an in-source entry probe retain the original layout.
+    if CAVES[1] - ENTRY_VA == 0x78:
+        entry_word = struct.unpack_from('<I', data, file_offset(ENTRY_VA))[0]
+        padding = data[file_offset(ENTRY_VA + 4):file_offset(CAVES[1])]
+        if entry_word & 0xfc000000 == 0x14000000 and len(padding) == 116 and not any(padding):
+            CAVES = {stage: address - CAVE_SIZE for stage, address in CAVES.items()}
     names = {name: va for va, name in kernel_symbols(kernel).items()}
     if '_start_first_cpu' in names:
         START_FIRST_CPU = names['_start_first_cpu']
@@ -396,7 +407,13 @@ def main():
     def word(va):
         return struct.unpack_from('<I', data, file_offset(va))[0]
 
-    expected = {ENTRY_VA: branch(ENTRY_VA, START_FIRST_CPU), MMU_ENABLE_VA: 0xD5181000, AFTER_MMU_VA: 0xD2A00600}
+    # The entry instruction is only "b start_first_cpu" on a kernel without the board's band probe; with the
+    # probe (uke-early-entry-probe.patch) the branch sits behind it, so accept either and require that the
+    # word at MMU_ENABLE/after-MMU keeps its shape.
+    entry = word(ENTRY_VA)
+    if entry not in (branch(ENTRY_VA, START_FIRST_CPU), 0xD2BC7789):
+        raise SystemExit(f'{ENTRY_VA:#x} holds {entry:#010x}, expected the entry prologue: not the kernel these probes are for')
+    expected = {MMU_ENABLE_VA: 0xD5181000, AFTER_MMU_VA: 0xD2A00600}
     for va, value in expected.items():
         if word(va) != value:
             raise SystemExit(f'{va:#x} holds {word(va):#010x}, expected {value:#010x}: not the kernel these probes are for')

@@ -7,7 +7,10 @@ commit = "149b1777f3e8c2133042d8e188f72e3adf6a7110"
 commit = "e31e90a24c27ad6cbe981650d12a1a4124065b03"
 
 [source."IOStorageFamily"]
-commit = "e45fbe30a7879e0b16e26dddb78538f1b00e0bff"
+commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
+
+[source."ShengHidInput"]
+commit = "24f1f3fbed6feff42e1ca02e2ce386a5c3c36da8"
 
 [source."ShengUfs"]
 commit = "78c93b0941896e0515c6abaad3ff0d88b50a78ca"

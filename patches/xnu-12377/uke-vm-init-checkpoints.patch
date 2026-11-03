@@ -1,0 +1,737 @@
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -76,6 +76,8 @@
+ #include <sys/kdebug.h>
+ 
+ #include <pexpert/pexpert.h>
++extern void uke_boot_stage(const char *);
++extern void uke_boot_stage_early_init(boot_args *);
+ 
+ #include <console/serial_protos.h>
+ 
+@@ -366,6 +368,7 @@
+ 	arm_slide_rebase_and_sign_image();
+ 
+ 	arm_static_if_init(args);
++	uke_boot_stage_early_init(args);
+ 
+ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
+ 	const_boot_args = *args;
+@@ -375,23 +378,29 @@
+ 	reset_vector_vaddr = (vm_offset_t) &LowResetVectorBase;
+ #endif /* APPLEVIRTUALPLATFORM */
+ 
++	uke_boot_stage("CPU data init enter");
+ 	cpu_data_init(&BootCpuData);
++	uke_boot_stage("CPU data init returned");
+ #if defined(HAS_APPLE_PAC)
+ 	/* bootstrap cpu process dependent key for kernel has been loaded by start.s */
+ 	BootCpuData.rop_key = ml_default_rop_pid();
+ 	BootCpuData.jop_key = ml_default_jop_pid();
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
++	uke_boot_stage("PE platform init enter");
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
++	uke_boot_stage("PE platform init returned");
+ 	boot_progress_init();
+ 
+ #if __arm64__
++	uke_boot_stage("early CPU registers enter");
+ 	configure_timer_apple_regs();
+ 	wfe_timeout_configure();
+ 	wfe_timeout_init();
+ 
+ 	configure_misc_apple_boot_args();
+ 	configure_misc_apple_regs(true);
++	uke_boot_stage("early CPU registers returned");
+ 
+ #if HAS_UPSI_FAILURE_INJECTION
+ 	/* UPSI (Universal Panic and Stall Injection) Logic
+@@ -476,7 +485,9 @@
+ 	}
+ #endif
+ 
++	uke_boot_stage("CPU topology enter");
+ 	ml_parse_cpu_topology();
++	uke_boot_stage("CPU topology returned");
+ 
+ 
+ 	boot_cpu_id = ml_get_boot_cpu_number();
+@@ -494,6 +505,7 @@
+ 	    + ((uintptr_t)&BootCpuData
+ 	    - (uintptr_t)(args->virtBase)));
+ 
++	uke_boot_stage("thread and CPU bootstrap enter");
+ 	thread = thread_bootstrap();
+ 	thread->machine.CpuDatap = &BootCpuData;
+ 	thread->machine.pcpu_data_base_and_cpu_number =
+@@ -508,20 +520,31 @@
+ 	 */
+ 	thread->machine.preemption_count = 0;
+ 	cpu_bootstrap();
+-
++	uke_boot_stage("thread and CPU bootstrap returned");
++
++	uke_boot_stage("early clock enter");
+ 	rtclock_early_init();
++	uke_boot_stage("early clock returned");
+ 
+ 	kernel_debug_string_early("kernel_startup_bootstrap");
++	uke_boot_stage("kernel startup enter");
+ 	kernel_startup_bootstrap();
++	uke_boot_stage("kernel startup returned");
+ 
+ 	/*
+ 	 * Initialize the timer callout world
+ 	 */
++	uke_boot_stage("CPU timer_call_init enter");
+ 	timer_call_init();
+-
++	uke_boot_stage("CPU timer_call_init returned");
++
++	uke_boot_stage("CPU cpu_init enter");
+ 	cpu_init();
+-
++	uke_boot_stage("CPU cpu_init returned");
++
++	uke_boot_stage("CPU processor_bootstrap enter");
+ 	processor_bootstrap();
++	uke_boot_stage("CPU processor_bootstrap returned");
+ 
+ 	if (PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
+ 		xmaxmem = (uint64_t) maxmem * (1024 * 1024);
+@@ -568,6 +591,7 @@
+ 	 * the actual DRAM base address and size as reported by iBoot through the
+ 	 * device tree.
+ 	 */
++	uke_boot_stage("DT DRAM properties enter");
+ 	unsigned long const *dram_base;
+ 	unsigned long const *dram_size;
+ 
+@@ -586,9 +610,12 @@
+ 	gDramBase = *dram_base;
+ 	gDramSize = *dram_size;
+ 	pmap_first_pnum = (ppnum_t)atop(gDramBase);
++	uke_boot_stage("DT DRAM properties returned");
+ 
+ 	boot_progress_stage("arm_vm_init enter");
++	uke_boot_stage("arm_vm_init enter");
+ 	arm_vm_init(xmaxmem, args);
++	uke_boot_stage("arm_vm_init returned");
+ 	boot_progress_stage("arm_vm_init returned");
+ 
+ 	if (debug_boot_arg) {
+@@ -602,9 +629,11 @@
+ 	PE_consistent_debug_inherit();
+ 
+ 	/* Setup debugging output. */
++	uke_boot_stage("debug output startup enter");
+ 	const unsigned int serial_exists = serial_init();
+ 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
+ 	kprintf("kprintf initialized\n");
++	uke_boot_stage("debug output startup returned");
+ 
+ 	serialmode = 0;
+ 	if (PE_parse_boot_argn("serial", &serialmode, sizeof(serialmode))) {
+@@ -644,7 +673,9 @@
+ 		(void)switch_to_serial_console(); /* Switch into serial mode from video console */
+ 		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
+ 	}
++	uke_boot_stage("PE_create_console enter");
+ 	PE_create_console();
++	uke_boot_stage("PE_create_console returned");
+ 
+ 	/* setup console output */
+ 	PE_init_printf(FALSE);
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1817,6 +1817,240 @@
+ 	}
+ }
+ 
++extern void uke_boot_stage(const char *);
++extern void uke_boot_stage_bind(uintptr_t, unsigned, unsigned, unsigned, unsigned);
++extern void uke_boot_stage_unbind(void);
++void uke_boot_stage_early_init(boot_args *);
++void uke_boot_stage_prepare(uint64_t, boot_args *);
++void uke_boot_stage_console_takeover(void);
++void uke_boot_stage_console_ready(uintptr_t, unsigned, unsigned, unsigned, unsigned);
++
++/* UKE_STAGE_MAP_CORE_BEGIN: compiled unchanged by the host boundary tests. */
++struct uke_stage_plan {
++	uint64_t va, pa, span, frame_pa, frame_va;
++	unsigned first, blocks;
++};
++
++static int
++uke_stage_plan_make(uint64_t va, uint64_t kernel_start, uint64_t frame,
++    uint64_t width, uint64_t height, uint64_t stride, uint64_t depth,
++    struct uke_stage_plan *out)
++{
++	const uint64_t block = ARM_TT_L2_SIZE;
++	if (width < 720 || width > 4096 || height < 600 || height > 4096 ||
++	    stride < width * 4 || stride > 65536 || (stride & 3) ||
++	    (depth & 0xffff) != 32 || !frame || (frame & 3) ||
++	    frame > UINT64_MAX - height * stride || (va & (block - 1))) {
++		return 0;
++	}
++	const uint64_t pa = frame & ~(block - 1);
++	const uint64_t length = frame - pa + height * stride;
++	const uint64_t span = (length + block - 1) & ~(block - 1);
++	/* Reserve only the empty low-globals gap, not any kernel or heap VA. */
++	if (va < LOW_GLOBAL_BASE_ADDRESS + block || span > 32 * block ||
++	    va > UINT64_MAX - span || va + span > (kernel_start & ~(block - 1)) ||
++	    ((va ^ (va + span - 1)) >> ARM_TT_L1_SHIFT) != 0) {
++		return 0;
++	}
++	*out = (struct uke_stage_plan){va, pa, span, frame, va + frame - pa,
++	    (unsigned)L2_TABLE_INDEX(va), (unsigned)(span / block)};
++	return 1;
++}
++
++static uint64_t
++uke_stage_descriptor(const struct uke_stage_plan *plan, unsigned i)
++{
++	return (plan->pa + (uint64_t)i * ARM_TT_L2_SIZE) |
++	       ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK | ARM_TTE_BLOCK_AF |
++	       ARM_TTE_BLOCK_AP(AP_RWNA) | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
++	       ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) |
++	       ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX;
++}
++
++static int
++uke_stage_install(volatile uint64_t *l2, const struct uke_stage_plan *plan)
++{
++	if (!plan->blocks || plan->first + plan->blocks > TTE_PGENTRIES) {
++		return 0;
++	}
++	/* Validate the whole run before changing even the first descriptor. */
++	for (unsigned i = 0; i < plan->blocks; ++i) {
++		if (l2[plan->first + i] != ARM_TTE_EMPTY) {
++			return 0;
++		}
++	}
++	for (unsigned i = 0; i < plan->blocks; ++i) {
++		l2[plan->first + i] = uke_stage_descriptor(plan, i);
++	}
++	return 1;
++}
++
++static void
++uke_stage_remove(volatile uint64_t *l2, const struct uke_stage_plan *plan)
++{
++	for (unsigned i = 0; i < plan->blocks; ++i) {
++		/* Never remove an entry that no longer belongs to this diagnostic. */
++		if (l2[plan->first + i] == uke_stage_descriptor(plan, i)) {
++			l2[plan->first + i] = ARM_TTE_EMPTY;
++		}
++	}
++}
++/* UKE_STAGE_MAP_CORE_END */
++
++_Static_assert(ARM_TT_L1_SHIFT == 30 && ARM_TT_L2_SHIFT == 21 &&
++    ARM_PGBYTES == 4096 && (T1SZ_BOOT == 25 || T1SZ_BOOT == 26), "uke stage alias needs the 4K/38-39-bit TTBR1 geometry");
++#if XNU_MONITOR || CONFIG_SPTM || defined(ARM_LARGE_MEMORY) || defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
++#error "uke stage alias is only reviewed for this non-PPL/non-SPTM uke target"
++#endif
++
++static struct uke_stage_plan uke_stage_mapping;
++static pmap_paddr_t uke_stage_roots[2];
++
++/* AT reports faults in PAR_EL1; it does not perform a speculative data access. */
++static int
++uke_stage_writable(uint64_t va, uint64_t pa, uint64_t size)
++{
++	if (!size || va > UINT64_MAX - size || pa > UINT64_MAX - size) {
++		return 0;
++	}
++	for (uint64_t offset = 0; offset < size;) {
++		uint64_t par;
++		const uint64_t at = va + offset;
++		__asm__ volatile("at s1e1w, %1\n\tisb\n\tmrs %0, par_el1" : "=r"(par) : "r"(at) : "memory");
++		if ((par & 1) || ((par & ARM_TTE_TABLE_MASK) | (at & 0xfff)) != pa + offset) {
++			return 0;
++		}
++		const uint64_t next = offset + 4096 - (at & 0xfff);
++		/* Also check the last byte when the mapping ends within a page. */
++		if (offset == size - 1) {
++			break;
++		}
++		offset = next < size ? next : size - 1;
++	}
++	return 1;
++}
++
++static void
++uke_stage_sync(void)
++{
++	__asm__ volatile("dsb ishst\n\ttlbi vmalle1is\n\tdsb ish\n\tisb" ::: "memory");
++}
++
++static volatile uint64_t *
++uke_stage_l2(pmap_paddr_t root, const boot_args *args)
++{
++	/* Before the TTBR1 switch use boot_args' linear mapping, not the new physmap. */
++	if (!root || root < args->physBase || root - args->physBase > args->memSize - 4096) {
++		return NULL;
++	}
++	uint64_t root_va = args->virtBase + root - args->physBase;
++	if (!uke_stage_writable(root_va, root, 4096)) {
++		return NULL;
++	}
++	volatile uint64_t *l1 = (volatile uint64_t *)root_va;
++	const uint64_t tte = l1[L1_TABLE_T1_INDEX(uke_stage_mapping.va, TCR_EL1_BOOT)];
++	if ((tte & (ARM_TTE_VALID | ARM_TTE_TYPE_MASK)) != (ARM_TTE_VALID | ARM_TTE_TYPE_TABLE)) {
++		return NULL;
++	}
++	const uint64_t pa = tte & ARM_TTE_TABLE_MASK;
++	if (pa < args->physBase || pa - args->physBase > args->memSize - 4096) {
++		return NULL;
++	}
++	const uint64_t va = args->virtBase + pa - args->physBase;
++	return uke_stage_writable(va, pa, 4096) ? (volatile uint64_t *)va : NULL;
++}
++
++void
++uke_boot_stage_early_init(boot_args *args)
++{
++	const Boot_Video *v = &args->Video;
++	if (args->memSize < 4096 ||
++	    !uke_stage_plan_make(LOW_GLOBAL_BASE_ADDRESS + ARM_TT_L2_SIZE, args->virtBase,
++	    v->v_baseAddr & ~3ULL, v->v_width, v->v_height, v->v_rowBytes, v->v_depth,
++	    &uke_stage_mapping)) {
++		uke_boot_stage("LIVE1: alias plan rejected (no framebuffer writes)");
++		return;
++	}
++	/* This board's splash RAM must stay outside XNU-managed high DRAM. */
++	if (uke_stage_mapping.pa + uke_stage_mapping.span > args->physBase ||
++	    ((__builtin_arm_rsr64("TCR_EL1") ^ TCR_EL1_BOOT) &
++	    ((TCR_T1SZ_MASK << TCR_T1SZ_SHIFT) | (3ULL << 30))) ||
++	    ((__builtin_arm_rsr64("MAIR_EL1") >> (CACHE_ATTRINDX_WRITECOMB * 8)) & 0xff) != 0x44) {
++		uke_boot_stage("LIVE1: geometry/MAIR rejected (no framebuffer writes)");
++		return;
++	}
++	const pmap_paddr_t root = __builtin_arm_rsr64("TTBR1_EL1") & ARM_TTE_TABLE_MASK;
++	volatile uint64_t *l2 = uke_stage_l2(root, args);
++	if (!l2 || !uke_stage_install(l2, &uke_stage_mapping)) {
++		uke_boot_stage("LIVE1: boot L2 occupied/unmapped (no writes)");
++		return;
++	}
++	uke_stage_roots[0] = root;
++	uke_stage_sync();
++	if (!uke_stage_writable(uke_stage_mapping.frame_va, uke_stage_mapping.frame_pa, v->v_height * v->v_rowBytes)) {
++		uke_stage_remove(l2, &uke_stage_mapping);
++		uke_stage_sync();
++		uke_stage_roots[0] = 0;
++		return;
++	}
++	uke_boot_stage_bind(uke_stage_mapping.frame_va, (unsigned)v->v_width, (unsigned)v->v_height,
++	    (unsigned)v->v_rowBytes, (unsigned)(v->v_depth & 0xff));
++	uke_boot_stage("LIVE1: static_if returned; boot alias verified");
++}
++
++void
++uke_boot_stage_prepare(uint64_t root, boot_args *args)
++{
++	if (!uke_stage_roots[0]) {
++		return;
++	}
++	volatile uint64_t *l2 = uke_stage_l2(root, args);
++	if (!l2 || !uke_stage_install(l2, &uke_stage_mapping)) {
++		uke_boot_stage("LIVE1 ERROR: new L2 conflict; live output disabled");
++		uke_boot_stage_unbind();
++		return;
++	}
++	uke_stage_roots[1] = root;
++	__asm__ volatile("dsb ishst" ::: "memory");
++	uke_boot_stage("LIVE1: new TTBR1 alias installed");
++}
++
++/* Retire both copies before normal console mapping may choose different MAIR attributes. */
++void
++uke_boot_stage_console_takeover(void)
++{
++	if (!uke_stage_roots[0] && !uke_stage_roots[1]) {
++		return;
++	}
++	uke_boot_stage("LIVE1: normal console mapping enter; retiring alias");
++	uke_boot_stage_unbind();
++	for (unsigned i = 0; i < 2; ++i) {
++		if (!uke_stage_roots[i]) {
++			continue;
++		}
++		const uint64_t *l1 = (const uint64_t *)phystokv(uke_stage_roots[i]);
++		const uint64_t tte = l1[L1_TABLE_T1_INDEX(uke_stage_mapping.va, TCR_EL1_BOOT)];
++		if ((tte & (ARM_TTE_VALID | ARM_TTE_TYPE_MASK)) == (ARM_TTE_VALID | ARM_TTE_TYPE_TABLE)) {
++			uke_stage_remove((volatile uint64_t *)phystokv(tte & ARM_TTE_TABLE_MASK), &uke_stage_mapping);
++		}
++		uke_stage_roots[i] = 0;
++	}
++	uke_stage_sync();
++}
++
++void
++uke_boot_stage_console_ready(uintptr_t frame, unsigned width, unsigned height,
++    unsigned stride, unsigned depth)
++{
++	if (uke_stage_mapping.frame_pa && depth == 32 && width <= 4096 && height <= 4096 &&
++	    stride <= 65536 && uke_stage_writable(frame, uke_stage_mapping.frame_pa, (uint64_t)height * stride)) {
++		uke_boot_stage_bind(frame, width, height, stride, depth);
++		uke_boot_stage("LIVE1: normal console VA verified");
++		uke_boot_stage_unbind();
++		uke_stage_mapping.frame_pa = 0; /* Retired permanently after normal console takeover. */
++	}
++}
++
+ #define ARM64_PHYSMAP_SLIDE_RANGE (1ULL << 30) // 1 GB
+ #define ARM64_PHYSMAP_SLIDE_MASK  (ARM64_PHYSMAP_SLIDE_RANGE - 1)
+ 
+@@ -1836,6 +2070,7 @@
+ 	/*
+ 	 * Get the virtual and physical kernel-managed memory base from boot_args.
+ 	 */
++	uke_boot_stage("VM tables enter");
+ 	gVirtBase = args->virtBase;
+ 	gPhysBase = args->physBase;
+ #if KASAN
+@@ -1985,6 +2220,7 @@
+ 	 *   the so called physical aperture should be statically mapped
+ 	 */
+ 	init_ptpages(cpu_tte, gVirtBase, dynamic_memory_begin, TRUE, ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
++	uke_boot_stage("VM tables returned");
+ 
+ #if defined(ARM_LARGE_MEMORY)
+ 	/*
+@@ -2004,6 +2240,7 @@
+ 	/*
+ 	 * Now retrieve addresses for various segments from kernel mach-o header
+ 	 */
++	uke_boot_stage("VM segments/protection enter");
+ 	segPRELINKTEXTB  = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__PRELINK_TEXT", &segSizePRELINKTEXT);
+ 	segPLKDATACONSTB = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__PLK_DATA_CONST", &segSizePLKDATACONST);
+ 	segPLKTEXTEXECB  = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__PLK_TEXT_EXEC", &segSizePLKTEXTEXEC);
+@@ -2135,18 +2372,21 @@
+ 	vm_prelink_edata = segPRELINKDATAB + segSizePRELINKDATA;
+ 
+ 	arm_vm_prot_init(args);
++	uke_boot_stage("VM segments/protection returned");
+ 
+ 	/*
+ 	 * Initialize the page tables for the low globals:
+ 	 *   cover this address range:
+ 	 *     LOW_GLOBAL_BASE_ADDRESS + 2MB
+ 	 */
++	uke_boot_stage("VM low globals L3 enter");
+ 	va_l1 = va_l2 = LOW_GLOBAL_BASE_ADDRESS;
+ 	cpu_l1_tte = cpu_tte + L1_TABLE_T1_INDEX(va_l1, TCR_EL1_BOOT);
+ 	cpu_l2_tte = ((tt_entry_t *) phystokv(((*cpu_l1_tte) & ARM_TTE_TABLE_MASK))) + ((va_l2 & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT);
+ 	ptpage_vaddr = alloc_ptpage(TRUE);
+ 	*cpu_l2_tte = (kvtophys(ptpage_vaddr) & ARM_TTE_TABLE_MASK) | ARM_TTE_TYPE_TABLE | ARM_TTE_VALID | ARM_TTE_TABLE_PXN | ARM_TTE_TABLE_XN;
+ 	bzero((void *)ptpage_vaddr, ARM_PGBYTES);
++	uke_boot_stage("VM low globals L3 returned");
+ 
+ 	/*
+ 	 * Initialize l2 page table pages :
+@@ -2174,13 +2414,19 @@
+ 	kasan_init();
+ #endif /* KASAN */
+ 
++	uke_boot_stage("VM physmap enter");
+ 	arm_vm_physmap_init(args);
++	uke_boot_stage("VM physmap returned");
++	uke_boot_stage_prepare(cpu_ttep, args);
++	uke_boot_stage("VM TTBR1 switch enter");
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
++	uke_boot_stage("VM TTBR1 switch returned");
+ 
+ #if XNU_MONITOR
+ 	ml_enable_monitor();
+ #endif
+ 
++	uke_boot_stage("VM TTBR0/TCR enter");
+ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+ #if T0SZ_USER != T0SZ_BOOT
+ 	pmap_apply_user_tcr();
+@@ -2188,6 +2434,7 @@
+ 
+ 	flush_mmu_tlb();
+ 	kva_active = TRUE;
++	uke_boot_stage("VM TTBR0/TCR returned");
+ 	// global table pointers may need to be different due to physical aperture remapping
+ 	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
+ 	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
+@@ -2283,7 +2530,9 @@
+     }
+ #endif
+ #endif
++	uke_boot_stage("VM pmap bootstrap enter");
+ 	pmap_bootstrap(dynamic_memory_begin);
++	uke_boot_stage("VM pmap bootstrap returned");
+ 
+ 	disable_preemption();
+ 
+@@ -2408,7 +2657,9 @@
+ 	pmap_static_allocations_done();
+ #endif
+ 	first_avail = avail_start;
++	uke_boot_stage("VM final low globals enter");
+ 	patch_low_glo_static_region(args->topOfKernelData, avail_start - args->topOfKernelData);
++	uke_boot_stage("VM final low globals returned");
+ 	enable_preemption();
+ }
+ 
+diff --git a/osfmk/console/video_console.c b/osfmk/console/video_console.c
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -2795,6 +2795,9 @@
+ 	}
+ }
+ 
++extern void uke_boot_stage_console_takeover(void);
++extern void uke_boot_stage_console_ready(uintptr_t, unsigned, unsigned, unsigned, unsigned);
++
+ void
+ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
+ {
+@@ -2868,6 +2871,7 @@
+ 			gc_acquired = TRUE;
+ 		} else {
+ 			if (makeMapping) {
++				uke_boot_stage_console_takeover();
+ #if HAS_UCNORMAL_MEM || APPLEVIRTUALPLATFORM
+ 				/*
+ 				 * Framebuffers would normally use VM_WIMG_RT, which
+@@ -2904,6 +2908,8 @@
+ 			vinfo = new_vinfo;
+ 		}
+ 
++		uke_boot_stage_console_ready(vinfo.v_baseaddr, vinfo.v_width, vinfo.v_height,
++		    vinfo.v_rowbytes, vinfo.v_depth);
+ 		boot_progress_bind(vinfo.v_baseaddr, vinfo.v_width, vinfo.v_height,
+ 		    vinfo.v_rowbytes, vinfo.v_depth);
+ 
+diff --git a/osfmk/kern/timer_call.c b/osfmk/kern/timer_call.c
+--- a/osfmk/kern/timer_call.c
++++ b/osfmk/kern/timer_call.c
+@@ -36,6 +36,7 @@
+ #include <kern/smp.h>
+ #include <kern/processor.h>
+ #include <kern/timer_call.h>
++extern void uke_boot_stage(const char *);
+ #include <kern/timer_queue.h>
+ #include <kern/thread.h>
+ #include <kern/thread_group.h>
+@@ -264,8 +265,12 @@
+ void
+ timer_call_init(void)
+ {
++	uke_boot_stage("TIMER longterm_init enter");
+ 	timer_longterm_init();
++	uke_boot_stage("TIMER longterm_init returned");
++	uke_boot_stage("TIMER init_abstime enter");
+ 	timer_call_init_abstime();
++	uke_boot_stage("TIMER init_abstime returned");
+ }
+ 
+ 
+diff --git a/osfmk/arm64/cpu.c b/osfmk/arm64/cpu.c
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -39,6 +39,7 @@
+ #include <kern/thread.h>
+ #include <kern/timer_queue.h>
+ #include <kern/cpc.h>
++extern void uke_boot_stage(const char *);
+ #include <kern/monotonic.h>
+ #include <arm/cpu_data.h>
+ #include <arm/cpuid.h>
+@@ -716,18 +717,25 @@
+ {
+ 	cpu_data_t     *cdp = getCpuDatap();
+ 	arm_cpu_info_t *cpu_info_p;
++	if (cdp == &BootCpuData) uke_boot_stage("CPU cpu_init body entered");
+ 
+ 	assert(exception_stack_pointer() != 0);
+ 
+ 	if (cdp->cpu_type != CPU_TYPE_ARM64) {
+ 		cdp->cpu_type = CPU_TYPE_ARM64;
+ 
++	if (cdp == &BootCpuData) uke_boot_stage("CPU timer queue init enter");
+ 		timer_call_queue_init(&cdp->rtclock_timer.queue);
++	if (cdp == &BootCpuData) uke_boot_stage("CPU timer queue init returned");
+ 		cdp->rtclock_timer.deadline = EndOfAllTime;
+ 
+ 		if (cdp == &BootCpuData) {
++	if (cdp == &BootCpuData) uke_boot_stage("CPU do_cpuid enter");
+ 			do_cpuid();
++	if (cdp == &BootCpuData) uke_boot_stage("CPU do_cpuid returned");
++	if (cdp == &BootCpuData) uke_boot_stage("CPU do_mvfpid enter");
+ 			do_mvfpid();
++	if (cdp == &BootCpuData) uke_boot_stage("CPU do_mvfpid returned");
+ 		} else {
+ 			/*
+ 			 * We initialize non-boot CPUs here; the boot CPU is
+@@ -736,11 +744,16 @@
+ 			pmap_cpu_data_init();
+ 		}
+ 
++	if (cdp == &BootCpuData) uke_boot_stage("CPU do_cacheid enter");
+ 		do_cacheid();
++	if (cdp == &BootCpuData) uke_boot_stage("CPU do_cacheid returned");
+ 
+ 		/* ARM_SMP: Assuming identical cpu */
++	if (cdp == &BootCpuData) uke_boot_stage("CPU do_debugid enter");
+ 		do_debugid();
+-
++	if (cdp == &BootCpuData) uke_boot_stage("CPU do_debugid returned");
++
++		if (cdp == &BootCpuData) uke_boot_stage("CPU subtype selection enter");
+ 		cpu_info_p = cpuid_info();
+ 
+ 		/* switch based on CPU's reported architecture */
+@@ -759,8 +772,11 @@
+ 		}
+ 
+ 		cdp->cpu_threadtype = CPU_THREADTYPE_NONE;
++		if (cdp == &BootCpuData) uke_boot_stage("CPU subtype selection returned");
+ #if CONFIG_CPU_COUNTERS
++	if (cdp == &BootCpuData) uke_boot_stage("CPU CPC early enter");
+ 		cpc_cpu_transition(CPC_CPU_EARLY_INIT, cdp);
++	if (cdp == &BootCpuData) uke_boot_stage("CPU CPC early returned");
+ #endif /* CONFIG_CPU_COUNTERS */
+ 	}
+ 	cdp->cpu_stat.irq_ex_cnt_wake = 0;
+@@ -777,8 +793,12 @@
+ 	 * After setting `cpu_running` to true so timers can be armed,
+ 	 * if necessary.
+ 	 */
++	if (cdp == &BootCpuData) uke_boot_stage("CPU CPC online enter");
+ 	cpc_cpu_transition(CPC_CPU_ONLINE, cdp);
++	if (cdp == &BootCpuData) uke_boot_stage("CPU CPC online returned");
+ #endif /* CONFIG_CPU_COUNTERS */
++
++	if (cdp == &BootCpuData) uke_boot_stage("CPU cpu_init body complete");
+ }
+ 
+ void
+diff --git a/osfmk/kern/processor.c b/osfmk/kern/processor.c
+--- a/osfmk/kern/processor.c
++++ b/osfmk/kern/processor.c
+@@ -61,6 +61,7 @@
+  */
+ 
+ #include <kern/processor.h>
++extern void uke_boot_stage(const char *);
+ 
+ #if !SCHED_TEST_HARNESS
+ 
+@@ -389,8 +390,12 @@
+ void
+ processor_bootstrap(void)
+ {
++	uke_boot_stage("PROC available cores lock init enter");
+ 	simple_lock_init(&sched_available_cores_lock, 0);
++	uke_boot_stage("PROC available cores lock init returned");
++	uke_boot_stage("PROC start state lock init enter");
+ 	simple_lock_init(&processor_start_state_lock, 0);
++	uke_boot_stage("PROC start state lock init returned");
+ 
+ 	/* Initialize boot pset and node */
+ #if __AMP__
+@@ -399,11 +404,15 @@
+ 	assert3u(sched_num_psets, ==, UINT8_MAX);
+ 	sched_num_psets = 0;
+ 	/* Create virtual psets for the boot cluster. */
++	uke_boot_stage("PROC AMP boot psets enter");
+ 	psets_create_for_cluster(topology_info->boot_cluster->cluster_id, topology_info);
++	uke_boot_stage("PROC AMP boot psets returned");
+ 	assert3u(sched_num_psets, >, 0);
+ 
+ 	/* Identify the boot pset and boot pset node. */
++	uke_boot_stage("PROC AMP find boot pset enter");
+ 	sched_boot_pset = pset_find_for_cpu_id(boot_cpu_id);
++	uke_boot_stage("PROC AMP find boot pset returned");
+ 	sched_boot_pset_node = pset_node_for_pset_type(sched_boot_pset->pset_type);
+ #else /* !__AMP__ */
+ 	sched_num_psets = 1;
+@@ -414,8 +423,12 @@
+ 	sched_boot_pset->pset_type = PSET_SMP;
+ #endif /* !__AMP__ */
+ 
++	uke_boot_stage("PROC boot pset init enter");
+ 	pset_init(sched_boot_pset);
++	uke_boot_stage("PROC boot pset init returned");
++	uke_boot_stage("PROC node add pset enter");
+ 	pset_node_add_pset(sched_boot_pset_node, sched_boot_pset);
++	uke_boot_stage("PROC node add pset returned");
+ 
+ #if !SCHED_TEST_HARNESS
+ 	queue_init(&tasks);
+@@ -425,7 +438,9 @@
+ 	queue_init(&corpse_tasks);
+ #endif /* !SCHED_TEST_HARNESS */
+ 
++	uke_boot_stage("PROC master processor_init enter");
+ 	processor_init(master_processor, boot_cpu_id, sched_boot_pset);
++	uke_boot_stage("PROC master processor_init returned");
+ }
+ 
+ /*
+@@ -441,6 +456,7 @@
+ {
+ 	spl_t           s;
+ 
++	if (processor == master_processor) uke_boot_stage("PROC processor_init body entered");
+ 	assert(cpu_id < MAX_CPUS);
+ 	processor->cpu_id = cpu_id;
+ 
+@@ -449,6 +465,7 @@
+ 	kprintf("[%s] processor %d belongs to processor set %u of type %u\n", __FUNCTION__, cpu_id, pset->pset_id, pset->pset_type);
+ #endif /* !SCHED_TEST_HARNESS */
+ 
++	if (processor == master_processor) uke_boot_stage("PROC processor_init kprintf returned");
+ 	if (processor != master_processor) {
+ 		/* Scheduler state for the boot processor gets initialized directly in
+ 		 * ml_bootstrap_processors(). */
+@@ -493,10 +510,16 @@
+ 	os_atomic_init(&processor->stir_the_pot_inbox_cpu, -1);
+ #endif /* CONFIG_SCHED_EDGE */
+ 
++	if (processor == master_processor) uke_boot_stage("PROC splsched enter");
+ 	s = splsched();
++	if (processor == master_processor) uke_boot_stage("PROC splsched returned");
++	if (processor == master_processor) uke_boot_stage("PROC available cores lock enter");
+ 	simple_lock(&sched_available_cores_lock, LCK_GRP_NULL);
+-
++	if (processor == master_processor) uke_boot_stage("PROC available cores lock returned");
++
++	if (processor == master_processor) uke_boot_stage("PROC pset lock enter");
+ 	pset_lock(pset);
++	if (processor == master_processor) uke_boot_stage("PROC pset lock returned");
+ #if __AMP__
+ 	/* On AMP platforms, the pset cpu_bitmask is set by processor_bootstrap(). */
+ 	assert(bit_test(pset->cpu_bitmask, cpu_id));
+@@ -517,8 +540,12 @@
+ 	}
+ 
+ 	processor->last_recommend_reason = REASON_SYSTEM;
++	if (processor == master_processor) uke_boot_stage("PROC scheduler change mode enter");
+ 	sched_processor_change_mode_locked(processor, PCM_RECOMMENDED, true);
++	if (processor == master_processor) uke_boot_stage("PROC scheduler change mode returned");
++	if (processor == master_processor) uke_boot_stage("PROC pset unlock enter");
+ 	pset_unlock(pset);
++	if (processor == master_processor) uke_boot_stage("PROC pset unlock returned");
+ 
+ 	processor->processor_offline_state = PROCESSOR_OFFLINE_NOT_BOOTED;
+ 	bit_set(processor_offline_state_map[processor->processor_offline_state], cpu_id);
+@@ -538,6 +565,8 @@
+ 	processor_list_tail = processor;
+ 	processor_count++;
+ 	processor_array[cpu_id] = processor;
++
++	if (processor == master_processor) uke_boot_stage("PROC processor_init body complete");
+ }
+ 
+ #if CONFIG_SCHED_SMT

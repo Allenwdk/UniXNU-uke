@@ -1,0 +1,68 @@
+--- a/bsd/kern/kern_newsysctl.c
++++ b/bsd/kern/kern_newsysctl.c
+@@ -68,6 +68,7 @@
+ 
+ 
+ #include <kern/counter.h>
++#include <kern/startup.h>
+ #include <sys/param.h>
+ #include <sys/buf.h>
+ #include <sys/kernel.h>
+@@ -102,6 +103,10 @@
+ #if DEBUG || DEVELOPMENT
+ #include <os/system_event_log.h>
+ #endif /* DEBUG || DEVELOPMENT */
++
++/* Bounded, opt-in observation of the unchanged AppleImage4 ignition handler. */
++TUNABLE(bool, uke_ignition_trace, "uke-ignition-trace", false);
++static unsigned uke_ignition_trace_queries;
+ 
+ static LCK_GRP_DECLARE(sysctl_lock_group, "sysctl");
+ static LCK_RW_DECLARE(sysctl_geometry_lock, &sysctl_lock_group);
+@@ -1744,6 +1749,7 @@
+ 	sysctl_handler_t oid_handler = NULL;
+ 	int error;
+ 	boolean_t unlocked_node_found = FALSE;
++	bool ignition_trace = false;
+ 	boolean_t namestring_started = FALSE;
+ 
+ 	/* Get the read lock on the geometry */
+@@ -1919,6 +1925,15 @@
+ 
+ 	lck_rw_done(&sysctl_geometry_lock);
+ 
++	if (uke_ignition_trace && !from_kernel && proc_pid(req->p) == 1 &&
++	    !strcmp(oid->oid_name, "ignition_blob")) {
++		ignition_trace = os_atomic_inc_orig(&uke_ignition_trace_queries, relaxed) < 8;
++		if (ignition_trace) {
++			kprintf("UKE IGN: ignition_blob enter oldlen=%lu newlen=%lu\n",
++			    (unsigned long)req->oldlen, (unsigned long)req->newlen);
++		}
++	}
++
+ #if CONFIG_MACF
+ 	/*
+ 	 * Reading the page size (hw.pagesize, which getpagesize() and sysconf(_SC_PAGESIZE) ask) is left to everyone: the GPU's
+@@ -1936,6 +1951,7 @@
+ 		    req->newptr,
+ 		    req->newlen);
+ 		if (error) {
++			if (ignition_trace) kprintf("UKE IGN: ignition_blob MAC rejected %d\n", error);
+ 			goto dropref;
+ 		}
+ 	}
+@@ -1961,12 +1977,14 @@
+ 	    ptrauth_function_pointer_type_discriminator(typeof(oid_handler)));
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
++	if (ignition_trace) kprintf("UKE IGN: ignition_blob dispatch\n");
+ 	if ((oid->oid_kind & CTLTYPE) == CTLTYPE_NODE) {
+ 		i = oid_handler(oid, name + indx, (int)(namelen - indx), req);
+ 	} else {
+ 		i = oid_handler(oid, oid->oid_arg1, oid->oid_arg2, req);
+ 	}
+ 	error = i;
++	if (ignition_trace) kprintf("UKE IGN: ignition_blob returned %d\n", error);
+ 
+ 	if (unlocked_node_found) {
+ 		lck_mtx_unlock(&sysctl_unlocked_node_lock);

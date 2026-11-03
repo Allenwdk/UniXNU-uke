@@ -59,6 +59,9 @@ struct ctx {
 #endif
 #define PANIC_TEXT_BYTES 256
 #define PANIC_SAVE_BYTES 1024
+#ifndef PANIC_TRACE_FRAMES
+#define PANIC_TRACE_FRAMES 0
+#endif
 
 __attribute__((noreturn)) static void park (void)
 {
@@ -73,7 +76,7 @@ static void put (struct ctx *g, u8 c)
   u32 row, col, dy, dx;
 
   if (g->log && g->logcap && g->logn < g->logcap - 1 && c >= 9 && c <= 126) {
-    g->log[g->logn++] = (c < 32) ? ' ' : c;
+    g->log[g->logn++] = c;
     g->log[g->logn] = 0;
   }
 
@@ -140,7 +143,7 @@ static int readable (const char *s, const u64 *args)
   u64 a = (u64)s, par;
   (void)args;
   if (a < 0xffff000000000000UL) return 0;
-  __asm__ volatile ("at s1e1r, %1; isb; mrs %0, par_el1" : "=r" (par) : "r" (a) : "memory");
+  __asm__ volatile ("at s1e1r, %1\n\tisb\n\tmrs %0, par_el1" : "=r" (par) : "r" (a) : "memory");
   return !(par & 1) && ((par >> 60) != 0);
 }
 
@@ -271,30 +274,38 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
     park ();
   }
 
-  /* First panic wins: a marker in the last row's first two pixels means a panic already drew
-   * the screen; a later panic (another thread or exception) must not overwrite it. */
+  /* Claim before clearing or formatting. This is normal kernel BSS, not a
+   * device framebuffer: exclusive operations on device mappings may fault.
+   * The shadow length has no other writer; nonzero also blocks nested panics.
+   * Publish the real nonzero length only after copying the complete shadow. */
+#if PANIC_SHADOW_LEN
+  u32 unclaimed = 0;
+  if (!__atomic_compare_exchange_n((u32 *)PANIC_SHADOW_LEN, &unclaimed, 1, 0,
+                                  __ATOMIC_RELAXED, __ATOMIC_RELAXED)) park ();
+#endif
+#if !PANIC_SHADOW_LEN
   volatile u32 *mark = (volatile u32 *)(g.base + (u64)(g.h - 1) * g.rb);
-  if (mark[0] == 0xC0FFEE11u && mark[1] == 0x5CEEDA7Au) {
-    park ();
-  }
+  if (mark[0] == 0xC0FFEE11u && mark[1] == 0x5CEEDA7Au) park ();
+#endif
   g.x = 0;
-  g.y = g.h / 8;
+  g.y = 0;
   g.log = 0;
   g.logn = 0;
   g.logcap = 0;
   save[0] = 0;
-  for (row = g.y; row < g.h; row++) {
+  /* The final message starts at row zero. Quiesce the ordinary console before
+   * clearing that same full area, including the old top-of-screen log. */
+  quiet_console ();
+  for (row = 0; row < g.h; row++) {
     for (col = 0; col < g.w; col++) {
       *(volatile u32 *)(g.base + (u64)row * g.rb + (u64)col * 4) = 0;
     }
   }
-  g.y += 8;
   /* The board's live banner keeps showing this text after the next swap paints over the screen (BootProgress.c,
    * boot_progress_panic_text). The first panic's text is kept: a buffer that already holds one is left alone. */
   if (PANIC_TEXT && *(volatile u8 *)PANIC_TEXT == 0) {
     banner = (u8 *)PANIC_TEXT;
   }
-  quiet_console ();
   g.log = save;
   g.logn = 0;
   g.logcap = sizeof(save);
@@ -303,6 +314,20 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   saved_h = g.h;
   g.h = 0;
   format (&g, fmt, args);
+#if PANIC_TRACE_FRAMES
+  /* Bounded frame links from this CPU. Raw authenticated LR values are kept
+   * for offline symbolization; never follow an unchecked stack pointer. */
+  {
+    const u64 *fp = (const u64 *)__builtin_frame_address(0);
+    for (u32 i = 0; i < PANIC_TRACE_FRAMES; ++i) {
+      if (!readable((const char *)fp, 0) || !readable((const char *)(fp + 1), 0)) break;
+      format(&g, i ? " %p" : "\nBT %p", fp + 1);
+      const u64 next = fp[0], at = (u64)fp;
+      if ((next & 15) || next <= at || next - at > 0x4000) break;
+      fp = (const u64 *)next;
+    }
+  }
+#endif
   saved = g.logn;
   g.h = saved_h;
 #if PANIC_TEXT
@@ -312,7 +337,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
     u32 n = saved < PANIC_TEXT_BYTES - 1 ? saved : PANIC_TEXT_BYTES - 1;
     u32 i;
     for (i = 0; i < n; i++) {
-      banner[i] = save[i];
+      banner[i] = save[i] < 32 ? ' ' : save[i];
     }
     banner[n] = 0;
   }
@@ -336,9 +361,13 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
     __asm__ volatile ("dsb sy");
   }
   /* The raw argument slots are not dumped: the formatted message above already carries them. */
+#if !PANIC_SHADOW_LEN
+  /* Kernels with the atomic BSS claim above already exclude nested panics.
+   * Keep the framebuffer marker only for the older fallback path. */
   mark[0] = 0xC0FFEE11u;
   mark[1] = 0x5CEEDA7Au;
   __asm__ volatile ("dsb sy");
+#endif
 #if PANIC_SHADOW
   if (saved) {
     volatile char *shadow = (volatile char *)PANIC_SHADOW;
@@ -349,11 +378,11 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
     shadow[n] = 0;
     __asm__ volatile("dsb sy" ::: "memory");
 #if PANIC_SHADOW_LEN
-    *(volatile u32 *)PANIC_SHADOW_LEN = n;
+    __atomic_store_n((u32 *)PANIC_SHADOW_LEN, n, __ATOMIC_RELEASE);
 #endif
   }
 #endif
-  /* Hand the saved text to the boot-log writer's pram staging block. The marker
+  /* Hand the saved text to the boot-log writer's pram staging block. The claim
    * above is already set, so a fault here parks a nested panic instead of
    * repainting over this one. */
 #if UKE_PANIC_FLUSH

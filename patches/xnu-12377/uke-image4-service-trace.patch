@@ -1,0 +1,78 @@
+--- a/iokit/Kernel/IOService.cpp
++++ b/iokit/Kernel/IOService.cpp
+@@ -68,6 +68,9 @@
+ #include <string.h>
+ 
+ #include <machine/pal_routines.h>
++
++extern "C" bool uke_ignition_trace;
++static unsigned uke_image4_service_waits;
+ 
+ #define LOG kprintf
+ //#define LOG IOLog
+@@ -5118,7 +5121,12 @@
+ 	service->__patchProperties();
+ #endif /* DEBUG || DEVELOPMENT */
+ 
++	const bool image4_trace = uke_ignition_trace &&
++	    !strcmp(service->getMetaClass()->getClassName(), "AppleImage4");
++	if (image4_trace) kprintf("UKE IMG4: service start provider=%s thread=%llx\n",
++	    getName(), (unsigned long long)(uintptr_t)current_thread());
+ 	ok = service->start(this);
++	if (image4_trace) kprintf("UKE IMG4: service start returned %u\n", ok);
+ 
+ 	if (recordTime) {
+ 		clock_get_uptime(&endTime);
+@@ -6820,7 +6828,14 @@
+ IOService::waitForMatchingService( OSDictionary * matching,
+     uint64_t timeout)
+ {
+-	return IOService::waitForMatchingServiceWithToken(matching, timeout, NULL);
++	OSString *query = matching ? OSDynamicCast(OSString, matching->getObject(gIOProviderClassKey)) : NULL;
++	const bool trace = uke_ignition_trace && query && query->isEqualTo("IOAESAccelerator") &&
++	    os_atomic_inc_orig(&uke_image4_service_waits, relaxed) < 4;
++	if (trace) kprintf("UKE IMG4: wait IOAESAccelerator timeout=%llu thread=%llx\n",
++	    (unsigned long long)timeout, (unsigned long long)(uintptr_t)current_thread());
++	IOService *result = IOService::waitForMatchingServiceWithToken(matching, timeout, NULL);
++	if (trace) kprintf("UKE IMG4: wait IOAESAccelerator returned %u\n", result != NULL);
++	return result;
+ }
+ 
+ IOService *
+--- a/bsd/kern/kern_newsysctl.c
++++ b/bsd/kern/kern_newsysctl.c
+@@ -109,7 +109,7 @@
+ TUNABLE(bool, uke_ignition_trace, "uke-ignition-trace", false);
+ static unsigned uke_ignition_trace_queries;
+ static thread_t uke_ignition_trace_thread;
+-static unsigned uke_ignition_wait_counts[4];
++static unsigned uke_ignition_wait_counts[5];
+ static bool uke_ignition_trace_busy;
+ 
+ /* Observe only the active traced sysctl thread; no allocation or result change. */
+@@ -117,13 +117,13 @@
+ uke_ignition_wait_trace(unsigned kind, uint64_t argument)
+ {
+ 	thread_t traced = os_atomic_load(&uke_ignition_trace_thread, acquire);
+-	if (kind < 1 || kind > 4 || traced == THREAD_NULL ||
++	if (kind < 1 || kind > 5 || traced == THREAD_NULL ||
+ 	    traced != current_thread() ||
+ 	    !os_atomic_cmpxchg(&uke_ignition_trace_busy, false, true, acquire)) {
+ 		return;
+ 	}
+ 	if (os_atomic_inc_orig(&uke_ignition_wait_counts[kind - 1], relaxed) < 2) {
+-		static const char * const names[] = {"gate try-close", "gate result", "gate wait deadline", "IOSleep ms"};
++		static const char * const names[] = {"gate try-close", "gate result", "gate wait deadline", "IOSleep ms", "gate owner"};
+ 		kprintf("UKE IGN: %s %llu\n", names[kind - 1], (unsigned long long)argument);
+ 	}
+ 	os_atomic_store(&uke_ignition_trace_busy, false, release);
+--- a/osfmk/kern/locks.c
++++ b/osfmk/kern/locks.c
+@@ -3645,6 +3645,7 @@
+ {
+ 	LCK_MTX_ASSERT(lock, LCK_MTX_ASSERT_OWNED);
+ 	uke_ignition_wait_trace(3, deadline);
++	uke_ignition_wait_trace(5, (uint64_t)GATE_STATE_TO_THREAD(ordered_load_gate(gate)));
+ 
+ 	if (lck_sleep_action & LCK_SLEEP_UNLOCK) {
+ 		return gate_wait(gate,

@@ -14,7 +14,7 @@ commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 name = "sm7675"
 kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
-commit = "98618c197e789acfd7ac6755ad23bf7e04881780"
+commit = "c4463748d52539cf9f95227f5a248ed31eb6e1ac"
 local = "../UniXNU-sm7675-common"
 
 # Board-pinned component variants for the iPadOS 27 line: the canonical GPU and
@@ -32,9 +32,9 @@ local = "../UniXNU/drivers/Adreno740"
 [[source]]
 name = "GopFramebuffer"
 kind = "driver"
-git = "https://github.com/UniXNU/GopFramebuffer.git"
+git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
 # Upstream feat/ipados27-gpu-parity tip (2026-10-30): the CPU path's display backend.
-commit = "4975bc84eb87e16d629125dcffb30cc30dfd2d86"
+commit = "96046db8b09bd2440a6a6903343307defd97a039"
 local = "../UniXNU/drivers/GopFramebuffer"
 
 [[source]]

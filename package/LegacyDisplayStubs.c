@@ -51,10 +51,10 @@ sheng_gpu_power_probe (void)
 
 /*
  * The Adreno driver's BO-release check asks this hook which user mappings still cover a page (the host fixtures define it). The
- * kernel has no such helper, so it answers none and the check skips itself; without a definition the weak import keeps the
- * kernel link open.
+ * kernel answers it with the real pmap helper (sheng's pmap.c); this weak fallback only keeps the display-only kernel
+ * linkable when that helper is absent, and is then discarded by the linker.
  */
-unsigned int
+__attribute__((weak)) unsigned int
 native_pmap_user_mappings (unsigned int page, void **pmap, uint64_t *va, char *name)
 {
   (void)page;

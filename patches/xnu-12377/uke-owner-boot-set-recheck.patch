@@ -1,0 +1,23 @@
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -609,9 +609,18 @@
+ 	if (!chosen) { native_owner_boot_manifest_status = 2; return 0; }
+ 	// Never replace an existing firmware/Apple identity with an owner identity.
+ 	if (chosen->getProperty("boot-manifest-hash") || chosen->getProperty("owner-boot-manifest-domain")) {
++		// Early owner metadata is accepted only after both actual media proofs
++		// above recompute exactly the same image-set digest and domain.
++		OSData *existing = OSDynamicCast(OSData, chosen->getProperty("boot-manifest-hash"));
++		OSData *existingDomain = OSDynamicCast(OSData, chosen->getProperty("owner-boot-manifest-domain"));
++		bool sameOwner = existing && existing->getLength() == sizeof(digest) &&
++		    !memcmp(existing->getBytesNoCopy(), digest, sizeof(digest)) &&
++		    existingDomain && existingDomain->getLength() == sizeof(domain) &&
++		    !memcmp(existingDomain->getBytesNoCopy(), domain, sizeof(domain));
++		if (sameOwner) memcpy(native_owner_boot_manifest_hash, digest, sizeof(digest));
+ 		chosen->release();
+-		native_owner_boot_manifest_status = 3;
+-		return 0;
++		native_owner_boot_manifest_status = sameOwner ? 0 : 3;
++		return sameOwner ? 1 : 0;
+ 	}
+ 	OSData *value = OSData::withBytes(digest, sizeof(digest));
+ 	OSData *tag = OSData::withBytes(domain, sizeof(domain));

@@ -95,6 +95,29 @@ if os.uname().sysname == 'Linux':
 (output / 'lto-command.json').write_text(json.dumps(args, indent=2) + '\n')
 with (output / 'lto-build.log').open('w') as log:
     result = subprocess.run(args, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
+if result.returncode:
+    # sheng's patches call board hooks behind weak_import declarations (boot_log_rounds from
+    # package/BootLog.c, native_source_storage_start from the source-storage archive). On arm64e an
+    # authenticated pointer to an undefined weak symbol fails the link, and this comparison kernel
+    # never runs: stub exactly the symbols the link named and link once more. Same approach as
+    # UniXNU's scripts/build-fileset-release-reference.py (fix(prelink) 3cb6a30 / f0e7d52).
+    import re
+    log_text = (output / 'lto-build.log').read_text(errors='replace')
+    missing = sorted(set(re.findall(r'^\s+"(_[A-Za-z_][A-Za-z0-9_]*)"', log_text, re.M)))
+    if missing:
+        stubs = output / 'native-stubs.c'
+        stubs.write_text(''.join(f'long {name[1:]};\n' for name in missing))
+        obj = output / 'native-stubs.o'
+        cc = os.environ.get('CROSS_CLANG') or f'{clt}/bin/clang'
+        subprocess.run([cc, '--target=arm64e-apple-ios27.0', '-mkernel', '-c',
+                        '-o', str(obj), str(stubs)], check=True)
+        for i, a in enumerate(args):
+            if a.startswith('LD_KERNEL_ARCHIVES='):
+                args[i] += f' -Wl,-force_load,{obj}'
+                break
+        print('stubbed undefined weak symbols:', ' '.join(missing), flush=True)
+        with (output / 'lto-build.log').open('a') as log:
+            result = subprocess.run(args, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
 if result.returncode == 0:
     # The OS profile names the reference next to the output dir; make writes it under the config dir.
     built = output / 'DEVELOPMENT_ARM64_BCM2837' / 'mach.development.bcm2837.unstripped.noctf'

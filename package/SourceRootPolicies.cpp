@@ -11,6 +11,7 @@
 #include <mach/mach_vm.h>
 #include "verified_root.h"
 #include "VerifiedBlockPolicy.h"
+#include "OwnerBootIdentity.h"
 
 extern "C" {
 extern const uint8_t verified_root_key[];
@@ -76,10 +77,27 @@ extern "C" bool native_source_root_policies_load(void)
         if ((headerOnly ? vr_open_header(bytes + offset, size, verified_root_key, 1, &vr_xnu_crypto, &view) :
                           vr_open(bytes + offset, size, verified_root_key, 1, &vr_xnu_crypto, &view)) != VR_OK)
             return false;
+        // Bind the owner-domain identity to the exact authenticated signed headers.
+        // Each signed header authenticates its complete hash table; this pins the
+        // full-envelope boot-set identity without trusting firmware-supplied hashes.
+        uint8_t headerDigest[32];
+        if (count != 2 || i >= 2 ||
+            !vr_xnu_crypto.sha256(bytes + offset, VR_HEADER_BYTES + VR_SIGNATURE_BYTES, headerDigest) ||
+            memcmp(headerDigest, owner_policy_header_sha256[i], sizeof(headerDigest)))
+            return false;
         verified_root_policies[i] = {bytes + offset, size};
         cursor += size;
     }
     if (cursor != length) return false;
+    IORegistryEntry *chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
+    OSData *identity = chosen ? OSDynamicCast(OSData, chosen->getProperty("boot-manifest-hash")) : nullptr;
+    OSData *domain = chosen ? OSDynamicCast(OSData, chosen->getProperty("owner-boot-manifest-domain")) : nullptr;
+    bool bound = identity && identity->getLength() == sizeof(owner_boot_set_hash) &&
+                 !memcmp(identity->getBytesNoCopy(), owner_boot_set_hash, sizeof(owner_boot_set_hash)) &&
+                 domain && domain->getLength() == sizeof(owner_boot_set_domain) &&
+                 !memcmp(domain->getBytesNoCopy(), owner_boot_set_domain, sizeof(owner_boot_set_domain));
+    if (chosen) chosen->release();
+    if (!bound) return false;
     verified_root_policy_count = count;
     return true;
 }

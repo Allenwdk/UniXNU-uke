@@ -1,20 +1,10 @@
 diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -566,6 +566,10 @@
- }
- #endif
- 
-+/* A device that builds the source storage links its strong definition from libShengSourceStorage.a; this
-+ * weak fallback keeps the symbol defined for builds without that archive (the reference kernel). */
-+__attribute__((weak)) void native_source_storage_start(void) {}
-+
- void
- bsd_init(void)
- {
-@@ -793,4 +797,5 @@
- 	/* Initialize the file systems. */
- 	bsd_init_kprintf("calling vfsinit\n");
+@@ -796,2 +796,6 @@
  	vfsinit();
-+	native_source_storage_start();
++	/* Optional source storage runtime registers after the IOKit bootstrap. */
++	extern void native_source_storage_start(void) __attribute__((weak_import));
++	if (&native_source_storage_start)
++		native_source_storage_start();
  #if DEVELOPMENT || DEBUG

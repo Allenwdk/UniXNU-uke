@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sign and fully verify the original 24A446 OS image: the root policy of source storage.
+"""Sign and fully verify an original OS or SystemOS image: the root policy of source storage.
 
 macOS attaches the image with hdiutil/diskutil and builds the verification library as a dylib; Linux decrypts the
 AEA member with blacktop's ipsw, reads the raw disk with the core's udif.py, and builds the same library as a
@@ -12,6 +12,7 @@ import ctypes
 import hashlib
 import importlib.util
 import json
+import os
 import plistlib
 import shutil
 import stat
@@ -22,7 +23,8 @@ import uuid
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--image', type=Path, required=True, help='the OS disk image extracted from the IPSW (.dmg or .dmg.aea)')
+parser.add_argument('--component', choices=('OS', 'SystemOS'), default='OS', help='root window named by the OS profile')
+parser.add_argument('--image', type=Path, required=True, help='the disk image extracted from the IPSW (.dmg or .dmg.aea)')
 parser.add_argument('--profile', type=Path, required=True, help='profiles/os/<profile>/profile.toml (core checkout)')
 parser.add_argument('--verified-root', type=Path, required=True, help='kits/VerifiedRoot checkout')
 parser.add_argument('--output', type=Path, required=True, help='policy directory (manifest.bin, trusted-key.bin, ...)')
@@ -33,8 +35,9 @@ parser.add_argument('--ipsw-tool', default=None, help='blacktop ipsw binary for 
 args = parser.parse_args()
 profile = tomllib.loads(args.profile.read_text())
 root_profile = profile['root']
-expected_uuid = uuid.UUID(root_profile['os_volume_uuid'])
-expected_digest = root_profile['os_image_sha256']
+prefix = args.component.lower()
+expected_uuid = uuid.UUID(root_profile[prefix + '_volume_uuid'])
+expected_digest = root_profile[prefix + '_image_sha256']
 out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
 host = (args.host or out / 'host').resolve()
@@ -115,6 +118,10 @@ class BlocksReader:
 source = args.image.resolve()
 compressed_digest = sha256_file(source)
 plain = decrypt_aea(source) if source.suffix == '.aea' else source
+# A successful decoder exit does not establish durable writes (Btrfs writeback can fail later).
+with plain.open('rb') as durable:
+    os.fsync(durable.fileno())
+(out / 'verification.json').unlink(missing_ok=True)
 image_bytes = None
 read_raw = None
 detach = None
@@ -188,7 +195,7 @@ with contextlib.closing(read_raw()) as stream:
     if stream.read(1):
         raise SystemExit('Virtual media exceeded its authenticated exact bounds')
 if complete.digest() != bytes(view.image_sha256) or complete.hexdigest() != expected_digest:
-    raise SystemExit('Actual complete original OS digest differs from the profile')
+    raise SystemExit(f'Actual complete original {args.component} digest differs from the profile')
 (out / 'original-samples.bin').write_bytes(b''.join(samples))
 report = dict(image_bytes=view.image_bytes, blocks_verified=view.block_count, image_sha256=complete.hexdigest(),
               volume_uuid=str(expected_uuid).upper(), generation=view.generation,
@@ -197,6 +204,6 @@ report = dict(image_bytes=view.image_bytes, blocks_verified=view.block_count, im
               trusted_key_sha256=record['trusted_key_sha256'], actual_sample_indices=indices,
               actual_sample_lengths=lengths, real_c_signature_and_block_verification=True,
               original_image_modified=False, host_only=True, boot_root_authenticated=False,
-              qemu_tested=False, hardware_tested=False, os_profile=profile['os']['name'])
+              qemu_tested=False, hardware_tested=False, os_profile=profile['os']['name'], component=args.component)
 (out / 'verification.json').write_text(json.dumps(report, indent=2) + '\n')
-print(f'PASS: {profile["os"]["name"]} OS policy, {view.block_count} blocks, uuid {expected_uuid}')
+print(f'PASS: {profile["os"]["name"]} {args.component} policy, {view.block_count} blocks, uuid {expected_uuid}')

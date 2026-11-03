@@ -42,3 +42,17 @@
         method = "smc";
     };
 };
+
+// AMP/Edge requires an explicit E/P type; a missing type becomes SMP and
+// cluster_type_to_pset_type() rejects it during processor_bootstrap().
+// Stock uke DT: CPUs 0-2 use freq domain 0/capacity 0x400; CPUs 3-6 domain 1
+// /capacity 0x69a and CPU7 domain 2/capacity 0x733. Group both faster domains
+// as P, following the upstream sheng ADT binding (not the CPU compatible text).
+&cpu0 { unixnu,cluster-type = "E"; };
+&cpu1 { unixnu,cluster-type = "E"; };
+&cpu2 { unixnu,cluster-type = "E"; };
+&cpu3 { unixnu,cluster-type = "P"; };
+&cpu4 { unixnu,cluster-type = "P"; };
+&cpu5 { unixnu,cluster-type = "P"; };
+&cpu6 { unixnu,cluster-type = "P"; };
+&cpu7 { unixnu,cluster-type = "P"; };
