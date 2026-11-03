@@ -1954,49 +1954,11 @@ void startHeartbeatThread() {
     thread_t thread = nullptr;
     if (kernel_thread_start(heartbeatThread, nullptr, &thread) == KERN_SUCCESS) {thread_deallocate(thread); gHeartbeatThread = true;}
 }
-// Persist only failure transitions from the upstream driver counters. No frame,
-// pixel or syscall capture is enabled; a respring must retain the GPU reason.
-extern "C" {
-extern volatile uint32_t native_adreno_recover_log[8][12], native_adreno_recover_log_count;
-extern volatile uint32_t native_adreno_recovery_fault[5];
-struct UkeGpuClientText {char name[20]; char text[64];};
-extern UkeGpuClientText native_adreno_client_text[8];
-}
-void persistGpuFailures() {
-    static uint32_t recovered;
-    const uint32_t count = native_adreno_recover_log_count;
-    if (count != recovered) {
-        const uint32_t first = count - recovered > 8 ? count - 8 : recovered;
-        for (uint32_t i = first; i != count; ++i) {
-            uint32_t row[12];
-            for (unsigned j = 0; j < 12; ++j) row[j] = native_adreno_recover_log[i & 7][j];
-            if (row[0] != i + 1) continue;
-            IOLog("UKE GPU recovery: n=%u t=%llu fence=%u status=%x replay=%u flags=%x dead=%u info=%x/%x/%x/%x\n",
-                  row[0], (unsigned long long)((uint64_t(row[2]) << 32) | row[1]), row[3], row[4], row[5], row[6],
-                  row[7], row[8], row[9], row[10], row[11]);
-            IOLog("UKE GPU fault: n=%u fsr=%x far=%x/%x syn=%x aperture=%x/%x mode=%u\n",
-                  native_adreno_recovery_fault[0], native_adreno_recovery_fault[1], native_adreno_recovery_fault[2],
-                  native_adreno_recovery_fault[3], native_adreno_recovery_fault[4], native_adreno_cp_aperture[0],
-                  native_adreno_cp_aperture[1], native_adreno_cp_aperture[3]);
-        }
-        recovered = count;
-    }
-    static UkeGpuClientText previous[8];
-    for (unsigned i = 0; i < 8; ++i) {
-        UkeGpuClientText now;
-        memcpy(&now, &native_adreno_client_text[i], sizeof now);
-        now.name[sizeof now.name - 1] = 0; now.text[sizeof now.text - 1] = 0;
-        if (!strncmp(now.text, "problem", 7) && memcmp(&previous[i], &now, sizeof now))
-            IOLog("UKE GPU client: %.19s %.63s\n", now.name, now.text);
-        previous[i] = now;
-    }
-}
 void heartbeat() {
     // Row 4 from now on: seconds since the run ended, GX state, and (only with GX on) the GPU status words, so a photo
     // tells a live kernel from a hung one and shows whether the GPU stays idle.
     char row[64];
     for (unsigned t = 0;; t += 2) {
-        persistGpuFailures();
         uint32_t info = 0;
         gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuCore, kG2hInfo, &info);
         if (gxOn() && gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR)) {
