@@ -343,10 +343,21 @@ release `uke-port/releases/2026-11-03-ipados27-gpu-turnip-chains/`，vendor_boot
 GPU源码/用户态不变，保持mode2双ring、每进程VM、CP页表切换、缓存策略和DeviceLost后正常恢复。未通过关闭抢占、共享VM或吞错误规避；QSMMUv500的ACTLR仍按OEM原DT0x32b，没有套用ARM MMU500的寄存器假设。
 
 release `uke-port/releases/2026-11-03-ipados27-gpu-resource-view/` **已构建未刷**。
-core源码 `bfd70d9876d59abc00157b62d8b2ff00b60aaca5`，device源码 `d55d703ef1205e571c91d07314dd6ca68aeebd4d`；未push。
-boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`；vendor_boot SHA `24e777a883cc62dcf0e5afd8635373feb5be0fc02d74e9ab6bbef545e19e3ff1`、44859392B；最终内核SHA `a18d53857f46bd15b1e79fcdeb4fdb2f7bb88dfd51f08ed533d9cc5c3e522704`，CRC **25E7A2CAB891F66F**。
+core源码 `6a91677cbdc873cc5c2a63a33022b6e2262eee3a`，device源码 `d55d703ef1205e571c91d07314dd6ca68aeebd4d`；未push。
+boot SHA `2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328`；vendor_boot SHA `b2e3db8199d774ee93300e2e6833898c3ed7713b887f8323e82bafad9e41687c`、44859392B；最终内核SHA `66aceaf373c928fd3ec128f6ce9895c050444eb393b5267b9a5d8401dc251671`，CRC **ED9AFCA7B8824CBE**。
 正式kernel/prelink/payload通过，missing2/stubbed24精确集合不变；160MiB FAT、一次UEFI压缩往返和96MiB容量要求通过。用户态addon/trust复用已签名chained-fixups版本；未改Data seed或清缓存，未进行额外宿主/QEMU渲染验证。
 
 当前设备仍为取证用原厂四分区+active a+TWRP；本轮未刷任何设备分区。
 **图标延迟、Dock DeviceLost/respring与设置IOKit quiesce超时均未通过新候选真机验收**，不能称全部已修。下一步按当次授权刷成对四分区，验完整图标加载、设置上划Dock、应用切换与持续交互；失败则用新增的具体恢复/拒绝记录定位，保留原始boot现场。回退CPU基线ca-surface-track的成对命令见release README。
 证据 `uke-port/fixes/2026-11-03-ios27-gpu-upstream-repair/`：upstream-pins.json、上游板级源码与diff、patch before/after、正式构建日志和artifact-checks.json。
+
+
+## 2026-11-03 21:21:12：资源视图修正版已刷入
+
+用户当次“刷吧 不用做过多检查”授权；正式构建打包完成后，仅确认boot/vendor_boot两镜像SHA、目标uke/is-userspace no及四96MiB容量。
+TWRP b8a81f12经adb reboot bootloader；boot_a/vendor_boot_a/boot_b/vendor_boot_b均OKAY，A槽回读a，rebootOKAY，结束 `2026-11-03T21:21:19.535812+08:00`。
+release `uke-port/releases/2026-11-03-ipados27-gpu-resource-view/`，屏幕预期CRC **ED9AFCA7B8824CBE**；vendor_boot SHA `b2e3db8199d774ee93300e2e6833898c3ed7713b887f8323e82bafad9e41687c`，44859392B。
+最终源码core `6a91677cbdc873cc5c2a63a33022b6e2262eee3a`，device代码d55d703；此前同路径的构建中间文件没有刷入，最终包以本次manifest/SHA为准。
+证据同release的 `flash-result-20261103-212112.json` 和匹配flash log；未主机写userdata，未清Data。没有增加宿主/QEMU测试轮次。
+设备已退出recovery并重启修正版；真实图标加载、设置IOKit等待、Dock respring与持续交互效果仍待用户反馈，刷写成功只代表部署通过。
+验桌面/设置图标加载速度，设置中上划Dock/切换应用，以及约3分钟连续交互；respring保留新boot日志，panic拍首行与BT。
