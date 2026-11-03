@@ -299,3 +299,14 @@ release `uke-port/releases/2026-11-03-ipados27-gpu-turnip-chains/` **已构建�
 当前设备为原厂四分区+active a+TWRP（取证用），新候选未部署。
 下一轮看桌面/设置完整图标、原应用打开、Photos 以外小组件以及持续交互；同 boot 再查图标服务是否还崩溃。卡死仍在则沿新现场继续定位，不提前称全部修复。
 证据目录 `uke-port/fixes/2026-11-03-ios27-gpu-render-failure/`，含只读 Data 快照、真实 IPS、解析索引、装载格式对比和 artifact-checks.json。
+
+
+## 2026-11-03 20:29:32：Turnip chained-fixups 修正已刷入
+
+用户当次“刷吧”授权，8SHA通过；TWRP b8a81f12经adb reboot bootloader，核product uke/is-userspace no及四96MiB分区。
+boot_a/vendor_boot_a/boot_b/vendor_boot_b均OKAY，A槽回读a，rebootOKAY；结束 `2026-11-03T20:29:40.232511+08:00`。
+release `uke-port/releases/2026-11-03-ipados27-gpu-turnip-chains/`，vendor_boot SHA `896955d7570b660979befe12138e0832a39da1348cb54d526302d287a0e08502`。
+内核CRC **72D32647A9779337** 与Data-class保持相同；此次通过新的vendor_boot/addon与Turnip CDHash识别版本。
+证据同release的 `flash-result-20261103-202932.json` 与匹配flash log；未主机写userdata，未清Data。
+设备已退出TWRP并重启修正版；完整图标、应用打开、小组件和持续交互仍待真机反馈，刷写成功不代表功能通过。
+验收观察桌面/设置完整图标、相册以外小组件、应用直接打开及约3分钟交互；若panic拍首行/BT，若仍卡死保留本boot现场再取匹配日志。
