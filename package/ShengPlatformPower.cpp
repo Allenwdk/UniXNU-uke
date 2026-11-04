@@ -2,6 +2,7 @@
 // Board-side original PMGR ABI qualification. Default off. Modes: 1 releases
 // unpublished objects, 2 publishes the original nub, 3 tests power refusal.
 // No clocks, sleep, reset or secondary-CPU success is advertised.
+#include "UkeClassRegistration.h"
 #include "OriginalPMGRABI.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOPlatformExpert.h>
@@ -78,10 +79,10 @@ extern "C" void sheng_pmgr_run(void)
   if (!parent || parent != &ApplePMGR::gMetaClass || parent->getClassSize() != 0x4b8a8 ||
       !nubMeta || nubMeta->getClassSize() != 0x740) { sheng_pmgr_checkpoint(); return; }
   sheng_pmgr_observation[2] = parent->getClassSize();
-  void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+  void *handle = ukeClassBegin(g_kernel_kmod_info.name);
   if (!handle) { sheng_pmgr_checkpoint(); return; }
   sheng_pmgr_static_init();
-  result = OSMetaClass::postModLoad(handle);
+  result = ukeClassEnd(handle);
   if (result) { sheng_pmgr_observation[1] = static_cast<uint32_t>(result); sheng_pmgr_checkpoint(); return; }
   sheng_pmgr_observation[9] = ShengPlatformPower::gMetaClass.getInstanceCount();
   sheng_pmgr_observation[11] = nubMeta->getInstanceCount();

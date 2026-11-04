@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Offline kernel-linked class initialization and genuine original client query.
 // This does not publish a display, render, or replace a system display list.
+#include "UkeClassRegistration.h"
 #include <IOKit/IOService.h>
 #include <IOKit/IOUserClient.h>
 #include <IOKit/IOLib.h>
@@ -30,10 +31,10 @@ void native_mobile_display_provider_probe(void) {
     // Only our object's initializer section is deferred; original bytes stay
     // unchanged. Normal standalone kext loading would initialize dependencies.
     native_mobile_provider_stage = 1;
-    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+    void *handle = ukeClassBegin(g_kernel_kmod_info.name);
     if (!handle) { native_mobile_display_provider_checkpoint(); return; }
     native_mobile_display_static_init();
-    native_mobile_provider_meta_status = OSMetaClass::postModLoad(handle);
+    native_mobile_provider_meta_status = ukeClassEnd(handle);
     if (native_mobile_provider_meta_status) { native_mobile_display_provider_checkpoint(); return; }
     native_mobile_provider_stage = 2;
     IOService *provider = native_mobile_display_create();

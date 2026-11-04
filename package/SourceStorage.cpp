@@ -3,6 +3,7 @@
 //
 // Ported from UniXNU-sheng feat/ipados27-gpu-parity. The sheng-log hand-off is gone: uke runs its own
 // UFS log writer (package/UkeLastLog.c) and the board page decides when it starts.
+#include "UkeClassRegistration.h"
 #include <IOKit/IOService.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IODeviceTreeSupport.h>
@@ -22,6 +23,7 @@ extern "C" bool native_source_root_policies_load(void);
 // NativeUfs records how far root start got and the last soft-failure reason.
 extern "C" volatile uint32_t native_ufs_root_step;
 extern "C" const char *volatile native_ufs_root_failure;
+extern "C" uint32_t native_adreno_preflight_ready __attribute__((weak_import));
 extern "C" void source_software_aes_init(void) __asm__("__GLOBAL__sub_I_NativeAES.cpp");
 extern "C" IOService *native_software_aes_create(void);
 extern "C" volatile uint32_t native_aes_kat_status, native_aes_interface_status, native_aes_registered;
@@ -49,10 +51,10 @@ static void start_image4_dependencies(IOService *provider)
     if (!parent || parent->getClassSize() != 0x120)
         panic("Image4 startup: original AES parent ABI is %u", parent ? parent->getClassSize() : 0);
 
-    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+    void *handle = ukeClassBegin(g_kernel_kmod_info.name);
     if (!handle) panic("Image4 startup: cannot begin SoftwareAES class registration");
     source_software_aes_init();
-    status = OSMetaClass::postModLoad(handle);
+    status = ukeClassEnd(handle);
     if (status != kOSReturnSuccess)
         panic("Image4 startup: SoftwareAES class registration failed %x", status);
 
@@ -137,6 +139,8 @@ extern "C" void native_source_storage_start(void)
     if (!PE_parse_boot_argn("native-source-storage", &enabled, sizeof(enabled)) || enabled != 1 || attempted)
         return;
     attempted = true;
+    printf("SourceStorage: GPU external preflight ready=%u before root startup\n",
+           &native_adreno_preflight_ready ? __atomic_load_n(&native_adreno_preflight_ready,__ATOMIC_ACQUIRE) : 0u);
     OSReturn status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOStorageFamily");
     if (status != kOSReturnSuccess)
         panic("SourceStorage: IOStorageFamily load failed %x", status);
@@ -154,12 +158,12 @@ extern "C" void native_source_storage_start(void)
     status = OSKextLoadKextWithIdentifier("com.apple.filesystems.apfs");
     if (status != kOSReturnSuccess)
         panic("SourceStorage: APFS load failed %x", status);
-    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+    void *handle = ukeClassBegin(g_kernel_kmod_info.name);
     if (!handle) panic("SourceStorage: cannot begin class registration");
     source_storage_base_init();
     source_storage_ufs_init();
     source_storage_ram_init();
-    status = OSMetaClass::postModLoad(handle);
+    status = ukeClassEnd(handle);
     if (status != kOSReturnSuccess)
         panic("SourceStorage: class registration failed %x", status);
 

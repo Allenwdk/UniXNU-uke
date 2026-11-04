@@ -1,0 +1,29 @@
+--- a/libkern/c++/OSKext.cpp
++++ b/libkern/c++/OSKext.cpp
+@@ -331,6 +331,26 @@
+  */
+ static IORecursiveLock    * sKextLock                  = NULL;
+ 
++/* Deferred source classes must use the same order as OSKext::start:
++ * sKextLock before OSMetaClass's stalled-class lock, through postModLoad. */
++extern "C" void *uke_kext_class_begin(const char *identifier)
++{
++	IORecursiveLockLock(sKextLock);
++	void *handle = OSMetaClass::preModLoad(identifier);
++	if (!handle) {
++		IORecursiveLockUnlock(sKextLock);
++	}
++	return handle;
++}
++
++extern "C" OSReturn uke_kext_class_end(void *handle)
++{
++	OSReturn result = OSMetaClass::postModLoad(handle);
++	IORecursiveLockUnlock(sKextLock);
++	return result;
++}
++
++
+ static OSSharedPtr<OSDictionary>   sKextsByID;
+ static OSSharedPtr<OSDictionary>   sExcludeListByID;
+ static OSKextVersion               sExcludeListVersion        = 0;

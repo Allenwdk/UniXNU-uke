@@ -1,0 +1,52 @@
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -6648,6 +6648,11 @@
+ extern "C" {
+ void (*sheng_ioconnect_hook)(void *client, uint32_t selector, uint64_t entered, uint64_t locked, uint64_t returned);
+ void native_legacy_method_trace(IOUserClient *, uint32_t, const IOExternalMethodArguments *, uint32_t, unsigned) __attribute__((weak_import));
++/* Owned native GPU adapter: only page preparation may run before the original
++ * per-client lock. Dispatch/close/map/unmap retain their original serialization. */
++extern uint32_t native_adreno_preflight_ready __attribute__((weak_import));
++void *native_adreno_prepare_external(IOUserClient *, uint32_t, const IOExternalMethodArguments *) __attribute__((weak_import));
++void native_adreno_finish_external(void *) __attribute__((weak_import));
+ }
+ 
+ IOReturn
+@@ -6656,6 +6660,17 @@
+ 	IOReturn ret;
+ 	void (*hook)(void *, uint32_t, uint64_t, uint64_t, uint64_t) = sheng_ioconnect_hook;
+ 	const uint64_t entered = hook ? mach_absolute_time() : 0;
++	/* Keep finalization deferred across preflight and cleanup without taking the
++	 * mapping-exclusion lock. A racing close is still serialized with dispatch;
++	 * the native GPU dispatcher must recheck liveness before adopting pages. */
++	const bool prepare_native = &native_adreno_preflight_ready &&
++	    __atomic_load_n(&native_adreno_preflight_ready, __ATOMIC_ACQUIRE) && !uc2022 &&
++	    &native_adreno_prepare_external && &native_adreno_finish_external;
++	void *prepared_native = nullptr;
++	if (prepare_native) {
++		ipcEnter(kIPCLockNone);
++		prepared_native = native_adreno_prepare_external(this, selector, args);
++	}
+ 	auto gpu_hook = uke_gpu_iokit_hook;
+ 	const uint64_t gpu_entered = gpu_hook ? mach_absolute_time() : 0;
+ 	const uint32_t gpu_locking = (defaultLocking ? 1u : 0u) | (defaultLockingSingleThreadExternalMethod ? 2u : 0u);
+@@ -6668,13 +6681,18 @@
+ 	if (uc2022) {
+ 		ret = ((IOUserClient2022 *) this)->externalMethod(selector, (IOExternalMethodArgumentsOpaque *) args);
+ 	} else {
+-		ret = externalMethod(selector, args);
++		ret = prepared_native ? externalMethod(selector, args, nullptr, nullptr, prepared_native) : externalMethod(selector, args);
+ 	}
+ 	ipcExit(defaultLocking ? (defaultLockingSingleThreadExternalMethod ? kIPCLockWrite : kIPCLockRead) : kIPCLockNone);
+ 	if (gpu_hook) gpu_hook(this, 0, 3, selector, gpu_locking, gpu_entered, uint32_t(ret));
+ 	if (&native_legacy_method_trace) native_legacy_method_trace(this, selector, args, (uint32_t)ret, 1);
+ 	if (hook) {
+ 		hook(this, selector, entered, locked, mach_absolute_time());
++	}
++
++	if (prepare_native) {
++		if (prepared_native) native_adreno_finish_external(prepared_native);
++		ipcExit(kIPCLockNone);
+ 	}
+ 
+ 	return ret;

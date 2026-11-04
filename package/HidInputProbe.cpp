@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Default-off original HID observation; a separate explicit gate starts an
 // owned offline input source. No entitlement or original provider is replaced.
+#include "UkeClassRegistration.h"
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <libkern/c++/OSMetaClass.h>
@@ -138,8 +139,17 @@ __attribute__((noinline)) void native_hid_live_checkpoint(IOService *device) {
     }
     __asm__ volatile("" ::: "memory");
 }
+// Upstream diagnostic ABI: allocated by BootDiagExport only while sampling.
+volatile uint64_t *native_touch_report_ring;
+volatile uint32_t native_touch_report_count;
+extern uint64_t mach_absolute_time(void);
 void native_hid_input_observed(unsigned event,int result) {
     if(event<8){native_hid_input_events[event]=native_hid_input_events[event]+1;native_hid_input_results[event]=result;}
+    if(event==6 && native_touch_report_ring) {
+        const uint32_t n=native_touch_report_count;
+        native_touch_report_ring[n&65535]=mach_absolute_time();
+        __atomic_store_n(&native_touch_report_count,n+1,__ATOMIC_RELEASE);
+    }
 }
 __attribute__((noinline)) void native_hid_checkpoint(void) { __asm__ volatile("" ::: "memory"); }
 void native_hid_input_probe(void) {
@@ -165,9 +175,9 @@ void native_hid_input_probe(void) {
         native_hid_resource_found=resource!=nullptr;
         unsigned sendHome=0;PE_parse_boot_argn("offline-hid-home",&sendHome,sizeof(sendHome));
         if(resource && sendHome==1 && native_hid_class_sizes[4]==208) {
-            void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+            void *handle=ukeClassBegin(g_kernel_kmod_info.name);
             if(handle) {
-                native_hid_static_init();native_hid_input_meta_status=OSMetaClass::postModLoad(handle);
+                native_hid_static_init();native_hid_input_meta_status=ukeClassEnd(handle);
                 if(!native_hid_input_meta_status) {
                     IOService *device=native_hid_input_allocate();
                     native_hid_input_object=(uintptr_t)device;

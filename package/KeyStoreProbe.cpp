@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Mutually exclusive offline probes: unchanged target keystore loading, or
 // ephemeral notification-only service. Neither supplies keys or unlock state.
+#include "UkeClassRegistration.h"
 #include <IOKit/IOService.h>
 #include <IOKit/IODeviceTreeSupport.h>
 #include <libkern/c++/OSKext.h>
@@ -96,10 +97,10 @@ static void native_keyevents_probe(void) {
     if (!absent) return;
     IOService *provider = IOService::getResourceService();
     if (!provider) return;
-    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+    void *handle = ukeClassBegin(g_kernel_kmod_info.name);
     if (!handle) return;
     native_keyevents_static_init();
-    native_keyevents_status = OSMetaClass::postModLoad(handle);
+    native_keyevents_status = ukeClassEnd(handle);
     if (native_keyevents_status) return;
     native_keyevents_stage = 2;
     IOService *service = native_keyevents_allocate();

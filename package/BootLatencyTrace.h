@@ -5,7 +5,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* 1 IPC send attempt, 2 receive, 3 exception, 4 GPU vote, 5 touch publication. */
+/* 1 IPC send attempt, 2 receive, 3 exception, 4 GPU vote, 5 touch publication.
+ * 38 GPU IOKit external method / 39 CPU map: client, token/selector, phase
+ * (1 before lock, 2 locked, 4 map body returned, 3 complete), lock flags
+ * (1 default locking, 2 single-thread external), elapsed us, actual status.
+ * 41 GPU level occupancy: level, actual startup-table MHz, percent, top. */
 void boot_latency_record(uint32_t kind,uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f);
 void boot_latency_start(void);
 int boot_latency_enabled(void);

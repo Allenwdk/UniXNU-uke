@@ -432,3 +432,187 @@ core `.gitmodules`/gitlinks及设备feeds现指向远端可获取的已验收依
 13区台账和resolver状态通过；本轮不重建/不刷机，不把文档pin提交当成新二进制。修复后长时间并发、精确帧耗时和跨冷启动缓存仍待独立量测。
 证据 `uke-port/fixes/2026-11-03-gpu-main-publish/publish-result.json`、`publish.log`、`publication-checks.json`，验收证据release/user-observation-success.json。
 本表记录首次发布快照；设备仓随后仅补写这份发布台账，仍按普通快进推送。
+
+## 2026-11-04 帧时间离线研究
+
+完整证据见工作区根 `docs/status/gpu-frame-time-study-2026-11-04.md` 与 `uke-port/fixes/2026-11-04-gpu-frame-study/`。本次分析现有线程采样版CRC B4EC9E2D7D77ABCE，未构建或刷机。重负载短片段commit→complete P50 35.045ms，commit→编码submit18.592ms、GPU job15.127ms；9个flip间隔均值26.959ms，不代表全程滑动fps。UUID匹配的BO调用栈把两次约190ms的64MiB分配归到后台keep_room；编码线程37.276ms draw内另有darwin_bo_map/IOKit等待，具体锁竞争仍待测。GMEM实际已使用。
+
+DCVS硬编码仍为sheng8档/top8，本板实际9有效OPP，触摸boost8请求900MHz而未到950MHz；最终kernel偏移0x1cc5e8找到原表，不是只看源码。没有实际频率读回，不能宣称该差异解释数倍fps差。用户说明没有sheng性能日志；下一步接上游真实touch timestamp ring/导出，按触摸窗口统计flip，继续拆map/IOKit等待和诊断开销，再单独修正OPP表验证。原GPU功能验收范围保持，性能和约180s后的卡死未验收。
+
+## 2026-11-04 DCVS 九档与触摸/IOKit 阶段候选
+
+已按用户要求从实际 `gStartup.gpu` 获取全部九档至950MHz；保留原governor/带宽票/15字旧统计ABI，全档驻留另存，避免第九档覆盖boost计数。上游HID event6 timestamp ring及kernel.touch.bin已恢复；可选IOKit回调记录GPU client外部调用与CPU map的原锁前、锁后、映射体返回、完成阶段及原locking标志，不改锁/返回结果。worker240秒后导出，覆盖约180秒卡住段；回调/文件实际生成尚需实机。
+
+release `uke-port/releases/2026-11-04-gpu-dcvs-touch-map/`（工作区根），CRC77F3FB3E03ED62D7，vendor_boot SHA e4a907656a0800a845958bbbbbd5be01bbe54d6303bc2120fe5001c9dcf84eb2，44879872B；未刷未验。正式kernel/payload与压缩往返、真实OPP ASan/UBSan检查、解码旧快照/阶段关联检查通过，porting13区通过；982B参数、addon/trust/Data seed与前采样版相同。完整实现、边界与复跑见根 `docs/status/gpu-dcvs-touch-map-2026-11-04.md`。先前“硬编码仍为sheng8档”仅描述研究对象旧采样版。
+
+2026-11-04 01:29，用户当次“刷吧”授权后CRC77F3FB3E03ED62D7已刷四分区，全OKAY，A槽回读和reboot OKAY；刷前两SHA/uke/non-userspace/四96MiB核对通过，未写userdata。release内flash-result-20261104-012902.json及匹配log为证。前段“未刷”为构建阶段历史；真实启动/触摸窗口数据/level9/阻塞结果待验，保留现场到约五分钟后再取同boot日志。
+
+## 2026-11-04 回读：level9 与 IOKit 锁长尾实证，touch writer 遗漏已补
+
+用户本轮反馈未卡死。新194有效槽/1854旧槽排除，尾438.337s；level9请求/接受198次、投票失败0，属于软件投票/驻留而非实际时钟读回。已确证同GPU client外部调用读锁阻塞CPU map写锁：后台room::run/keep_room线程906分配64MiB、wire111.137ms；编码线程908 map等锁110.439ms、map体45µs，读锁外部调用结束约2µs后取得写锁。BO栈UUID匹配实际dylib/dSYM。后续修复围绕外层锁契约与预分配/map交错，不直接关闭默认锁。
+
+本轮新日志仍有3次GPU恢复返回0，第二次dead2是抢占超时转单环；当前诊断快照止于243s、恢复晚于367s，不能解释恢复现场。采样导出260.844s报-9：旧#if0漏删，touch扫描已记630条但stream少5096B/1文件。原错误blob保留，15个完整文件已恢复；本次不能给真实触摸窗口FPS，前述“touch已接通”只成立到producer/scan，不成立于完整导出。
+
+修正移除该writer guard，真实emitter ASan/UBSan正对照与旧代码负对照通过，正式kernel/payload与一次压缩往返、missing2/stubbed24精确集合通过；982B参数/addon/trust/Data seed不变。release工作区根 `uke-port/releases/2026-11-04-gpu-touch-export/`，CRC002CD36B815DE636，vendor_boot ac1e657eafccf0263f13c89eab45a73e9828be83c93090c95938321334001ca0；未刷/未实机验证。设备取证后已恢复同77版四分区/A槽/reboot，未写userdata。完整根文档 `docs/status/gpu-dcvs-touch-readback-2026-11-04.md`；证据fixes同名readback目录。
+
+2026-11-04 02:05：用户当次“刷吧”授权后，002CD36B815DE636触摸writer修正版四分区全OKAY、A槽回读/reboot OKAY。两镜像SHA、目标uke/non-userspace与四96MiB容量通过，无活动Data FUSE、未写userdata。release的flash-result-20261104-020507.json及匹配log为证；当前已重启002C，真实启动/导出闭合/kernel.touch.bin待验。IOKit锁改造尚未实现，前段“未刷”为历史。
+
+## 2026-11-04 真实 touch 导出与帧间隔实测
+
+002C回读status0、70235329B长度/count闭合、16文件含2886条TCH1时间戳，writer实机验收完成。34个真实touch run首末报告跨度共23.777767s，内含935次驱动flip，约39.32次/s；连续更新的894对间隔P50/P90/P99=19.134/40.898/94.771ms，6段≥100ms。保留零更新run、触摸前idle与边界列表；不能只用快帧段42.90次/s代表全部交互。
+
+用户确认桌面滑动和打开/切换应用均短暂停住。233.659974s第一条touch到238.746831s下一flip约5.087s，两次触摸85条无flip；backboardd临近末端才commit，其他GPU client在工作，需独立追提交/唤醒链。IOKit等锁仍达114.289ms，持锁外部调用中的64MiB wire114.621ms；编码线程map体42µs。361.579537s有一次dead2抢占超时恢复，晚于约260s快照。没有声称这些问题已修。
+
+用户明确“取完日志不用恢复，在twrp等着刷新的版本就行”；当前原厂boot/vendor_boot四分区+A槽+TWRP，未恢复002C，未主机写userdata，本轮未构建新锁修复镜像。根 `docs/status/gpu-touch-window-readback-2026-11-04.md` 为最新接续；证据 `uke-port/fixes/2026-11-04-gpu-touch-export-readback/`。
+
+## 2026-11-04：120Hz第一阶段锁范围修复候选
+
+已实现可选native-XNU入口，把自有NativeAdreno非连续BoAlloc尚未发布的页面prepareSystem移到原IOKit映射排斥锁之前。原锁内复核live/限额/请求后采用，活动IPC计数覆盖全调用；close抢先完成则拒绝并回收。BO诊断栈读取亦移到锁外。map/unmap/close、原默认锁、ABI与实际错误保留，不关闭全局锁。旧内核无此适配时保留原路径，BO trace bit16标识preflight。
+
+必要主机检查抽取实际XNU包装器与驱动prepare/finish，受控VM暂停时map/close能继续、采用/回收一次、关闭先行拒绝和IPC归零通过ASan/UBSan；旧包装器负对照失败。正式kernel/payload及一次压缩往返、missing2/stubbed24精确集合通过；982B参数/addon/trust/Data seed与002C相同。候选CRC ECB8BC9681CCBA53，vendor_boot ef5cc5bd89b35148214304bc1e317e16c7de13da3c88409db03c4dc8b9a2a77b/44883968B，已备未刷/未实机测收益。设备继续原厂四分区+A槽+TWRP；本轮无设备写入。
+
+真实120Hz以整帧8.33ms预算验证，尚未达成；5秒无新提交与晚期抢占恢复未修。下一步用真实touch同场景对照map锁长尾，再查其他慢external方法/GPU多pass成本。完整根文档 `docs/status/gpu-prepare-outside-iokit-2026-11-04.md`，证据与源码SHA/原始备份在fixes同tag目录。
+
+2026-11-04 02:41用户当次“刷吧”授权后，ECB8BC9681CCBA53候选四分区均OKAY、A槽回读/reboot OKAY；recovery经adb reboot bootloader，两镜像SHA/目标uke/non-userspace/四96MiB检查通过，无活动Data FUSE、未写userdata。release内flash-result-20261104-024155.json及匹配log为证。当前已重启新候选，实际启动/锁长尾/帧率待验；下次取完日志仍留TWRP，不自动恢复旧镜像。前段未刷为构建历史。
+
+
+## 2026-11-04 ECB8 启动回归取证
+
+用户报告很早卡开机，授权进rec。原厂四分区/A槽/recovery成功，只读日志127新CRC有效槽/1921旧槽排除，原环3c3938935b2415f8f572e08ab83cb74fe759361d3b087b07ae272d40cf744f56。81.374345s SystemOS卷F914C62A-AD00-47C6-8281-5746291C339A not ready，81.395446s root publisher停window1/published1；rootvnode未设置，相关线程至260.780783s仍导出status0。小blob33470B仅rings/skipped两文件，无用户态性能数据。002C对照52.110356s同卷ready后继续OS/launchd。直接致因未定，不将GPU代码变化与挂载失败强行等同。ECB8已withdrawn/do_not_flash；当前原厂四分区+A槽+TWRP，未恢复镜像/未主机写userdata。完整根docs/status/gpu-prepare-early-stall-2026-11-04.md和fixes同tag为接续；有新日志，暂不需要照片。
+
+
+## 2026-11-04 03:01：保留BO优化，修正启用时机并刷入DACD
+
+用户要求继续修复，未回滚锁外BO准备。上一版只凭弱符号存在即对早期IOUC进入新IPC pin/类型检查，作用范围过早过宽；新增ready初始0，GPU上下文/锁/服务发布后release置1，XNU和driver双重检查。root开始打印ready，失败时worker最多一次打印缓存存储状态/ready/entries。此范围缺陷已修，但ECB8日志无entries，不能宣称就是SystemOS超时全部因果。
+
+002C与ECB8签名根策略相同、ADT仅random-seed不同，设备SystemOS前64KiB与原镜像相同（非全卷完整性证明）。实际包装器ready0无新入口/ready1保持map-close并发及资源回收的ASan/UBSan通过，ECB8未门控负对照早期none_entries断言失败。正式kernel/payload和一次UEFI往返、原missing2/stubbed24集合、982B参数/addon/trust/Data seed一致通过。
+
+release2026-11-04-gpu-preflight-readiness，CRC DACD0576367904C3；vendor_boot41c70ca2324392df6730376a4f5cc84875b01fef6750522d580088e9f9dca635/44883968B，最终kernelc3dd5fa3e700633b59b91f2d9f3c1993902c84806f68b5e87c5c8055c1b318c9。03:01用户当次刷吧授权后四分区/A槽回读/reboot全OKAY，未写userdata，证据flash-result-20261104-030147.json及匹配log。当前重启DACD，实际SystemOS恢复/桌面/帧率待验；取完仍留TWRP、不自动恢复旧版。根docs/status/gpu-preflight-readiness-2026-11-04.md为接续。
+
+
+## 2026-11-04 DACD回读与WaitFence第二阶段（03:20已刷）
+
+用户确认DACD能进系统、感觉顺些但仍卡。165新CRC有效槽/1883旧槽排除，原环56d3ca95aa9740ce5af0a3289f2d7e7709831cff3eb13c69b06db77490d375a6；export0/72528708B/16文件闭合，blob5cc99811863bfa788a6a49f87568b582597fb45be8a82c140507783d9200b90a，2687条touch，latency357772无dropped/overwritten。root ready0、SystemOS52.089s ready、GPU64.162s启用；68条BO全部flags27，优化实际采用。真实touch run内更新46.54次/s，连续996间隔P50/P90/P99=12.916/29.477/83.163ms；保留零flip段，仍有6.09s首次touch至下flip，不能只用连续更新57.67次/s代表整体。与002C负载不同，不作受控提速归因。
+
+编码map等锁P90/P99/max2.750/17.222/61.718ms。197.795548s实际持锁线程816栈与Turnip UUID01702158-8D70-3832-9E7E-D707F9508C44匹配，dw_wait_fence_raw→darwin_sync_wait→WaitSemaphores；同client外部调用结束后约2us map获锁。下一持锁源确认为fence等待，不只凭tunnel selector0猜。
+
+保留BO/ready优化，扩展私有context：非零WaitFence锁前复用原校验/timeout/等待/retirement/recovery，原锁内复核live/请求并返回真实结果。成功关闭release发布、等待acquire读取；core访问仍在g.lock内，IPC pin覆盖全程，零poll原路径不变。rings新增wait-preflight真实统计。实际preflight/锁内消费者ASan/UBSan覆盖map/close并发、真实成功/timeout/error、关闭先行NotReady/IPC归零/BO回收；旧DACD负对照map被wait挡住断言失败。正式kernel/payload/原missing2-stubbed24集合/982B参数/addon-trust-Data seed与一次UEFI往返通过。
+
+新版release2026-11-04-gpu-wait-outside-iokit CRC0A3FC5BED491D8D0，vendor_boota6dc1efc4cb350f2f48898ccab8291d3ddd1bb83f24ce94cc8d9bb082f12979b/44883968B，final381ee4ae912207255663e1a87ff8e7d3f6e241d970051eeb0392a850fc82ff48。03:20用户当次刷吧授权后四分区/A槽回读/reboot全OKAY，未写userdata；证据flash-result-20261104-032005.json与匹配log。实际wait版启动/收益待验。DACD晚期3次恢复323/330/357s（第二dead2）在快照之后，6s无提交链未解决；不称120Hz达成。根docs/status/gpu-preflight-readback-and-wait-2026-11-04.md为最新；后续取完仍留TWRP。
+
+## 2026-11-04：0A3F无响应回读与context-init候选
+
+用户四分多钟无响应/无panic，等一分钟再fastboot。新环101/1947旧排除，raw b2a344b4892eab4727d0c3f545d4f9d9a8f05ff1af3305b0a72f56acc7c654b1；新export80982537B/16文件结构闭合（ac31b580daec55158d163e8368b3d339eaba3cb3240738074c28ad01642c2f8d），没有status0完成行。wait-preflight4392次non-success0、6765map等锁P99=2µs；touch run46.89/s，GPU5093于254.318152s退休，touch至257.836275s，scanout至260s，最终卡死机制未证实。当前boot94FE82A6-8D7B-4A44-ACA8-68E57150B983；Settings362仍被IOKit quiesce的EthernetWatcher等待导致FrontBoard watchdog终止，不等同最终全屏无响应。
+
+已证实IONew未执行NativeAdrenoPreparedAlloc默认成员初始化，method实际0，58大BO全部flags11、锁内重复准备页。两处显式赋值初始化，真实零分配ASan/UBSan通过、已刷旧实现负对照失败；不撤BO/WaitFence优化。新release2026-11-04-gpu-preflight-context-init CRC66774380BB075567，vendor_boot b1f37768d4e8aed5af376006e2571fd1556d0d92c2b547da42c5990f92288515，正式构建/982B参数/原missing2-stubbed24/addon-trust-Data seed/一次UEFI往返通过，未刷。设备stock-four/A/TWRP，host未写userdata/FUSE已卸载。根docs/status/gpu-wait-freeze-and-context-init-2026-11-04.md及两fixes目录为接续。需验flags27恢复和六分钟交互，卡死/120Hz未验收。
+
+03:49:07当次授权部署更新：CRC66774380BB075567四分区/A槽回读/reboot全OKAY，2026-11-04T03:49:07.810017+08:00–2026-11-04T03:49:15.374002+08:00，两SHA/uke/nonuserspace/四96MiB核对通过，无FUSE/host userdata写。证据release/flash-result-20261104-034907.json与flash-20261104-034907.log。当前已重启新候选，真实启动/flags27/卡死与120Hz未验；后续取完仍留TWRP。
+
+## 2026-11-04：6677实机与下一定点取证候选
+
+6677本轮用户稍顺/仍卡/未遇卡死；原始日志到462.530s，实际build-id1c16edcf89f4f3b2与已刷源码重建SHA配对，206新槽/1842旧排除。61大BO全flags27，编码3528次map等锁P99=1µs/max0.298ms；原锁问题实机收敛。真实touch run44.19次/s，仍有GPU三次恢复/3.175s及1.974s触摸后无画面、设置436 IOKit-quiesce watchdog，120Hz未达成。
+
+raw90a73c16631585fbd3da3cca1e574e8f88a2842f6317222277e5456029db73aa；导出status0/69570318B/16文件闭合，blob ea4ebbeccbe86d640e3582617b4bd7e4b30749917005472d2e3012b4dbcab0a5。Data完整只读12045987840B覆盖页，新boot5B0634AD…5份报告，统一日志本boot2494239条；六旧导出IPS排除。正常有效未重放GPU jobP50=8.847ms，整帧8.33ms预算仍未满足。三恢复3242/3249/3254，第三dead2；头两次与128+12/128+9拆分相关但因果未证实。另有248s无提交/服务繁忙与Settings436 watchdog主线程EthernetWatcher→IOKit quiesce。
+
+本轮未改设备分区、未恢复旧镜像、未主机写userdata，当前recovery/A槽，FUSE卸载。上游fetch main6fa7bae，Submit/Preempt无差异。定点取证候选CRC360388DFEE6BAC40，仅诊断开启时前八次hangcheck已判挂起、reset/endFault前记录22CP寄存器+已有preempt/stall/IB/switch源；旧数据标prior，诊断读失败不改ring健康，原stall错误契约保留。正常帧/提交/超时/恢复不变。实际捕获ASanUBSan和正式kernel/payload/exactmissing2stubbed24/982Bargs/addon-trust-Data seed/一次UEFI往返通过；vendor_bootdb2b49501c8ccc6a300fdc4b93647f4a4f30bd62ea909a7490d826ad06b65856，final9772920bfc7b80c0906ce68d4bcffa90c659add6ee5204e1078ac9669a30f7a4。已构建未刷，不称新的性能修复。接续根 `docs/status/gpu-context-readback-and-recovery-2026-11-04.md` 与context-readback/recovery-capture两fixes目录。
+
+## 2026-11-04 普通帧120Hz预算主线（纯离线）
+
+按用户新优先级，主线转为秒级大卡顿以外的普通帧稳120Hz。排除三恢复加1s保护及245–249.794s秒级无flip后，811普通连续间隔P50/P90/P99=14.037/32.496/79.297ms，仅53个<=8.333ms。869eligible/866唯一关联command中64.7%的GPU job超8.333ms，CPU commit→GPU提交P50/P90=5.589/12.466ms。
+
+三段普通时段：200.341–203.049s单Metal-pass交互CPU/GPU中位5.330/8.890ms；222.348–224.924s多pass12.295/25.550ms；259.084–259.515s轻GPU5.037/2.939ms但latch平均15.700ms。实例command2371/fence3572 GPU总25.567ms，三个全屏pass占17.137ms。所有关联普通command软件level9/950MHz，实际clock未核验。CPU/GPU分位数不能相加。
+
+GPU整体P50/P90=9.175/25.227ms，18.2%CPU阶段超8.33ms。实例Metal16→Vulkan19pass，GPU25.567ms/passsum22.606ms；普通passsum无超过job。Mesa整数52ns坐标按625/624修正后17163/19641pass匹配；CPU/GPU偏移只作50us记录容差的近似。原cache UUID+exports核验的CPU热点为psynch_cvbroad/memmove/memset/posix_madvise；不能独占归因到某处广播或给固定CPU百分比。Encode样本priority54/runq低，不支持主要是优先级饥饿。配置为FD735 chip0x43030b00/3SP3CCU/GMEM1.5MiB，740为6SP6CCU/3MiB，无sheng同场景倍率结论。
+
+下一主线为CPU按等待prefix合并batch完成唤醒与最小观测/实际clock验证，再按最重pass追GPU纹理访问、load/store、转换与GMEM成本，轻GPU段关联VSync deadline/新command/latch。保留多等待者进展及scheduled/completed语义。秒级恢复与Settings等待留支线，CRC360388DFEE6BAC40仍未刷。 本轮只做既有6677数据的离线分析：未改runtime、未构建新镜像、未操作设备；原SystemOS临时只读挂载已卸载。普通帧120Hz未达成。 接续根 `docs/status/gpu-normal-120hz-budget-2026-11-04.md` 与normal-120hz-study审计。
+
+## 2026-11-04：普通帧性能第一版实际实现
+
+实际完成Metal等待前缀满足才广播、工作队列空→非空才通知；按原厂DT/OEM寄存器和3/4/1核分组接入sheng上游mode4 CPU动态频控/触摸boost/帧下限；启用既有固定120Hz刷新范围。关闭可选周期CrashReporter扫描，保留touch/GPU/frames与持久日志、既有BO/WaitFence/ready优化。
+
+新候选CRC **FBDD4ADE7898D2C4**，release `uke-port/releases/2026-11-04-gpu-normal-perf/`；vendor_boot722db44c58422d3e144ff330d3f1ec641d83b1a6c9707f03759a56bb5cd2bc90。实际源码ASanUBSan/旧广播负对照、正式kernel/plugin/payload、missing2-stubbed24精确集合、最终签名页/trust/chained、原Data seed和一次UEFI往返通过；参数999B，Rust/Turnip逐字节保持。**已构建未刷，实机收益与稳定120Hz待验，本轮未操作设备。** CPU原代码来自sheng965460a，L3缺板级DT契约而未绑定；日志区分平均请求与当前实际state。debug334等于0x14e，仅为参数长度。保持原scheduled/completed/资源生命周期，无提前完成。详见根 `docs/status/gpu-normal-perf-implementation-2026-11-04.md`。
+
+## 2026-11-04 11:56:07 FBDD当次授权刷写
+
+用户当次“刷吧”授权后，CRC **FBDD4ADE7898D2C4** 四分区boot_a/vendor_boot_a/boot_b/vendor_boot_b全OKAY，set_active a/current-slot a/reboot OKAY。两镜像SHA、b8a81f12/uke/is-userspace no与四96MiB容量核对通过；从TWRP用adb reboot bootloader，无活动Data FUSE，未主机写userdata。 刷写区间 `2026-11-04T11:56:07.170581+08:00`–`2026-11-04T11:56:14.556234+08:00`，证据release内 `flash-result-20261104-115607.json` 与 `flash-20261104-115607.log`；vendor_boot SHA722db44c58422d3e144ff330d3f1ec641d83b1a6c9707f03759a56bb5cd2bc90。 设备已重启性能候选；真实启动、频控实际行为、普通帧收益和稳定120Hz待验。先确认CRC/桌面，重点测桌面/资源库连续滑动、设置列表和应用切换约六分钟，回读CPU请求/实际频率、phase4通知、普通CPU/GPU/flip/latch分位数。后续取完仍留TWRP，不自动恢复旧镜像。
+
+
+CRC 024B5DB9A5698920 adds `sheng-diag=2`, using unstamped Turnip render passes and disabling the client sampler, detailed IOKit tracing and BO stack capture. Touch, flips/latches, whole-job GPU timing and pre-reset recovery evidence are retained. Flashed to both slots on 2026-11-04, with slot A selected and reboot accepted. Boot and performance await on-device verification. FBDD readback yielded 17 of 182 ordinary touch-window flip intervals within 8.333 ms.
+
+024B5DB9A5698920 exported 11 files with 2,192 touch reports and no per-pass trace. Candidate 48B5BA69E9022695 skips repeated scanout preparation while a validated direct request waits for its GPU fence. The original checks run before flip. Flashed to both slots on 2026-11-04, with slot A selected and reboot accepted. Boot, presentation and performance await hardware validation.
+
+AAA46F2B3BF99582 ran through a 434.497 s capture without an IRQ9 panic record. Candidate 5164F278FF7857C9 forwards the existing fence timestamp interrupt to the scanout work loop, keeping a timer fallback and the real fence and latch checks. Flashed to four partitions on 2026-11-04 with slot A selected and reboot accepted. Boot, IRQ wake behavior, and frame-time gains await hardware validation.
+
+5164 hardware logged 3,494 fence IRQ notifications and zero effective IRQ retries. Candidate 12AE90686D7D2409 queues a coalesced kernel callout through the display gate. The fallback is 200 microseconds until a real IRQ retry runs, then 500 microseconds. Built and pending hardware validation.
+
+Candidate A241A80DD44ADE63 enables touch-window GPU execution counters via sheng-diag=2 and sheng-gpu-trace=2, retaining the 12AE display callout. The decoder validates reset, preemption and vote epochs and reports global BR windows with contained jobs. Flashed to four partitions on 2026-11-04 with slot A selected and reboot accepted. Boot and counter capture await device validation.
+
+D50B boot readback has 69 fresh slots and no completed GPU export. SystemOS UUID was not ready at 80.808s; GPU preflight remained disabled. Candidate 028EE52EBBBF73B0 keeps the VM pool and GPU/display sources, restores original delayed-work type/startup metadata, and records pool/thread state on root failure. Boot validation pending.
+
+028E hardware reached SystemOS/OS readiness and launchd with 1274 valid execution-counter windows and 3153 IRQ retries. Plugin comparison package 2026-11-04-gpu-transient-sysmem-ab reuses kernel CRC028EE52EBBBF73B0, Metal CDHashe98d8accd3352a7613c193e9195b6fdbcfbe3c90, vendor_bootcbb4132a9587261bca755b402789454a2f041820dfcd135f359815a8c33d355d. It requests GMEM/SYSMEM in alternating commands for a narrow attachment class. Unflashed, pixel/performance/memory validation pending.
+
+The e98d8acc plugin package boot stopped before GPU initialization. Snapshot shows manual postModLoad waiting for OSKext while an OSKext loader waits for preModLoad. Candidate A2EB4CE2CE4086F6 orders all board registrations with the existing OSKext lock. Original GPU comparison plugin is preserved. Boot qualification pending.
+
+## 2026-11-05: guarded LLCC candidate
+
+The 4648 ordinary-frame capture has GPU job P50/P90 11.518/15.308ms;
+GPU frequency is about950MHz in busy counter windows. The board now supplies
+its OEM cliffs7 GPU9/3200KiB and GPUHTW11/256KiB cache policy to the shared
+`Sm7675Llcc.h` operations at GPU hw_init/reset. The CP is stopped there.
+An already-configured matching cache is reused. Only inactive blank slices may
+be initialized, and other clients' policy bits stay unchanged. Unknown/mixed
+policy, readback or activation failure leaves the existing GPU route.
+The default mode is2 in `UkeGpuSystemCache.h`/board.toml, 1 observes and0 skips
+when explicitly overridden by sheng-gpu-llcc; the release keeps the original
+999-byte boot arguments. Log lines report pre/post state and actual route.
+
+Host MMIO-peer checks cover blank/existing/reset/read-only, every183 individual
+I/O failure, timeout, route restoration and1000 unrelated policy masks under
+ASan/UBSan. This is a performance candidate, not a hardware/120Hz claim.
+Release and measured acceptance belong to root docs/status/current.md and
+`docs/status/gpu-llcc-2026-11-05.md`. Deployment requires current authorization.
+
+## 2026-11-05 LLCC readback and shader-wait candidate
+
+CRC0394BE262DDF45AF has hardware LLCC result0/step5,banks4,init3/activate3,
+GPU9/HTW11 active0->f and GBIF0/1 zero->2500/1294a529. Three restart readbacks
+keep the configuration.197new slots/1851old,export605b46c1/8981091B/11files.
+959 ordinary command-job matches: GPU10.647/16.316ms P50/90;singlepass10.503/
+11.720ms,encode4.348/6.788ms.12 matched metadata groups10 lower,group median
+change -1.812percent is directional only,not identical shader/content causal gain.
+120Hz remains unmet;8recoveries observed in444s,with ordinary masks excluding
+them. Coherency stress and pixel correctness are not independently qualified.
+
+The next candidate preserves this cache path and userspace and extends the
+existing32ms capture to31 BR counters,with ten SP wait/ALU/local-memory values
+in event69. Legacy21-counter decode is retained. This is a low-overhead
+diagnostic candidate for GPU-internal classification,not an FPS fix.
+Root status documents carry artifact identities and the deployment boundary.
+
+## 2026-11-05: shader counter pipeline correction
+
+The1D70 trial retained163fresh slots/1885old and a complete11-file export.
+1678 extra counter records are allzero despite valid selectors and activeBR.
+Primary upstream a7xx_perfcntrs.json assigns SP24..35/PERFCTR2_SP toBV,notBR.
+The earlier expansion selected the wrong pipeline; it cannot classify fragment
+shader waits. Original21 counters and job timing remain valid;singlepass GPU
+P50/P90=10.432/11.940ms.
+
+The correction uses BR SP7..16/PERFCTR_SP and an explicit0x4252001f scope
+marker. Decoder namespaces old31 records as bv_legacy, rejects BV/BR mixed
+windows and marks flat extra counters invalid during shader activity. Host
+tests now verify actual group/pipe membership as well as XML addresses.
+Rendering/LLCC/frequency and userspace are preserved. New hardware results
+remain pending; this is a diagnostic correction,not an FPS improvement.
+
+## 2026-11-05 current GPU source checkpoint
+
+The local checkpoint corresponds to deployed diagnostic CRC79EC212110E36D2A.
+LLCC activation/routing has hardware readback. BR counter activity and120Hz
+remain pending the next capture. Component source commits are recorded below.
+
+- UniXNU/drivers/Adreno740 `e29c04e6449d701aad352c52f02a21da05ca8803`
+- UniXNU/drivers/AdrenoMetal `d3355fc28999cea1ad2a49321857e91099f3256d`
+- UniXNU/drivers/GopFramebuffer `b688eb27996f6bd5f4b075255046b25b0cec0fbd`
+- UniXNU-sm7675-common `b21db76e3251d3910bd6c4902751c8c9caf7079e`
+- UniXNU-build/drivers/ArmCpu `bc72a4f41d7822873cc48ffdf36a485d675fbce3`

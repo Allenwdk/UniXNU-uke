@@ -1,0 +1,81 @@
+--- a/osfmk/vm/vm_pageout.c
++++ b/osfmk/vm/vm_pageout.c
+@@ -6366,30 +6366,63 @@
+ }
+ STARTUP(ZALLOC, STARTUP_RANK_LAST, vm_page_delayed_work_init_ctx);
+ 
++
++/*
++ * Keep this optional UPL batching buffer out of the general zone allocator.
++ * Z_NOWAIT can still wait for a zone ticket lock. The callers already handle
++ * NULL with one delayed work entry on their stack, so never wait for a slot.
++ */
++#define UKE_DW_CTX_SLOTS 16u
++static struct vm_page_delayed_work_ctx uke_dw_ctx_pool[UKE_DW_CTX_SLOTS];
++static uint32_t uke_dw_ctx_used;
++static uint64_t uke_dw_ctx_gets, uke_dw_ctx_puts;
++
++void uke_vm_dw_pool_snapshot(uint64_t out[4])
++{
++	out[0] = os_atomic_load(&uke_dw_ctx_used, relaxed);
++	out[1] = os_atomic_load(&uke_dw_ctx_gets, relaxed);
++	out[2] = os_atomic_load(&uke_dw_ctx_puts, relaxed);
++	out[3] = os_atomic_load(&vm_page_delayed_work_ctx_needed, relaxed);
++}
++_Static_assert(offsetof(struct vm_page_delayed_work_ctx, dwp) == 0, "delayed work layout");
++
+ struct vm_page_delayed_work*
+ vm_page_delayed_work_get_ctx(void)
+ {
+-	struct vm_page_delayed_work_ctx * dw_ctx = NULL;
+-
+-	dw_ctx = zalloc_flags(dw_ctx_zone, Z_ZERO | Z_NOWAIT);
+-
+-	if (__probable(dw_ctx)) {
+-		dw_ctx->delayed_owner = current_thread();
+-	} else {
+-		vm_page_delayed_work_ctx_needed++;
++	const uint32_t mask = (1u << UKE_DW_CTX_SLOTS) - 1;
++	for (unsigned attempt = 0; attempt < UKE_DW_CTX_SLOTS; attempt++) {
++		const uint32_t used = os_atomic_load(&uke_dw_ctx_used, relaxed);
++		const uint32_t available = ~used & mask;
++		if (!available) {
++			break;
++		}
++		const unsigned slot = __builtin_ctz(available);
++		const uint32_t bit = 1u << slot;
++		if (os_atomic_cmpxchg(&uke_dw_ctx_used, used, used | bit, acquire)) {
++			struct vm_page_delayed_work_ctx *ctx = &uke_dw_ctx_pool[slot];
++			bzero(ctx, sizeof(*ctx));
++			ctx->delayed_owner = current_thread();
++			os_atomic_inc(&uke_dw_ctx_gets, relaxed);
++			return ctx->dwp;
++		}
+ 	}
+-	return dw_ctx ? dw_ctx->dwp : NULL;
++	os_atomic_inc(&vm_page_delayed_work_ctx_needed, relaxed);
++	return NULL;
+ }
+ 
+ void
+ vm_page_delayed_work_finish_ctx(struct vm_page_delayed_work* dwp)
+ {
+-	struct  vm_page_delayed_work_ctx *ldw_ctx;
+-
+-	ldw_ctx = (struct vm_page_delayed_work_ctx *)dwp;
+-	ldw_ctx->delayed_owner = NULL;
+-
+-	zfree(dw_ctx_zone, ldw_ctx);
++	const uintptr_t offset = (uintptr_t)dwp - (uintptr_t)uke_dw_ctx_pool;
++	if (offset >= sizeof(uke_dw_ctx_pool) || offset % sizeof(uke_dw_ctx_pool[0])) {
++		panic("invalid delayed work context %p", dwp);
++	}
++	const unsigned slot = (unsigned)(offset / sizeof(uke_dw_ctx_pool[0]));
++	struct vm_page_delayed_work_ctx *ctx = &uke_dw_ctx_pool[slot];
++	assert(ctx->delayed_owner == current_thread());
++	ctx->delayed_owner = NULL;
++	os_atomic_andnot(&uke_dw_ctx_used, 1u << slot, release);
++	os_atomic_inc(&uke_dw_ctx_puts, relaxed);
+ }
+ 
+ uint64_t vm_object_upl_throttle_cnt;

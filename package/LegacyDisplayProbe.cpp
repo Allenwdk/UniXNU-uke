@@ -3,6 +3,7 @@
 // LegacyDisplayProbe.cpp of UniXNU-sheng; the late probe starts sheng's key store and HID probes and this board's
 // VirtIO input, but no longer sheng's CPU frequency, GPU power and touch panel probes, which drive sheng hardware and
 // are not part of this board's archive.
+#include "UkeClassRegistration.h"
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IODeviceTreeSupport.h>
@@ -636,9 +637,9 @@ void native_legacy_display_probe(void) {
     // reach this boot-thread entry. Run class constructors only once; a second
     // postModLoad would attempt to register the same metaclasses again.
     if(native_legacy_stage)return;
-    native_legacy_stage=1;void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+    native_legacy_stage=1;void *handle=ukeClassBegin(g_kernel_kmod_info.name);
     if(!handle){native_legacy_display_checkpoint();return;}
-    native_legacy_display_static_init();native_gop_presenter_static_init();native_legacy_meta_status=OSMetaClass::postModLoad(handle);
+    native_legacy_display_static_init();native_gop_presenter_static_init();native_legacy_meta_status=ukeClassEnd(handle);
     if(native_legacy_meta_status){native_legacy_display_checkpoint();return;}
     PE_Video video={};native_legacy_stage=2;
     if(PE_current_console(&video) || !video.v_baseAddr || !video.v_width || !video.v_height || video.v_depth!=32

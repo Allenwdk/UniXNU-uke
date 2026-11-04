@@ -59,3 +59,16 @@ uke-display-call-trace.patch
 zzzzzz-sheng-latency-trace.patch
 zzzzzzzz-sheng-exit-latency.patch
 zzzzzzzzz-sheng-unnest-trace.patch
+
+# Optional GPU map/external-method phase timestamps; locking is unchanged.
+uke-gpu-iokit-phases.patch
+
+# Prepare unowned native GPU pages outside the mapping-exclusion lock;
+# original locked dispatch still validates/adopts, cleanup stays after ipcExit.
+uke-gpu-prepare-outside-iokit.patch
+
+# Use a bounded pool for optional UPL delayed-work contexts.
+uke-vm-delayed-work-pool.patch
+
+# Match native class registration to the existing OSKext lock order.
+uke-kext-registration-lock-order.patch

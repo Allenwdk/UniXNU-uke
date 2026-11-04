@@ -8,35 +8,35 @@ ref = "main"
 # (scripts/build-sheng-source-storage.py pins the same revision). 315 (e45fbe3) is the 17-line tree.
 commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 
-# Shared SM7675 SoC layer, pinned to the published user-accepted source.
+# SM7675 LLCC operations for the current local GPU performance checkpoint.
 [[source]]
 name = "sm7675"
 kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
-commit = "7f857a825a3c1f0882a50eaa824249c714d9679d"
+commit = "b21db76e3251d3910bd6c4902751c8c9caf7079e"
 
-# Published iPadOS27 GPU pins: full upstream main plus the accepted uke
-# hardware/ABI fixes. Local development paths belong in ignored local.toml.
+# Current local GPU performance checkpoint, deployed as79EC diagnostics.
+# Hardware BR counter activity and ordinary120Hz remain pending.
 [[source]]
 name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
-# Upstream main 6fa7bae plus gen7_11_0 profile and bounded failure records.
-commit = "22abfe46098e568fd0a66e1e358f021f2c0e964f"
+# GPU preflight lifecycle and scoped BR31-counter capture.
+commit = "e29c04e6449d701aad352c52f02a21da05ca8803"
 
 [[source]]
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
-# Upstream main e47c1b8 plus the qualified 24A446 requested-state fix.
-commit = "f3e29a2401cf1242b4e2eaf2b89ef2dd2fcacbaa"
+# Display fence callout delivery and bounded polling fallback.
+commit = "b688eb27996f6bd5f4b075255046b25b0cec0fbd"
 
 [[source]]
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/Allenwdk/AdrenoMetal.git"
-# Upstream main 243d63c plus conditional iOS 27 Core Image library retry.
-commit = "854f99a49e88febb52d4105baa88a4db4c27718b"
+# Render-server wakeup coalescing and transient GMEM selection.
+commit = "d3355fc28999cea1ad2a49321857e91099f3256d"
 
 [[source]]
 name = "ShengUfs"

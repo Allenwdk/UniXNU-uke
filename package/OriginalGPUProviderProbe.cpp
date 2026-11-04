@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Unpublished constructor/lifetime or required-dispatch observation only.
+#include "UkeClassRegistration.h"
 #include <IOKit/IOService.h>
 #include <IOKit/IOUserClient.h>
 #include <IOKit/IOMemoryDescriptor.h>
@@ -70,9 +71,9 @@ void native_original_provider_probe(IOService *backend) {
  const OSSymbol *name=OSSymbol::withCString("IOGPU");const OSMetaClass *parent=name?OSMetaClass::getMetaClassWithName(name):nullptr;OSSafeReleaseNULL(name);
  native_original_provider_parent=(uint64_t)parent;
  if(!parent || parent->getClassSize()!=736){native_original_provider_status=kIOReturnNotFound;native_original_provider_checkpoint();return;}
- void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+ void *handle=ukeClassBegin(g_kernel_kmod_info.name);
  if(!handle){native_original_provider_status=kIOReturnNoResources;native_original_provider_checkpoint();return;}
- native_original_provider_static_init();native_original_provider_status=OSMetaClass::postModLoad(handle);
+ native_original_provider_static_init();native_original_provider_status=ukeClassEnd(handle);
  if(native_original_provider_status){native_original_provider_checkpoint();return;}
  native_original_provider_instances_before=native_original_provider_instances();native_original_provider_stage=2;
  IOService *object=native_original_provider_allocate();native_original_provider_allocated=object!=nullptr;native_original_provider_object=(uint64_t)object;

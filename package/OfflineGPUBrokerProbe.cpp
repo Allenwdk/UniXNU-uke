@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Explicit offline registration after real IOBSD/transport publication.
+#include "UkeClassRegistration.h"
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <libkern/c++/OSMetaClass.h>
@@ -22,9 +23,9 @@ extern "C" __attribute__((noinline)) void native_gpu_broker_checkpoint(void) {__
 extern "C" void native_offline_gpu_publish(void) {
     unsigned enabled=0;PE_parse_boot_argn("offline-gpu-broker",&enabled,sizeof(enabled));
     if(enabled!=1)return;
-    native_gpu_broker_stage=1;void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+    native_gpu_broker_stage=1;void *handle=ukeClassBegin(g_kernel_kmod_info.name);
     if(!handle){native_gpu_broker_status=kIOReturnNoResources;native_gpu_broker_checkpoint();return;}
-    native_offline_gpu_static_init();native_gpu_broker_status=OSMetaClass::postModLoad(handle);
+    native_offline_gpu_static_init();native_gpu_broker_status=ukeClassEnd(handle);
     if(native_gpu_broker_status){native_gpu_broker_checkpoint();return;}
     OSDictionary *matching=IOService::serviceMatching("NativeVirtioConsole");
     IOService *transport=matching?IOService::waitForMatchingService(matching,5000000000ULL):nullptr;

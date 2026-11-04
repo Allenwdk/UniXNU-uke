@@ -127,6 +127,19 @@ firmware_gmu = ["gen71100_gmu.bin", "gen71500_gmu.bin", "a732_gmu.bin"]
 firmware_zap = ["gen71100_zap.mbn", "gen71500_zap.mbn", "a732_zap.mbn"]
 firmware_source = "/vendor/firmware + /odm/firmware"
 
+[gpu.system_cache]
+default_mode = 2
+compatible = "qcom,cliffs7-llcc"
+version = 50
+base = "0x25000000"
+bytes = "0x800000"
+broadcast = "0x25800000"
+broadcast_bytes = "0x200000"
+gpu_slice = 9
+gpu_capacity_kib = 3200
+gpuhtw_slice = 11
+gpuhtw_capacity_kib = 256
+
 [gpu.firmware_pins."gen71100_sqe.fw"]
 bytes = 66036
 sha256 = "b6df660d109504dbea5a266910b037a33d893a11c6de52f524a5fd112008c401"
@@ -220,7 +233,8 @@ text_fixups = [
 kernel_args = [
   "-v",
   "serial=3",
-  "debug=0x14e",
+  # Decimal334 is the same debug mask as0x14e; keeps the full arguments below1000B.
+  "debug=334",
   # uke has no UART: kprintf goes to the framebuffer video console.
   "-enable_kprintf_spam",
   # Show XNU text; kprintf enqueues rather than drawing with interrupts masked.
@@ -243,7 +257,7 @@ kernel_args = [
   "offline-legacy-transfer=1",
   "offline-legacy-cpu-present=1",
   "offline-legacy-phase=4",
-  "offline-legacy-noconsole=0",
+  # Absent uses the driver's zero default, preserving console output.
   # Input: touch at stage 4, HID reports, polled frame path.
   "offline-hid-home=1",
   "offline-hid-input=1",
@@ -261,12 +275,13 @@ kernel_args = [
   "offline-key-events=1",
   "sheng-dpu-scanout=2",
   "sheng-vsync=120",
+  "sheng-vsync-fixed=1",
   # Storage: source-storage UFS root (the 24A446 OS policy travels as kernel.macho.vroot and OS.vroot).
   "native-source-storage=1",
   "sheng-data-persist=2",
   # Existing UKELLOG1 writer: recovery reads the last 32 MiB of userdata.
   "sheng-log=1",
-  "sheng-crashlog=1",
+  # Periodic full CrashReporter scans are optional; normal frame tracing/export remains.
   "native-ufs-root=1",
   # Existing upstream detail screen for the next root-preparation failure.
   # Board policy carried over from the 17.7.11 line.
@@ -276,6 +291,7 @@ kernel_args = [
   "sheng-aks=1",
   "sheng-disable-watchdogd=1",
   "sheng-smp=1",
+  "sheng-cpufreq=4",
   "armcpu-spi-ipi=1",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",

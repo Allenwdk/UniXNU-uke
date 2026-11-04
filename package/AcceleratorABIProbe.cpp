@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Genuine constructor/ancestry/lifetime evidence, without normal publication.
+#include "UkeClassRegistration.h"
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <libkern/c++/OSMetaClass.h>
@@ -26,9 +27,9 @@ void native_accelerator_probe(void) {
  OSSafeReleaseNULL(name);
  native_accelerator_parent=(uint64_t)parent;
  if(!parent || parent->getClassSize()!=136){native_accelerator_status=kIOReturnNotFound;native_accelerator_checkpoint();return;}
- void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+ void *handle=ukeClassBegin(g_kernel_kmod_info.name);
  if(!handle){native_accelerator_status=kIOReturnNoResources;native_accelerator_checkpoint();return;}
- native_accelerator_static_init();native_accelerator_status=OSMetaClass::postModLoad(handle);
+ native_accelerator_static_init();native_accelerator_status=ukeClassEnd(handle);
  if(native_accelerator_status){native_accelerator_checkpoint();return;}
  native_accelerator_instances_before=native_offline_accelerator_instances();
  native_accelerator_stage=2;IOService *object=native_offline_accelerator_allocate();native_accelerator_allocated=object!=nullptr;
