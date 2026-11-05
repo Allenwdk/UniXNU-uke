@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the locked Linux QMI codec/descriptors for read-only board queries."""
+"""Build the locked Linux QMI codec and WLFW setup/identity descriptors."""
 import argparse
 import hashlib
 import json

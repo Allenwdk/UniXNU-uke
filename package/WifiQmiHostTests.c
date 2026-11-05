@@ -72,19 +72,39 @@ static void respond(uint8_t *packet, unsigned length)
     put16(packet + 5, length - 7);
     inject(QCOM_QRTR_DATA, 8, 0x4000, packet, length);
 }
+static void accept(unsigned message)
+{
+    uint8_t response[256];
+    CHECK(operation() == message);
+    unsigned length = result_header(response, message, transaction(), 0, 0);
+    respond(response, length);
+}
 int main(void)
 {
     uke_wifi_qrtr_start(); client.state(NULL, 1); server();
-    CHECK(!announced && requests == 1 && operation() == 0x24);
+    CHECK(!announced && requests == 1 && operation() == 0x20);
+    const uint8_t register_tlvs[] = {
+        0x10,1,0,1, 0x15,4,0,0x4c,0x45,0x4e,0x4b, 0x18,1,0,1, 0x1b,1,0,1,
+    };
+    const uint8_t host_tlvs[] = {
+        0x10,4,0,1,0,0,0, 0x14,1,0,1, 0x1a,1,0,0, 0x1c,1,0,0,
+    };
+    CHECK(get32(outgoing + 20) == 7 + sizeof register_tlvs);
+    CHECK(memcmp(outgoing + 39, register_tlvs, sizeof register_tlvs) == 0);
+    accept(0x20);
+    CHECK(operation() == 0x34 && get32(outgoing + 20) == 7 + sizeof host_tlvs);
+    CHECK(memcmp(outgoing + 39, host_tlvs, sizeof host_tlvs) == 0);
+    accept(0x34);
+    CHECK(requests == 3 && operation() == 0x24);
     uint8_t response[256];
     unsigned txn = transaction(), n = result_header(response, 0x24, txn + 1, 0, 0);
-    respond(response, n); CHECK(requests == 1 && native_wifi_qmi_stats[4] == 1);
+    respond(response, n); CHECK(requests == 3 && native_wifi_qmi_stats[4] == 1);
     n = result_header(response, 0x24, txn, 0, 0);
     response[n++] = 0x10; put16(response + n, 8); n += 2; put32(response + n, 0x6750); n += 4; put32(response + n, 0xb); n += 4;
     response[n++] = 0x11; put16(response + n, 4); n += 2; put32(response + n, 7); n += 4;
     response[n++] = 0x12; put16(response + n, 4); n += 2; put32(response + n, 0x7675); n += 4;
     respond(response, n);
-    CHECK(requests == 2 && operation() == 0x4c && native_wifi_identity.board_id == 7 && native_wifi_identity.chip_id == 0x6750);
+    CHECK(requests == 4 && operation() == 0x4c && native_wifi_identity.board_id == 7 && native_wifi_identity.chip_id == 0x6750);
     n = result_header(response, 0x4c, transaction(), 0, 0);
     response[n++] = 0x10; put16(response + n, 8); n += 2; put32(response + n, 0x18800000); put32(response + n + 4, 0); n += 8;
     response[n++] = 0x11; put16(response + n, 4); n += 2; put32(response + n, 0x200000); n += 4;
@@ -95,17 +115,21 @@ int main(void)
     client.state(NULL, 1); server(); now = 10001; uke_wifi_qrtr_tick();
     CHECK((int32_t)native_wifi_qmi_stats[0] == -4 && native_wifi_qmi_stats[3] == 1);
     client.state(NULL, 0); client.state(NULL, 1); server();
-    n = result_header(response, 0x24, transaction(), 0, 0); put16(response + 8, 3); respond(response, n);
+    n = result_header(response, 0x20, transaction(), 0, 0); put16(response + 8, 3); respond(response, n);
     CHECK((int32_t)native_wifi_qmi_stats[0] == -2 && native_wifi_qmi_stats[5] == 1);
     client.state(NULL, 0); client.state(NULL, 1); server();
-    n = result_header(response, 0x24, transaction(), 1, 13); respond(response, n);
-    CHECK((int32_t)native_wifi_qmi_stats[0] == -3 && native_wifi_qmi_stats[8] == 1 && native_wifi_qmi_stats[9] == 13);
+    accept(0x20);
+    unsigned requests_before_error = requests;
+    n = result_header(response, 0x34, transaction(), 1, 90); respond(response, n);
+    CHECK((int32_t)native_wifi_qmi_stats[0] == -3 && native_wifi_qmi_stats[8] == 1 &&
+          native_wifi_qmi_stats[9] == 90 && requests == requests_before_error);
     client.state(NULL, 0); client.state(NULL, 1); server();
+    accept(0x20); accept(0x34);
     n = result_header(response, 0x24, transaction(), 0, 0);
     response[n++] = 0x16; put16(response + n, 1); n += 2; response[n++] = 0;
     respond(response, n);
     CHECK((int32_t)native_wifi_qmi_stats[0] == -3 && native_wifi_identity.valid == 0);
     CHECK(!announced);
-    puts("PASS: original-codec CAP/BAR, client-only port, stale reply, timeout, malformed result and firmware error preservation");
+    puts("PASS: upstream registration/host-cap wire fields, gated CAP/BAR, stale replies, timeout, malformed TLVs and firmware errors");
     return 0;
 }

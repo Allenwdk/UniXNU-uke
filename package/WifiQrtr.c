@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
-/* Read-only WLFW identity discovery over the established WPSS IPCRTR link.
- * Original Linux QMI encoding/decoding and exact ath11k descriptors handle
- * CAP and DEVICE_INFO. The full ath11k backend will own radio lifecycle. */
+/* Follow ath11k's fixed-memory WLFW server-arrival sequence through
+ * device identity discovery. The full ath11k backend will own BDF and
+ * the radio lifecycle. */
 #include <stdint.h>
 #include <stddef.h>
 #include <sys/systm.h>
@@ -17,17 +17,21 @@ volatile uint32_t native_wifi_qrtr_stats[8];
 /* stage, rx, bad, service-count, WLFW-node, WLFW-port, instance, links */
 volatile uint32_t native_wifi_qmi_stats[10];
 /* state, requests, responses, timeouts, unrelated, malformed, message,
- * transaction, QMI result, QMI error. state4:CAP,5:BAR; negative:failure. */
+ * transaction, QMI result, QMI error. States 6/7 wait for setup replies,
+ * 1/2 wait for identity replies, 4/5 record CAP/BAR, negative is failure. */
 struct nw_wcn6750_identity native_wifi_identity;
 static uint32_t qmi_node, qmi_port;
 static uint16_t qmi_message, qmi_transaction;
 static uint64_t qmi_deadline;
 static int qmi_pending;
-enum { kClientPort = 0x4000, kCapability = 0x24, kDeviceInfo = 0x4c };
+enum {
+    kClientPort = 0x4000,
+    kRegister = 0x20, kHostCapability = 0x34, kCapability = 0x24, kDeviceInfo = 0x4c,
+};
 
 static void query(unsigned message)
 {
-    uint8_t request[32];
+    uint8_t request[268]; /* QMI header plus upstream HOST_CAP maximum */
     if (++qmi_transaction == 0) ++qmi_transaction;
     qmi_message = (uint16_t)message;
     int length = nw_wcn6750_query_request(message, qmi_transaction, request, sizeof request);
@@ -39,7 +43,7 @@ static void query(unsigned message)
     }
     qmi_pending = 1;
     qmi_deadline = uke_wpss_now_ms() + nw_wcn6750_query_timeout_ms();
-    native_wifi_qmi_stats[0] = message == kCapability ? 1 : 2;
+    native_wifi_qmi_stats[0] = message == kRegister ? 6 : message == kHostCapability ? 7 : message == kCapability ? 1 : 2;
     native_wifi_qmi_stats[1]++;
     native_wifi_qmi_stats[6] = message;
     native_wifi_qmi_stats[7] = qmi_transaction;
@@ -79,7 +83,10 @@ static void qmi_receive(void *context, QcomQrtr *q, uint32_t local_port,
                qmi_message, native_wifi_identity.result, native_wifi_identity.error, decoded);
         return;
     }
-    if (qmi_message == kCapability) {
+    if (qmi_message == kRegister || qmi_message == kHostCapability) {
+        printf("UKE WIFI: QMI accepted message=%x txn=%u\n", qmi_message, qmi_transaction);
+        query(qmi_message == kRegister ? kHostCapability : kCapability);
+    } else if (qmi_message == kCapability) {
         native_wifi_qmi_stats[0] = 4;
         printf("UKE WIFI: QMI CAP valid=%x chip=%x family=%x board=%x soc=%x fw=%x\n",
                native_wifi_identity.valid, native_wifi_identity.chip_id, native_wifi_identity.chip_family,
@@ -153,7 +160,7 @@ static void receive(void *context, const uint8_t *data, uint32_t length)
                router.remote[i].node, router.remote[i].port, router.remote[i].instance);
         qmi_node = router.remote[i].node;
         qmi_port = router.remote[i].port;
-        query(kCapability);
+        query(kRegister);
         return;
     }
     if (native_wifi_qrtr_stats[0] == 3) {

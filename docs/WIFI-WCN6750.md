@@ -1,5 +1,14 @@
 # WCN6750 Wi-Fi development
 
+## 49A7 device readback
+
+The fresh log captures CAP request `0x24` transaction 1 to node 13 port 8
+and the matching response with result 1 and error 90, INCOMPATIBLE_STATE.
+The WLFW service answers. The follow-up uses the original ath11k WCN6750
+fixed-memory server-arrival order: IND_REGISTER, HOST_CAP, CAP and
+DEVICE_INFO. Every transition requires an accepted reply. The peer fixture
+checks the two new requests against their expected wire fields.
+
 ## WLFW identity queries
 
 The 983B hardware capture records WPSS ready and handover at 52.611328 s,
