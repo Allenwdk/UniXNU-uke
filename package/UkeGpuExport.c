@@ -55,7 +55,7 @@ static void uke_diag_worker(void *arg,wait_result_t wait) {
    }
    if(&boot_root_thread_snapshot)boot_root_thread_snapshot();
   }
-  if(elapsed<240 || !native_ufs_export_blocks())continue;
+  if(elapsed<(diag==4?180u:240u) || !native_ufs_export_blocks())continue;
   IOLockLock(export_lock);const uint32_t region=(uint32_t)native_ufs_export_blocks(),half=region/2;
   struct uke_diag_sink k={NULL,export_ready && export_ready_first==0?half:0,0,half*LogBlock};diag_owned=1;IOLockUnlock(export_lock);
   int status=-4;uint64_t stream=0;
@@ -76,7 +76,7 @@ static void uke_diag_worker(void *arg,wait_result_t wait) {
 void uke_gpu_export_start(void) {
  export_lock=IOLockAlloc();
  unsigned diag=0;
- if(!export_lock || !PE_parse_boot_argn("sheng-diag",&diag,sizeof diag) || (diag!=1 && diag!=2))return;
+ if(!export_lock || !PE_parse_boot_argn("sheng-diag",&diag,sizeof diag) || (diag!=1 && diag!=2 && diag!=4))return;
  thread_t t=THREAD_NULL;
  if(kernel_thread_start(uke_diag_worker,(void *)(uintptr_t)diag,&t)==KERN_SUCCESS)thread_deallocate(t);
 }

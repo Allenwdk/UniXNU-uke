@@ -120,6 +120,10 @@ GPU_COUNTER_NAMES=('cp_clocks','uche_arbiter_stall','uche_latency_cycles','uche_
 GPU_SHADER_WAIT_NAMES=('sp_uche_stall','sp_rb_stall','sp_wave_context_cycles','sp_wave_wait_cycles',
  'sp_wave_long_sync_cycles','sp_wave_short_sync_cycles','sp_local_load_instructions',
  'sp_local_store_instructions','sp_fs_half_alu','sp_efu_working')
+# v2 (marker 0x4252021f) reuses slot 13 for SP_STALL_CYCLES_VPC; everything else is the same.
+GPU_SHADER_WAIT_NAMES_V2=('sp_uche_stall','sp_rb_stall','sp_wave_context_cycles','sp_wave_wait_cycles',
+ 'sp_wave_long_sync_cycles','sp_wave_short_sync_cycles','sp_vpc_stall',
+ 'sp_local_store_instructions','sp_fs_half_alu','sp_efu_working')
 
 def latency_analysis(rows):
     counter_parts,previous,counters={},None,[]
@@ -266,21 +270,25 @@ def execution_windows(rows):
         interval = sample[66]['fields']
         values = sample[67]['raw'][1:12] + sample[68]['raw'][1:11]
         scope = 'absent'
+        plan_marker = 0
         names = base_names
         if 69 in sample:
             marker = sample[69]['raw'][11]
-            if marker not in (31, 0x4252001f):
+            if marker not in (31, 0x4252001f, 0x4252021f):
                 previous = None
                 continue
-            scope = 'br' if marker == 0x4252001f else 'bv_legacy'
-            names += tuple(('bv_' if scope == 'bv_legacy' else '') + name for name in GPU_SHADER_WAIT_NAMES)
+            scope = 'br' if marker in (0x4252001f, 0x4252021f) else 'bv_legacy'
+            plan = GPU_SHADER_WAIT_NAMES_V2 if marker == 0x4252021f else GPU_SHADER_WAIT_NAMES
+            names += tuple(('bv_' if scope == 'bv_legacy' else '') + name for name in plan)
             values += sample[69]['raw'][1:11]
+            # A window must not join samples of two plans: slot 13 means something else in v2.
+            plan_marker = marker
         valid_end = (not interval['flags'] & ~1 and not (interval['mismatch'] | interval['unstable'])
                      and 0 <= interval['ended_us'] - interval['began_us'] <= 1000)
         if valid_end and previous and ident == previous[0]['sample'] + 1:
-            first, old, old_scope = previous
+            first, old, old_scope, old_marker = previous
             elapsed = interval['ended_us'] - first['ended_us']
-            same_epoch = (len(values) == len(old) and scope == old_scope and
+            same_epoch = (len(values) == len(old) and scope == old_scope and plan_marker == old_marker and
                           all(interval[k] == first[k] for k in ('epoch', 'level', 'bandwidth_level', 'vote_epoch')))
             busy_ticks = interval['busy_ticks'] - first['busy_ticks']
             delta = [v - w for v, w in zip(values, old)]
@@ -308,7 +316,7 @@ def execution_windows(rows):
                             submitted_us=f['submitted_us'], retired_us=entry['us'],
                             gpu_elapsed_us=(f['gpu_end_ticks']-f['gpu_start_ticks'])/19.2))
                 windows.append(row)
-        previous = (interval, values, scope) if valid_end else None
+        previous = (interval, values, scope, plan_marker) if valid_end else None
     return dict(scope='global_br', snapshots=len(parts), valid_windows=len(windows),
                 highly_busy_windows=sum('effective_cp_cycles_per_us' in r for r in windows), windows=windows)
 

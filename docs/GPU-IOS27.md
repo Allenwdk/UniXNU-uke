@@ -616,3 +616,34 @@ remain pending the next capture. Component source commits are recorded below.
 - UniXNU/drivers/GopFramebuffer `b688eb27996f6bd5f4b075255046b25b0cec0fbd`
 - UniXNU-sm7675-common `b21db76e3251d3910bd6c4902751c8c9caf7079e`
 - UniXNU-build/drivers/ArmCpu `bc72a4f41d7822873cc48ffdf36a485d675fbce3`
+
+
+## 2026-11-05 普通帧 GMEM 非 fetch ROAA 候选
+
+待授权候选 CRC **C352017CCC10D54B**，release `uke-port/releases/2026-11-05-gpu-gmem-nofetch-roaa/`。
+默认仅 A732 的 GMEM 非 input-attachment 读取 shader 省去颜色顺序 flush。真实 fetch、深度/模板和显式调试强制顺序保留。
+AAA4 GPU P50 9.045ms，AA4A 单 pass 1266条 P50 10.330ms，927条超8.333ms，1264条带GMEM策略请求。
+可消除flush占比尚未量到，像素、实际收益及120Hz待真机。正式kernel/Turnip/plugin/payload及定点ASan/UBSan检查通过，
+vendor_boot `10861c74a87bc34edabc2f46d2293598d67499a8026b6b1b8e1d0ed1c396235a` /44896256B。
+68,061个native符号与段节布局匹配v2，999B参数及Metal可执行相同，addon仅Turnip和manifest变化，原厂trust/Data种子门禁通过。
+本轮沿用v2 addon配置，per-pass激活缺口继续待查，设备访问次数为零。工作区详细记录 `docs/status/gpu-gmem-nofetch-roaa-2026-11-05.md`。
+
+## 2026-11-05 12:47 已授权刷入 C352017CCC10D54B
+
+用户当次“刷吧”授权。2026-11-05T12:47:11.977026+08:00 至 2026-11-05T12:47:19.479486+08:00，SHA256SUMS 10项全部通过，
+设备 b8a81f12 从 TWRP 经 `adb reboot bootloader` 进入 bootloader fastboot，product uke、is-userspace no、
+四个分区容量均为 0x6000000。boot_a/vendor_boot_a/boot_b/vendor_boot_b 的 Sending/Writing 全部 OKAY，
+set_active a、current-slot a 回读及 reboot 均 OKAY。主机未写 userdata。
+候选已部署并重启，真实启动、画面正确性、普通GPU收益和120Hz待实机。
+证据 `uke-port/releases/2026-11-05-gpu-gmem-nofetch-roaa/flash-result-20261105-124711.json` 与 `flash-20261105-124711.log`。
+
+## 2026-11-05 C352图标/渲染回归已取证，修正版 2DFC638817B9A440 已备
+
+C352已撤回并标DO_NOT_FLASH，活动ROAA优化已移除。100新槽/1,948旧槽，raw1943dfd4，文本到248.363s。
+export逐字节属于旧v2，已排除。本轮Data帧记录2,877个command；没有新GPU ring，无法评价提速。
+Data实际有ngpu/per-pass和tu_debug，先前“未安装”推断已更正。安装后的两个Mach-O前缀与C352一致，
+但分别残留3,280,912/574,000B旧尾部，已补显式va_data_size设置及exact-size回归检查。
+新模式4补通pass producer/reader/transport，180秒worker导出并打印addon安装计数。
+修正版 **2DFC638817B9A440** 正式构建/包内门禁通过，vendor_boot `25e049f61ca5cf96ee6e7cf2191bf6766532f5734fa94a7ee63d467d96942887` /44,896,256B，待授权刷入。
+设备取完留原厂四分区+A槽+TWRP，主机未写userdata。图标/像素恢复、采样链实机有效性和120Hz待验。
+详见 [回读与修正](../../docs/status/gpu-roaa-repair-2026-11-05.md)。

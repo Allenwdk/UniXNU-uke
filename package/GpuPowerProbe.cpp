@@ -115,6 +115,7 @@ extern "C" unsigned native_adreno_accelerator_instance_size(void) __attribute__(
 extern "C" kern_return_t OSKextLoadKextWithIdentifier(const char *);
 extern "C" kmod_info_t g_kernel_kmod_info;
 extern "C" volatile int native_gpu_addon_stage, native_gpu_addon_status, native_gpu_addon2_stage, native_gpu_addon2_status;
+extern "C" volatile int native_gpu_addon_files, native_gpu_addon_written, native_gpu_addon_same, native_gpu_addon_failed, native_gpu_addon_error;
 struct NativeAdrenoMetalDiagView {
     uint32_t opens, busy, bad, closes, reports, property_reads, foreign_opens, foreign_type, name_reads, calls, last_selector, last_status, ext_entries, ext_selector, ext_status, ext_in, ext_out, tunnel_calls, probes, sel_bits[8], mb_maps, mb_calls, marks_total, marks[16], chk_macf, chk_res, chk_type, type_pass_lo, type_pass_hi, attach_status, inflight, inflight_since_calls, forced_unmaps;
     char opener[3][17];
@@ -1404,6 +1405,13 @@ int scanProcess(void *proc, void *) {
 }
 void metalRows() {
     if (!gMetalStage && !native_gpu_addon_stage) return;
+    static bool addonLogged = false;
+    if (!addonLogged && native_gpu_addon_files >= 0 &&
+        native_gpu_addon_written + native_gpu_addon_same + native_gpu_addon_failed == native_gpu_addon_files) {
+        IOLog("UKE GPU ADDON: files=%d written=%d same=%d failed=%d error=%d\n",
+            native_gpu_addon_files, native_gpu_addon_written, native_gpu_addon_same, native_gpu_addon_failed, native_gpu_addon_error);
+        addonLogged = true;
+    }
     char row[64];
     const NativeAdrenoMetalDiagView &d = native_adreno_metal_diag;
     gProcTotal = 0;
@@ -1761,7 +1769,7 @@ void gpuStart() {
     if (c[1]) {snprintf(row, sizeof row, "C2 sqe readback differs at %x", c[1]); setRow(7, row); return;}
     // 3. hw_init (a6xx_gpu.c), A740 branches only. OOB GPU_SET is already held (mode 8).
     c[0] = 3;
-    gLightGpuPerf=bootArg("sheng-diag",0)==2 && bootArg("sheng-gpu-trace",0)==2;
+    gLightGpuPerf=(bootArg("sheng-diag",0)==2 || bootArg("sheng-diag",0)==4) && bootArg("sheng-gpu-trace",0)==2;
     gpuHwInit();
     // 4. Ring 0 (MSM_GPU_RB_CNTL_DEFAULT: 32 KiB, block 32; hw_apriv uses the hardware rptr shadow at memptrs+0).
     c[0] = 4;
@@ -1773,7 +1781,7 @@ void gpuStart() {
     if (attached) {snprintf(row, sizeof row, "C4 ring attach %x", unsigned(attached)); setRow(7, row); return;}
     // The CP counter stamps around each job's buffers and the jobs' timeline are diagnostics (sheng-diag=1 or 2; the board's ring is this one,
     // not the service's); sheng-gpu-timeline=0 or 1 overrides the stamps.
-    {unsigned timeline = 0, diag = 0; PE_parse_boot_argn("sheng-diag", &diag, sizeof diag); native_adreno_diag = diag == 1 || diag == 2;
+    {unsigned timeline = 0, diag = 0; PE_parse_boot_argn("sheng-diag", &diag, sizeof diag); native_adreno_diag = diag == 1 || diag == 2 || diag == 4;
      if (!PE_parse_boot_argn("sheng-gpu-timeline", &timeline, sizeof timeline)) timeline = native_adreno_diag;
      gRing.setTimeline(timeline != 0); gTimelineWanted = timeline != 0;}
     gpuWr64(A740_CP_BV_RB_RPTR_ADDR, gGpuBuffers[2].iova + 8);   // rbmemptr(bv_rptr)
@@ -1955,7 +1963,7 @@ void gpuLightPerfTick(bool preempt) {
     const auto &v=s.values;
     gpuTraceEvent(GpuTracePerfValuesLow,0,id,v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8],v[9],v[10]);
     gpuTraceEvent(GpuTracePerfValuesHigh,0,id,v[11],v[12],v[13],v[14],v[15],v[16],v[17],v[18],v[19],v[20]);
-    gpuTraceEvent(GpuTracePerfShaderWaits,0,id,v[21],v[22],v[23],v[24],v[25],v[26],v[27],v[28],v[29],v[30],NativeGpuShaderBrPlan);
+    gpuTraceEvent(GpuTracePerfShaderWaits,0,id,v[21],v[22],v[23],v[24],v[25],v[26],v[27],v[28],v[29],v[30],NativeGpuShaderBrPlan2);
     gpuTraceEvent(GpuTracePerfInterval,0,id,began/1000,ended/1000,busy,native_gpu_perf_vote[0],native_gpu_perf_vote[1],
         (uint64_t(resetAfter)<<32)|after[0],flags,s.mismatch,s.unstable,s.reset,native_gpu_dcvs_log_count);
 }
@@ -2067,7 +2075,7 @@ void startGpuDcvs() {
     if(!gDcvsOpps.load(gStartup)) {IOLog("UKE DCVS: invalid GMU OPP table; governor not started\n");return;}
     IOLog("UKE DCVS: levels=%u floor=%uMHz top=%uMHz boot-level=%u\n",gDcvsOpps.top,
         gDcvsOpps.mhz[gDcvsOpps.clamp(bootArg("sheng-gpu-dcvs-min",3))],gDcvsOpps.mhz[gDcvsOpps.top],native_gpu_perf_vote[0]);
-    if(bootArg("sheng-diag",0)!=2 && bootArg("sheng-gpu-trace",0)==1 && &uke_gpu_iokit_hook)uke_gpu_iokit_hook=gpuIoKitPhase;
+    if(bootArg("sheng-diag",0)!=2 && bootArg("sheng-diag",0)!=4 && bootArg("sheng-gpu-trace",0)==1 && &uke_gpu_iokit_hook)uke_gpu_iokit_hook=gpuIoKitPhase;
     thread_t thread = nullptr;
     if (kernel_thread_start(gpuDcvsThread, nullptr, &thread) == KERN_SUCCESS) thread_deallocate(thread);
 }
@@ -2382,7 +2390,7 @@ void gmuPrerequisites(const gpb_result &r) {
 }
 void probeThread(void *, wait_result_t) {
     unsigned trace = 0;
-    if (bootArg("sheng-diag",0)!=2 && PE_parse_boot_argn("sheng-gpu-trace", &trace, sizeof trace) && trace) boot_latency_start();
+    if (bootArg("sheng-diag",0)!=2 && bootArg("sheng-diag",0)!=4 && PE_parse_boot_argn("sheng-gpu-trace", &trace, sizeof trace) && trace) boot_latency_start();
     registerExecObserver();
     unsigned mode = 0;
     PE_parse_boot_argn("sheng-gpu-power", &mode, sizeof mode);
