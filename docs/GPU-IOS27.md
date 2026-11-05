@@ -656,3 +656,11 @@ Adreno740/GOP/ArmCpu/Smmu4K/XnuPrelink已含其上游main；新增sheng CP抢占
 正式kernel/插件/payload、定点检查与15项主线测试通过，vendor_boot `6f4a7f3782b8a7b8b6777b540957ad77b7ef767e52f62c04abdd4e35fa13283a` /44,900,352B。
 候选 **6063137DD24BD4FA** 未刷，设备沿用原厂四分区+A槽+TWRP，本轮无设备操作，图标和120Hz待真机。
 见 [同步、范围与证据](../../docs/status/upstream-main-sync-2026-11-05.md)。
+
+
+## 2026-11-05 图标服务配置补齐，候选209862415C7884EC未刷
+
+此前606只有图标Metal诊断，现已适配sheng 5d51e87的图标服务环境配置（FORCE_SOFTWARE_RENDERER=0、CI_ENABLE_METAL_GPU=0），并接入签名缓存与只读加载路径。Core源码0ee4f95、设备源码5ca9189；715服务仅目标环境变化，原装载/签名检查保留。正式kernel/payload及主机缓存/签名检查通过，vendor_boot SHA256 9db44e32a104cc6b225e06f97914307bc74b958e7cd567f2d9b4d02c634fdbef，45,301,760B。新候选未刷、未推送；私有libxpc消费、实际启动、图标恢复及120Hz待真机。本轮无设备操作，设备状态沿用原厂四分区+A槽+TWRP。
+
+
+仅主机证据；签名逐页与缓存语义检查已过，Apple私有libxpc和真机接受未测。报告位于工作区docs/status/icon-service-config-2026-11-05.md。
