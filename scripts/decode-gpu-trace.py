@@ -105,6 +105,14 @@ def frontend_details(blob):
         elif kind==16:
             rows.append(dict(name='attachment',us=t0,command=t1,texture=t2,resolve=t3,pass_index=a,attachment=b,load=c&255,store=(c>>8)&255,
                              samples=c>>16,pixel_format=d,width=tid,height=cpu0,surface=cpu1,original_samples=tid2))
+        elif kind in (24,25):
+            names = ('instances','inline_splits','barrier_splits','tile_splits','memoryless_splits','pending_pipeline_splits',
+                     'standins','standin_bytes','standin_copies','standin_draw_copies') if kind==24 else (
+                     'in_place','pitched','refused_pitch','refused_image','shadowed','shadow_copies','shadow_texels_back','shadowed_targets')
+            fields={names[a+i]:v for i,v in enumerate((t1,t2,t3)) if a+i<len(names)}
+            rows.append(dict(name='runtime_pass_counts' if kind==24 else 'runtime_texture_counts',us=t0,first=a,fields=fields))
+        elif kind==26:
+            rows.append(dict(name='gpu_pass_clock',us=t0,frequency_hz=a,exact_rational=bool(b)))
         elif kind==23:
             rows.append(dict(name='render_mode_policy',us=t0,command=t1,pass_index=t2,
                              mode=a,width=b,height=c,transient_attachments=d))
