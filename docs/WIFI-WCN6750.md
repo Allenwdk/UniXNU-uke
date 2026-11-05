@@ -1,5 +1,18 @@
 # WCN6750 Wi-Fi development
 
+## 82C2 device identity and AHB window probe
+
+The device accepted IND_REGISTER and HOST_CAP. CAP returned chip 1,
+family 0xb, SoC 0x40140120 and firmware 0x30088282. Its validity mask
+0x1d excludes board ID. DEVICE_INFO returned 0x61e00000, length 0x200000.
+There are 128 fresh slots relative to the 49A7 readback.
+
+The next image accepts only that BAR tuple for its diagnostic and reads
+REO1_MISC and CE0_DST_CTRL using the original ath11k static window
+offsets. The China O82 board data candidate is bd_o82.elf, based on
+the OEM module's board-ID fallback and product/region dispatch, and
+the recovery identity values. Its firmware acceptance is pending.
+
 ## 49A7 device readback
 
 The fresh log captures CAP request `0x24` transaction 1 to node 13 port 8

@@ -10,6 +10,7 @@
 #include "nw_wcn6750_qmi.h"
 
 extern uint64_t uke_wpss_now_ms(void);
+extern void uke_wifi_probe_bar(uint64_t base, uint32_t size);
 
 static QcomQrtr router;
 static UkeWpssChannel *channel;
@@ -96,6 +97,7 @@ static void qmi_receive(void *context, QcomQrtr *q, uint32_t local_port,
         native_wifi_qmi_stats[0] = 5;
         printf("UKE WIFI: QMI BAR address=%llx size=%x valid=%x\n",
                (unsigned long long)native_wifi_identity.bar_address, native_wifi_identity.bar_size, native_wifi_identity.valid);
+        uke_wifi_probe_bar(native_wifi_identity.bar_address, native_wifi_identity.bar_size);
     }
 }
 

@@ -73,6 +73,16 @@ void note(const char *prefix, const char *text) {
     printf("UKE WIFI: %s\n", native_wifi_wpss_text);
 }
 
+// The QMI window alone does not prove CPU MMIO access. These offsets follow
+// the original ath11k static AHB windows in ahb.c, hw.c, hal.h and pcic.h.
+constexpr uint32_t kWlanBarBytes = 0x200000;
+constexpr uint64_t kUkeWlanBar = 0x61e00000;
+constexpr uint32_t kWlanWindow = 0x80000;
+constexpr uint32_t kReo1Misc = kWlanWindow + (0x00a38000 + 0x1fc - 0x00a00000);
+constexpr uint32_t kCe0DstControl = 2 * kWlanWindow + (0x01b81000 + 0xb0 - 0x01b80000);
+static_assert(kReo1Misc == 0xb81fc && kCe0DstControl == 0x1010b0);
+static_assert(kReo1Misc < kWlanBarBytes && kCe0DstControl < kWlanBarBytes);
+
 Window gSmemW, gMutex, gIpcc, gAoss, gRsc;
 QcomSmem gSmem;
 QcomSmemPartition gPart;
@@ -620,6 +630,26 @@ void wpssThread(void *, wait_result_t) {
     }
 }
 }  // namespace
+
+extern "C" void uke_wifi_probe_bar(uint64_t base, uint32_t size) {
+    if (base != kUkeWlanBar || size != kWlanBarBytes) {
+        printf("UKE WIFI: MMIO declined BAR=%llx size=%x\n",
+               static_cast<unsigned long long>(base), size);
+        return;
+    }
+    Window window{};
+    if (!mapWindow(window, base, size)) {
+        printf("UKE WIFI: MMIO mapping failed\n");
+        return;
+    }
+    printf("UKE WIFI: MMIO read REO1_MISC offset=%x\n", kReo1Misc);
+    const uint32_t reoMisc = rd(window, kReo1Misc);
+    printf("UKE WIFI: MMIO REO1_MISC=%08x\n", reoMisc);
+    printf("UKE WIFI: MMIO read CE0_DST_CTRL offset=%x\n", kCe0DstControl);
+    const uint32_t ceControl = rd(window, kCe0DstControl);
+    printf("UKE WIFI: MMIO CE0_DST_CTRL=%08x\n", ceControl);
+    unmap(window);
+}
 
 extern "C" uint64_t uke_wpss_now_ms(void) {
     uint64_t ns = 0;

@@ -16,6 +16,13 @@ static UkeWpssClient client;
 static uint64_t now;
 static uint8_t outgoing[512];
 static unsigned outgoing_size, requests, announced;
+static unsigned bar_probes;
+
+void uke_wifi_probe_bar(uint64_t base, uint32_t size)
+{
+    CHECK(base == 0x61e00000 && size == 0x200000);
+    ++bar_probes;
+}
 
 void *lx_alloc(size_t n, int zero) { return zero ? calloc(1, n) : malloc(n); }
 void lx_free(const void *p) { free((void *)p); }
@@ -106,11 +113,12 @@ int main(void)
     respond(response, n);
     CHECK(requests == 4 && operation() == 0x4c && native_wifi_identity.board_id == 7 && native_wifi_identity.chip_id == 0x6750);
     n = result_header(response, 0x4c, transaction(), 0, 0);
-    response[n++] = 0x10; put16(response + n, 8); n += 2; put32(response + n, 0x18800000); put32(response + n + 4, 0); n += 8;
+    response[n++] = 0x10; put16(response + n, 8); n += 2; put32(response + n, 0x61e00000); put32(response + n + 4, 0); n += 8;
     response[n++] = 0x11; put16(response + n, 4); n += 2; put32(response + n, 0x200000); n += 4;
     respond(response, n);
     CHECK(native_wifi_qmi_stats[0] == 5 && (native_wifi_identity.valid & NW_WCN6750_BAR));
-    CHECK(native_wifi_identity.bar_address == 0x18800000 && native_wifi_identity.bar_size == 0x200000);
+    CHECK(native_wifi_identity.bar_address == 0x61e00000 && native_wifi_identity.bar_size == 0x200000);
+    CHECK(bar_probes == 1);
     client.state(NULL, 0); CHECK(native_wifi_identity.valid == 0);
     client.state(NULL, 1); server(); now = 10001; uke_wifi_qrtr_tick();
     CHECK((int32_t)native_wifi_qmi_stats[0] == -4 && native_wifi_qmi_stats[3] == 1);
@@ -129,6 +137,7 @@ int main(void)
     response[n++] = 0x16; put16(response + n, 1); n += 2; response[n++] = 0;
     respond(response, n);
     CHECK((int32_t)native_wifi_qmi_stats[0] == -3 && native_wifi_identity.valid == 0);
+    CHECK(bar_probes == 1);
     CHECK(!announced);
     puts("PASS: upstream registration/host-cap wire fields, gated CAP/BAR, stale replies, timeout, malformed TLVs and firmware errors");
     return 0;
