@@ -692,3 +692,9 @@ sheng main4601795筛选完成：缺少可隔离触摸算法3b44b1b、后台负�
 ## 2026-11-05 A1C5授权刷入
 
 用户本次“刷吧”授权，2026-11-05T21:09:55.318496+08:00至2026-11-05T21:10:02.846969+08:00，CRC **A1C5694B2210EE9B** 已刷boot_a/vendor_boot_a/boot_b/vendor_boot_b，全部Sending/Writing OKAY；set_active a、current-slot a回读及reboot OKAY。SHA256SUMS11项通过，product uke/is-userspace no，四分区容量各0x6000000。主机未写userdata；真实启动、图标保持与性能效果待实机。证据：`uke-port/releases/2026-11-05-gpu-client-overhead/flash-result-20261105-210955.json`及对应flash日志。
+
+
+## 2026-11-05 A1C5回读与pass归因候选
+
+A1C5回读175新槽/1873旧槽，camera后台不再出现；530普通GPU作业10.69/12.68ms，479超8.333ms。发现旧pass时钟整数52ns换算使绝对时间偏约200ms；校正后509作业确认，其中390单Metal encoder实际两个Vulkan pass。已修精确时钟并接入已有拆分/纹理复制计数，归因候选 **30178EB01160B66E** 正式出图未刷（vendor_boot43a7df65…/45,309,952B）。本轮不宣称提速，未跑额外本地测试；设备留原厂四分区+A槽+TWRP。
+详细CPU/GPU关联、计时修正和验收边界见工作区docs/status/gpu-pass-attribution-2026-11-05.md。
