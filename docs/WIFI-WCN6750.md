@@ -1,5 +1,16 @@
 # WCN6750 Wi-Fi development
 
+## B883 MMIO readback and stock board-data transport
+
+B883 returned 0x170acce5 from both REO1_MISC and CE0_DST_CTRL.
+This does not establish register access. The follow-up streams the
+pinned original Xiaomi REGDB and CN O82 ELF BDF from the read-only
+modem FAT volume. It compares both length and SHA256 before sending,
+then follows ath11k's segmented QMI 0x25 protocol. Only a matching
+success advances the transfer. Read-only MMIO snapshots are taken
+before transfer, after acceptance and after firmware init-done.
+The peer check uses synthetic bytes at the original file lengths.
+
 ## 82C2 device identity and AHB window probe
 
 The device accepted IND_REGISTER and HOST_CAP. CAP returned chip 1,

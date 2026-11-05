@@ -14,7 +14,7 @@ extern volatile uint32_t native_wifi_qmi_stats[10];
 extern struct nw_wcn6750_identity native_wifi_identity;
 static UkeWpssClient client;
 static uint64_t now;
-static uint8_t outgoing[512];
+static uint8_t outgoing[6232];
 static unsigned outgoing_size, requests, announced;
 static unsigned bar_probes;
 
@@ -28,6 +28,24 @@ void *lx_alloc(size_t n, int zero) { return zero ? calloc(1, n) : malloc(n); }
 void lx_free(const void *p) { free((void *)p); }
 void lx_log(int level, const char *format, ...) { (void)level; (void)format; }
 uint64_t uke_wpss_now_ms(void) { return now; }
+void *uke_wlfw_alloc(size_t bytes, int zero) { return lx_alloc(bytes, zero); }
+void uke_wlfw_free(void *data) { lx_free(data); }
+
+int uke_wlfw_load_stock_data(unsigned type, uint8_t **data, uint32_t *length)
+{
+    CHECK(type == NW_WCN6750_REGDB || type == NW_WCN6750_BDF_ELF);
+    *length = type == NW_WCN6750_REGDB ? 24278 : 59952;
+    *data = malloc(*length);
+    CHECK(*data);
+    for (uint32_t i = 0; i < *length; ++i) (*data)[i] = (uint8_t)(type + i);
+    return 0;
+}
+
+void uke_wlfw_release_stock_data(uint8_t *data, uint32_t length)
+{
+    (void)length;
+    free(data);
+}
 
 static uint32_t get32(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static void put16(uint8_t *p, unsigned v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
@@ -86,6 +104,36 @@ static void accept(unsigned message)
     unsigned length = result_header(response, message, transaction(), 0, 0);
     respond(response, length);
 }
+
+static void confirm_file(unsigned type, uint32_t length)
+{
+    for (uint32_t offset = 0, segment = 0; offset < length; ++segment) {
+        uke_wifi_qrtr_tick();
+        CHECK(operation() == 0x25);
+        QcomQmiMessage message;
+        CHECK(qcom_qmi_parse(outgoing + 32, get32(outgoing + 20), &message) == 0);
+        uint32_t size = 0, remaining = length - offset;
+        uint32_t count = remaining > NW_WCN6750_BDF_CHUNK ? NW_WCN6750_BDF_CHUNK : remaining;
+        const uint8_t *tlv = qcom_qmi_tlv(&message, 0x10, &size);
+        CHECK(tlv && size == 4 && get32(tlv) == 0xff);
+        tlv = qcom_qmi_tlv(&message, 0x11, &size);
+        CHECK(tlv && size == 4 && get32(tlv) == remaining);
+        tlv = qcom_qmi_tlv(&message, 0x12, &size);
+        CHECK(tlv && size == 4 && get32(tlv) == segment);
+        tlv = qcom_qmi_tlv(&message, 0x13, &size);
+        CHECK(tlv && size == count + 2 && (tlv[0] | (unsigned)tlv[1] << 8) == count);
+        for (uint32_t i = 0; i < count; ++i) CHECK(tlv[i + 2] == (uint8_t)(type + offset + i));
+        tlv = qcom_qmi_tlv(&message, 0x14, &size);
+        CHECK(tlv && size == 1 && tlv[0] == (remaining == count));
+        tlv = qcom_qmi_tlv(&message, 0x15, &size);
+        CHECK(tlv && size == 1 && tlv[0] == type);
+        unsigned before = requests;
+        uke_wifi_qrtr_tick();
+        CHECK(requests == before);
+        accept(0x25);
+        offset += count;
+    }
+}
 int main(void)
 {
     uke_wifi_qrtr_start(); client.state(NULL, 1); server();
@@ -118,6 +166,7 @@ int main(void)
     respond(response, n);
     CHECK(native_wifi_qmi_stats[0] == 5 && (native_wifi_identity.valid & NW_WCN6750_BAR));
     CHECK(native_wifi_identity.bar_address == 0x61e00000 && native_wifi_identity.bar_size == 0x200000);
+    uke_wifi_qrtr_tick();
     CHECK(bar_probes == 1);
     client.state(NULL, 0); CHECK(native_wifi_identity.valid == 0);
     client.state(NULL, 1); server(); now = 10001; uke_wifi_qrtr_tick();
@@ -139,6 +188,25 @@ int main(void)
     CHECK((int32_t)native_wifi_qmi_stats[0] == -3 && native_wifi_identity.valid == 0);
     CHECK(bar_probes == 1);
     CHECK(!announced);
-    puts("PASS: upstream registration/host-cap wire fields, gated CAP/BAR, stale replies, timeout, malformed TLVs and firmware errors");
+    client.state(NULL, 0); client.state(NULL, 1); server();
+    accept(0x20); accept(0x34);
+    n = result_header(response, 0x24, transaction(), 0, 0);
+    response[n++] = 0x10; put16(response + n, 8); n += 2; put32(response + n, 1); n += 4; put32(response + n, 0xb); n += 4;
+    response[n++] = 0x12; put16(response + n, 4); n += 2; put32(response + n, 0x40140120); n += 4;
+    respond(response, n);
+    n = result_header(response, 0x4c, transaction(), 0, 0);
+    response[n++] = 0x10; put16(response + n, 8); n += 2; put32(response + n, 0x61e00000); put32(response + n + 4, 0); n += 8;
+    response[n++] = 0x11; put16(response + n, 4); n += 2; put32(response + n, 0x200000); n += 4;
+    respond(response, n);
+    confirm_file(NW_WCN6750_REGDB, 24278);
+    confirm_file(NW_WCN6750_BDF_ELF, 59952);
+    uke_wifi_qrtr_tick();
+    CHECK(native_wifi_qmi_stats[0] == 9 && bar_probes == 3);
+    const uint8_t init_done[] = {QCOM_QMI_INDICATION, 0, 0, 0x38, 0, 0, 0};
+    inject(QCOM_QRTR_DATA, 8, 0x4000, init_done, sizeof(init_done));
+    uke_wifi_qrtr_tick();
+    CHECK(bar_probes == 4);
+    client.state(NULL, 0);
+    puts("PASS: WLFW handshake, guarded CAP/BAR, segmented REGDB/BDF bytes and acknowledgments, FW_INIT_DONE, timeout and malformed replies");
     return 0;
 }

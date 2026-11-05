@@ -14,8 +14,10 @@
 #include <sys/fcntl.h>
 #include <sys/kauth.h>
 #include <IOKit/IOLib.h>
+#include <libkern/crypto/sha2.h>
 #include "FatVolume.h"
 #include "QcomMdt.h"
+#include "nw_wcn6750_qmi.h"
 
 int sheng_fw_open(const char *path, void **handle, uint64_t *size);
 int sheng_fw_read(void *handle, uint64_t offset, void *to, size_t length);
@@ -86,6 +88,58 @@ static int mountPartition(void)
     gPart = p;
     gVolume = v;
     return 0;
+}
+
+/* OEM icnss2 selects these files for the measured CN O82 board.
+ * Keep the original modem partition and the exact manifest identities. */
+int uke_wlfw_load_stock_data(unsigned type, uint8_t **data, uint32_t *length)
+{
+    static const struct {
+        unsigned type;
+        const char *path;
+        uint32_t length;
+        uint8_t digest[32];
+    } files[] = {
+        {NW_WCN6750_REGDB, "image/qca6750/regdb_xiaomi.bin", 24278,
+         {0xfc,0xa5,0xbb,0xfa,0xf5,0xa9,0xd4,0x90,0xd9,0x21,0x4a,0xc6,0x39,0x7f,0xe7,0xc4,
+          0x24,0x12,0xaf,0x33,0xf8,0xf6,0x00,0xdd,0xe5,0x18,0x63,0x93,0x76,0x25,0x5c,0x3f}},
+        {NW_WCN6750_BDF_ELF, "image/qca6750/bd_o82.elf", 59952,
+         {0x7d,0x54,0xa0,0x4f,0x14,0x6b,0x1a,0x09,0xc3,0x2c,0x5d,0x71,0x2d,0x00,0x84,0x6e,
+          0x2d,0x76,0x1b,0x19,0x1b,0x10,0x22,0x0f,0xcb,0x74,0xc2,0xb5,0x20,0x2d,0x74,0xe2}},
+    };
+    unsigned index;
+    for (index = 0; index < sizeof(files) / sizeof(files[0]); ++index)
+        if (files[index].type == type) break;
+    if (index == sizeof(files) / sizeof(files[0])) return EINVAL;
+    int rc = mountPartition();
+    if (rc) return rc;
+    FatFile file;
+    if (fat_open(gVolume, files[index].path, &file)) return ENOENT;
+    if (file.size != files[index].length) return EFTYPE;
+    uint8_t *bytes = IOMallocData(file.size);
+    if (!bytes) return ENOMEM;
+    if (fat_read(gVolume, &file, 0, bytes, file.size)) {
+        IOFreeData(bytes, file.size);
+        return EIO;
+    }
+    uint8_t digest[32];
+    SHA256_CTX hash;
+    SHA256_Init(&hash);
+    SHA256_Update(&hash, bytes, file.size);
+    SHA256_Final(digest, &hash);
+    if (memcmp(digest, files[index].digest, sizeof(digest))) {
+        IOFreeData(bytes, file.size);
+        return EFTYPE;
+    }
+    *data = bytes;
+    *length = file.size;
+    printf("UKE WIFI: verified stock %s bytes=%u\n", files[index].path, *length);
+    return 0;
+}
+
+void uke_wlfw_release_stock_data(uint8_t *data, uint32_t length)
+{
+    if (data) IOFreeData(data, length);
 }
 
 struct modem_image {

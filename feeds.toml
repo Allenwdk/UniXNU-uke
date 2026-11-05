@@ -13,7 +13,7 @@ commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 name = "sm7675"
 kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
-commit = "7608340089efd409c7b010a4bed6e993e73335a1"
+commit = "614784b649eaf5b1aefc8ac02d564e76fc12b982"
 
 # Local upstream-main integration checkpoint, pending device qualification.
 [[source]]
@@ -62,4 +62,4 @@ local = "drivers/NativeNovatekTouch"
 name = "Ath12kWifi"
 kind = "driver"
 git = "https://github.com/UniXNU/Ath12kWifi.git"
-commit = "b359aa051fba2b3ed5f45e6b1cfd89c53ccf0c50"
+commit = "de17340500b72bb4f33cf3973e0608c145cb5b67"
