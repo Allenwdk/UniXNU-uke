@@ -13,7 +13,7 @@ commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 name = "sm7675"
 kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
-commit = "88c9da52d125c5cc6dc55cf98c271b2d82b88a9b"
+commit = "7608340089efd409c7b010a4bed6e993e73335a1"
 
 # Local upstream-main integration checkpoint, pending device qualification.
 [[source]]
@@ -56,3 +56,10 @@ commit = "24f1f3fbed6feff42e1ca02e2ce386a5c3c36da8"
 name = "ShengNovatekTouch"
 kind = "driver"
 local = "drivers/NativeNovatekTouch"
+
+# Local development pin for the WCN6750 QMI codec.
+[[source]]
+name = "Ath12kWifi"
+kind = "driver"
+git = "https://github.com/UniXNU/Ath12kWifi.git"
+commit = "f336451646ed754c14f1a823118d641016d2947b"

@@ -1,5 +1,30 @@
 # WCN6750 Wi-Fi development
 
+## WLFW identity queries
+
+The 983B hardware capture records WPSS ready and handover at 52.611328 s,
+IPCRTR up at 52.611909 s and service `45/13/8/301` at 52.612649 s.
+There are 129 new valid slots compared with the D774 readback.
+
+The next kernel sends read-only CAP and DEVICE_INFO requests over that
+link. It builds the pinned Linux codec and exact ath11k descriptors,
+validates endpoint, transaction and TLV lengths, and logs the board ID and
+register-window address. The peer fixture exercises success, firmware
+errors, malformed replies and timeouts. Its values are fixture inputs.
+Hardware replies are pending. Stock BDF selection and MMIO attachment
+depend on the device reply.
+
+The original ath11k core and AHB compile into 21 arm64e objects.
+The full backend still requires board platform, DMA and MSI operations.
+The current kernel archive contains the identity codec.
+
+User update after the 983B deployment: no panic was observed. This does not
+yet establish WPSS ready, WLFW discovery or networking. The user authorizes
+recovery transitions for log collection in this ongoing Wi-Fi task without
+asking again. The post-flash handoff remains immediate: give the next user
+action after reboot and do not poll. Readback evidence is collected under
+`uke-port/fixes/2026-11-06-wifi-wpss-mapped-stores-readback/` in the workspace.
+
 Repair candidate `983B83D46E8BAFB5`, source
 `0e124681cdcfe3687bd068089aaa7a34e40e0e88`: formal kernel/payload and the
 focused firmware memory check pass. The final `loadSegments` contains 253

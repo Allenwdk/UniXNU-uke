@@ -333,7 +333,7 @@ def compile_c(src, dst, recipe='osfmk/DEVELOPMENT/startup.o.json'):
             cmd.append(value)
         i += 1
     cmd += ['-Wall', '-Wextra', '-Werror', '-mgeneral-regs-only', '-I', str(ROOT / '.cache/xnu-work/osfmk'), '-I', str(ROOT / 'kits/uke'),
-            '-I', str(ROOT / 'kits/Sm7675Platform/remoteproc')]
+            '-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'), '-I', str(ROOT / 'drivers/Ath12kWifi/include')]
     run_compile(cmd, rc['directory'], Path(dst).stem)
 
 
@@ -523,9 +523,16 @@ remoteproc = ROOT / 'kits/Sm7675Platform/remoteproc'
 for stem in ('QcomMdt', 'QcomSmem', 'QcomSmp2p', 'QcomGlink', 'QcomQmp', 'QcomRpmh', 'QcomQrtr', 'FatVolume'):
     compile_c(remoteproc / (stem + '.c'), board_dir / (stem + '.o'))
     board_objects.append(board_dir / (stem + '.o'))
-for stem in ('AdspFirmware', 'WifiQrtr'):
+for stem in ('AdspFirmware', 'WifiQrtr', 'WifiQmiSupport'):
     compile_c(KITS / (stem + '.c'), board_dir / (stem + '.o'), 'bsd/DEVELOPMENT/kern_exec.o.json')
     board_objects.append(board_dir / (stem + '.o'))
+qmi_module = ROOT / 'drivers/Ath12kWifi'
+require((qmi_module / 'tools/stage-wcn6750-qmi.py').is_file(), 'WCN6750 identity codec source (select/pin Ath12kWifi)')
+qmi_output = OUT / 'wcn6750-qmi'
+qmi_lines = run(['python3', ROOT / 'scripts/build-wcn6750-qmi.py', qmi_module, qmi_output, '--target', TRIPLE], text=True)
+qmi_objects = [Path(line[4:]) for line in qmi_lines.splitlines() if line.startswith('OBJ ')]
+require(len(qmi_objects) == 2, 'Both original QMI codec and descriptor objects')
+board_objects += qmi_objects
 for stem in ('UkeGpuExport', 'BootLatencyTrace', 'BootProcessProbe', 'BootUiTraceProbe', 'LegacyDisplayStubs'):
     compile_c(KITS / (stem + '.c'), board_dir / (stem + '.o'))
     board_objects.append(board_dir / (stem + '.o'))
@@ -559,11 +566,13 @@ sources = [ROOT / 'drivers/GopFramebuffer/NativeLegacyDisplay.cpp', ROOT / 'driv
            ROOT / 'scripts' / ABI_PATH.name, keystore_source, ROOT / 'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',
            ROOT / 'scripts/hid-device-24A446.json', hid_probe]
 sources += [ROOT / 'kits/uke/DisplayCallTrace27.cpp', ROOT / 'kits/uke/LegacyDisplayProbe.cpp']
-sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiQrtr', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h'), ('UkeWpssMemory', '.h')]]
+sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiQrtr', '.c'), ('WifiQmiSupport', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h'), ('UkeWpssMemory', '.h')]]
+sources += [qmi_module / 'include/nw_wcn6750_qmi.h', ROOT / 'scripts/build-wcn6750-qmi.py']
 sources += list(remoteproc.glob('*.c')) + list(remoteproc.glob('*.h'))
 (OUT / 'build-report.json').write_text(json.dumps(dict(
     source_sha256={str(p.relative_to(ROOT)): sha(p) for p in sources}, generated_abi_sha256=sha(OUT / 'OriginalLegacyFramebufferABI.h'),
     kernelcache_sha256=abi['kernelcache_sha256'], compiled_object_sha256=sha(obj), archive_sha256=sha(archive),
+    qmi_codec_report_sha256=sha(qmi_output / 'build-report.json'),
     bindings={n: hex(v) for n, v in bindings.items()}, virtual_entries=len(slots), owned_entries=owned,
     inherited_native_entries=native, original_bindings='fixed-collection-addresses', original_instructions_modified=False), indent=2) + '\n')
 print(f'Built the owned Legacy backend on the iPadOS 27 class: {len(owned)} owned, {len(native)} native, {len(bindings)} original bindings')

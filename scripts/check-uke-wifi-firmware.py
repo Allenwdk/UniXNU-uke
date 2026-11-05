@@ -129,7 +129,9 @@ def main():
         if len(data) != pin['size'] or hashlib.sha256(data).hexdigest() != pin['sha256']:
             raise SystemExit(f'firmware pin mismatch: {name}')
     provenance = json.loads((args.protocol_dir / 'upstream.json').read_text())
+    adaptations = provenance.get('local_adaptations', {})
     for name, digest in provenance['files'].items():
+        digest = adaptations.get(name, {}).get('output_sha256', digest)
         if hashlib.sha256((args.protocol_dir / name).read_bytes()).hexdigest() != digest:
             raise SystemExit(f'upstream source mismatch: {name}')
     with tempfile.TemporaryDirectory(prefix='uke-wpss-check-') as temporary:
@@ -140,7 +142,7 @@ def main():
                         '-I', str(ROOT / 'package'), '-I', str(args.protocol_dir), str(source), str(args.protocol_dir / 'QcomMdt.c'),
                         '-o', str(executable)], check=True)
         subprocess.run([str(executable), str(args.firmware.resolve())], check=True)
-    print(f"PASS: {len(manifest['files'])} firmware pins and {len(provenance['files'])} unchanged upstream protocol files")
+    print(f"PASS: {len(manifest['files'])} firmware pins; {len(provenance['files']) - len(adaptations)} original protocol files and {len(adaptations)} pinned adaptations")
 
 
 if __name__ == '__main__':

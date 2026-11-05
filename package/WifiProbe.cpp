@@ -23,6 +23,8 @@ extern "C" {
 #include "UkeWpss.h"
 int sheng_fw_open(const char *path, void **handle, uint64_t *size);
 void uke_wifi_qrtr_start(void);
+void uke_wifi_qrtr_tick(void);
+uint32_t uke_wifi_qrtr_wait_ms(void);
 int sheng_fw_read(void *handle, uint64_t offset, void *to, size_t length);
 void sheng_fw_close(void *handle);
 }
@@ -387,9 +389,12 @@ void serviceGlink() {
     native_wifi_wpss_stats[10] = (int32_t)gGlink.tx_messages;
     native_wifi_wpss_stats[11] = (int32_t)(up | (uint32_t)gGlink.version_agreed << 14 | (uint32_t)gGlink.broken << 15);
     native_wifi_wpss_stats[12] = (int32_t)gGlink.unknown_opens;
-    if (gGlink.unknown_opens && strncmp(native_wifi_wpss_text, "crash: ", 7)) note("open: ", gGlink.unknown_names);
+    if (gGlink.unknown_opens && strncmp(native_wifi_wpss_text, "crash: ", 7) &&
+        (strncmp(native_wifi_wpss_text, "open: ", 6) ||
+         strncmp(native_wifi_wpss_text + 6, gGlink.unknown_names, sizeof(native_wifi_wpss_text) - 7)))
+        note("open: ", gGlink.unknown_names);
     if (gGlink.version_agreed && native_wifi_wpss_stats[0] >= StReady && native_wifi_wpss_stats[0] < StGlink) stage(StGlink);
-    if (up && native_wifi_wpss_stats[0] >= StGlink) stage(StChannel);
+    if (up && native_wifi_wpss_stats[0] == StGlink) stage(StChannel);
 }
 void service(uint32_t bits) {
     if (bits & kEvAop) qcom_qmp_step(&gQmp);
@@ -610,10 +615,17 @@ void wpssThread(void *, wait_result_t) {
     for (;;) {
         bool pending = false;
         for (unsigned i = 0; i < gClientCount; ++i) pending |= gClients[i].count != 0;
-        service(waitEvents(pending ? 1000 : 3600u * 1000u) | (pending ? kEvSend : 0));
+        uke_wifi_qrtr_tick();
+        service(waitEvents(pending ? 1000 : uke_wifi_qrtr_wait_ms()) | (pending ? kEvSend : 0));
     }
 }
 }  // namespace
+
+extern "C" uint64_t uke_wpss_now_ms(void) {
+    uint64_t ns = 0;
+    absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
+    return ns / 1000000;
+}
 
 extern "C" UkeWpssChannel *uke_wpss_channel(const char *name, uint32_t intent_size, uint32_t intent_count, int initiator,
                                                 const UkeWpssClient *client, void *context) {

@@ -26,7 +26,7 @@ include = [
   "ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState",
   "Adreno740", "AdrenoMetal", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "AirNir", "Sm7675Platform",
   "GopFramebuffer", "QcomGeniSpi", "ShengNovatekTouch", "ShengHidInput",
-  "ShengUfs", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "SoftwareAES",
+  "ShengUfs", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "SoftwareAES", "Ath12kWifi",
 ]
 
 # The target OS image comes from the `ipados-27.0.1-24A446` profile (iPad17,3 / J820AP,
