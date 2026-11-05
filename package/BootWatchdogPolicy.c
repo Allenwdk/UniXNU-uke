@@ -33,7 +33,10 @@ static const char lite_jobs[]=
  // Crash or respawn loops seen on hardware (int-176): fairplayd.A2 is KeepAlive and exits at once (22 launches in 6 minutes), passd crashes,
  // obliteration is a data-wipe daemon with nothing to do here. IconServices stays enabled
  // as in current upstream: both system icons and widget resources need the real service.
- "com.apple.fairplayd.A2,com.apple.passd,com.apple.mobile.obliteration,";
+ "com.apple.fairplayd.A2,com.apple.passd,com.apple.mobile.obliteration,com.apple.coreduetd,"
+ // Upstream sheng lite-mode background load policy (d4c299b, 25a0eaa).
+ "com.apple.PerfPowerServices,com.apple.PerfPowerServicesExtended,com.apple.perfpowermetricd,com.apple.siriinferenced,"
+ "com.apple.siriknowledged,com.apple.siriactionsd,com.apple.duetexpertd,com.apple.modelcatalogd";
 // Upstream board defaults are parsed after the command line (which wins).
 // The existing owner Data volume is unencrypted: retain the file-protection
 // class metadata callers set, using the already linked VFS compatibility path.

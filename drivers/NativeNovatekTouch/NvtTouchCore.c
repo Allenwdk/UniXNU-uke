@@ -21,7 +21,10 @@ static const int kColumnMap[NVT_COLUMNS] = {
 #define AXIS_EDGE 600
 #define AXIS_GAIN 4350
 #define MAX_PEAKS 24
-#define TRACK_RADIUS (NVT_SUPER_RESOLUTION*50*4)   // 2000 units: about 20% of the short axis per frame is far
+#define TRACK_RADIUS (NVT_SUPER_RESOLUTION*50*4)
+// Across an unobserved frame only rejoin within the measured jitter range of
+// the predicted position. A nearby new keystroke can be inside TRACK_RADIUS.
+#define REJOIN_RADIUS (4*NVT_FUZZ)
 
 int nvt_touch_row_center(int row) {return row>=0 && row<NVT_ROWS ? kRowMap[row] : 0;}
 int nvt_touch_column_center(int column) {return column>=0 && column<NVT_COLUMNS ? kColumnMap[column] : 0;}
@@ -92,18 +95,21 @@ static int miss_reason(const struct nvt_slot *slot, const struct nvt_contact *fo
         if (best<0 || d<best) {best=d;reason=NVT_MISS_PALM;}
     }
     if (best>(long)TRACK_RADIUS*TRACK_RADIUS && reason!=NVT_MISS_NONE) reason=NVT_MISS_FAR;
+    if (reason == NVT_MISS_WEAK && best > (long)REJOIN_RADIUS * REJOIN_RADIUS) reason = NVT_MISS_FAR;
     return reason;
 }
 
 // The cost of giving a finger blob j (j >= nfound: no blob): the squared distance from where the finger is heading, the radius
 // squared for no blob, more than that for a blob out of reach or too weak to keep a finger.
-static long track_cost(const struct nvt_slot *slot, const struct nvt_contact *found, int nfound, int j) {
+static long track_cost(const struct nvt_slot *slot, const struct nvt_contact *found, int nfound, int j, int predict) {
     const long r2=(long)TRACK_RADIUS*TRACK_RADIUS;
     if (j>=nfound) return r2;
     if (found[j].peak<NVT_UP_THRESHOLD) return 4*r2;
-    const long px=slot->x+(long)slot->dx*(slot->missed+1),py=slot->y+(long)slot->dy*(slot->missed+1);
+    const int steps = predict ? slot->missed + 1 : 0;
+    const long px=slot->x+(long)slot->dx*steps,py=slot->y+(long)slot->dy*steps;
     const long dx=found[j].x-px,dy=found[j].y-py,d=dx*dx+dy*dy;
-    return d<=r2 ? d : 4*r2;
+    const long limit = slot->missed ? (long)REJOIN_RADIUS * REJOIN_RADIUS : r2;
+    return d <= limit ? d : 4*r2;
 }
 
 // Least-cost assignment of the active fingers (rows) to the blobs plus one "no blob" column per finger (Hungarian method with
@@ -113,6 +119,9 @@ static void assign_tracks(const struct nvt_touch_core *core, const struct nvt_co
     int rows[NVT_SLOTS+1],n=0;
     for (int s=0;s<NVT_SLOTS;++s) {match[s]=-1;if (core->slots[s].active) rows[++n]=s;}
     if (!n) return;
+    // During a four/five-finger pinch the fingers can stop together. Extrapolating
+    // all their velocities through the stop can swap neighbours at the centre.
+    const int predict = n <= 3;
     const int m=nfound+n;
     long u[NVT_SLOTS+1]={0},v[COLUMNS+1]={0},minv[COLUMNS+1];
     int p[COLUMNS+1]={0},way[COLUMNS+1]={0};char used[COLUMNS+1];
@@ -124,7 +133,7 @@ static void assign_tracks(const struct nvt_touch_core *core, const struct nvt_co
             const int i0=p[j0];long delta=__LONG_MAX__;int j1=0;
             for (int j=1;j<=m;++j) {
                 if (used[j]) continue;
-                const long cur=track_cost(&core->slots[rows[i0]],found,nfound,j-1)-u[i0]-v[j];
+                const long cur=track_cost(&core->slots[rows[i0]],found,nfound,j-1,predict)-u[i0]-v[j];
                 if (cur<minv[j]) {minv[j]=cur;way[j]=j0;}
                 if (minv[j]<delta) {delta=minv[j];j1=j;}
             }
@@ -140,7 +149,7 @@ static void assign_tracks(const struct nvt_touch_core *core, const struct nvt_co
     for (int j=1;j<=nfound;++j) {
         if (!p[j]) continue;
         const int s=rows[p[j]];
-        if (track_cost(&core->slots[s],found,nfound,j-1)<=r2) match[s]=j-1;
+        if (track_cost(&core->slots[s],found,nfound,j-1,predict)<=r2) match[s]=j-1;
     }
 }
 
@@ -180,16 +189,14 @@ int nvt_touch_process(struct nvt_touch_core *core, const int16_t *matrix, unsign
     int *delta=core->delta;
     for (int i=0;i<NVT_NODES;++i) delta[i]=delta_at(matrix,core->reference,i);
     // Slow reference drift: in a frame without a finger the quiet nodes move the reference a step towards their value (NvtTouchCore.h).
-    {
-        int touched=0;
-        for (int i=0;i<NVT_NODES && !touched;++i) touched=delta[i]>=NVT_PEAK_THRESHOLD;
-        if (!touched) {
-            for (int i=0;i<NVT_NODES;++i) {
-                const int step=delta[i]/NVT_REFERENCE_RATE;
-                core->reference[i]=(int16_t)(core->reference[i]+(step ? step : delta[i]>0 ? 1 : delta[i]<0 ? -1 : 0));
-            }
-            ++core->reference_frames;
+    int peak_active=0;
+    for (int i=0;i<NVT_NODES && !peak_active;++i) peak_active=delta[i]>=NVT_PEAK_THRESHOLD;
+    if (!peak_active) {
+        for (int i=0;i<NVT_NODES;++i) {
+            const int step=delta[i]/NVT_REFERENCE_RATE;
+            core->reference[i]=(int16_t)(core->reference[i]+(step ? step : delta[i]>0 ? 1 : delta[i]<0 ? -1 : 0));
         }
+        ++core->reference_frames;
     }
 
     // Steepest-ascent labelling: every node above the noise floor flows to the local maximum above it.
@@ -235,21 +242,45 @@ int nvt_touch_process(struct nvt_touch_core *core, const int16_t *matrix, unsign
     for (int i=0;i<NVT_NODES;++i) if (label[i]>=0) label[i]=(label[i]>>8)==replaced[label[i]&0xff] ? (label[i]&0xff) : -1;
     // One finger can show two maxima a node or two apart (a ridge across it). Left as two blobs, the finger's centroid jumps by half a
     // node whenever the ridge moves; a peak with a stronger one within NVT_MERGE_SPAN nodes is folded into it.
+    struct nvt_contact found[MAX_PEAKS];
+    int match[NVT_SLOTS], reserved[MAX_PEAKS] = {0};
+    int established = 0;
+    for (int s = 0; s < NVT_SLOTS; ++s)
+        if (core->slots[s].active && core->slots[s].age >= 2) ++established;
+    if (established >= 2 && npeaks >= 2) {
+        // Give established fingers a chance to keep separate maxima before merging
+        // a ridge. The final assignment below uses the weighted blob centroids.
+        for (int p = 0; p < npeaks; ++p) {
+            int node = peaks[p].index;
+            found[p].x = nvt_touch_map_edge_axis(kColumnMap[node % NVT_COLUMNS] * NVT_SUPER_RESOLUTION, NVT_LONG_AXIS_MAX, 0);
+            found[p].y = nvt_touch_map_edge_axis(kRowMap[node / NVT_COLUMNS] * NVT_SUPER_RESOLUTION, NVT_SHORT_AXIS_MAX, 1);
+            found[p].peak = peaks[p].value;
+        }
+        assign_tracks(core, found, npeaks, match);
+        for (int s = 0; s < NVT_SLOTS; ++s)
+            if (match[s] >= 0 && core->slots[s].age >= 2) reserved[match[s]] = 1;
+    }
     int into[MAX_PEAKS];
     for (int p=0;p<npeaks;++p) {
         into[p]=p;
+        if (reserved[p]) continue;
         int pr=peaks[p].index/NVT_COLUMNS,pc=peaks[p].index%NVT_COLUMNS;
         for (int q=0;q<npeaks;++q) {
             if (q==p) continue;
             int dr=peaks[q].index/NVT_COLUMNS-pr,dc=peaks[q].index%NVT_COLUMNS-pc;
             if (dr<-NVT_MERGE_SPAN||dr>NVT_MERGE_SPAN||dc<-NVT_MERGE_SPAN||dc>NVT_MERGE_SPAN) continue;
-            int stronger=peaks[q].value>peaks[p].value || (peaks[q].value==peaks[p].value && q<p);
-            if (stronger && (into[p]==p || peaks[q].value>peaks[into[p]].value)) into[p]=q;
+            const int best = into[p];
+            if (reserved[q] != reserved[best]) {
+                if (reserved[q]) into[p] = q;
+            } else if (peaks[q].value > peaks[best].value ||
+                       (peaks[q].value == peaks[best].value && q < best)) {
+                into[p] = q;
+            }
         }
     }
     for (int p=0;p<npeaks;++p) {
         int r=p;
-        while (into[r]!=r) r=into[r];   // values rise strictly along the chain, so it ends
+        while (into[r]!=r) r=into[r];   // reserved peaks are roots, other links increase in rank
         if (r!=p) ++core->merges;
         into[p]=r;
     }
@@ -264,7 +295,7 @@ int nvt_touch_process(struct nvt_touch_core *core, const int16_t *matrix, unsign
         b->sum_w+=w;b->sum_row+=(long)w*kRowMap[i/NVT_COLUMNS]*NVT_SUPER_RESOLUTION;
         b->sum_col+=(long)w*kColumnMap[i%NVT_COLUMNS]*NVT_SUPER_RESOLUTION;++b->area;
     }
-    struct nvt_contact found[MAX_PEAKS];int nfound=0;
+    int nfound=0;
     int palms[MAX_PEAKS][2];int npalms=0;
     for (int p=0;p<npeaks;++p) {
         struct blob *b=&blobs[p];
@@ -284,7 +315,7 @@ int nvt_touch_process(struct nvt_touch_core *core, const int16_t *matrix, unsign
     // the least total squared distance; a finger may also take no blob, at the cost of the radius. Matching slot by slot let a finger
     // take its neighbour's blob (int-275: 5 strokes ended "taken"), and so does taking the closest pair first when two fingers move
     // together; measuring from the last position instead of the predicted one ended fast swipes (13 of 125 strokes ended "far").
-    int used_contact[MAX_PEAKS]={0},match[NVT_SLOTS];
+    int used_contact[MAX_PEAKS]={0};
     assign_tracks(core,found,nfound,match);
     for (int s=0;s<NVT_SLOTS;++s) if (match[s]>=0) used_contact[match[s]]=1;
     for (int s=0;s<NVT_SLOTS;++s) {
@@ -292,10 +323,12 @@ int nvt_touch_process(struct nvt_touch_core *core, const int16_t *matrix, unsign
         if (!slot->active) continue;
         const int best=match[s];
         if (best<0) {
-            // A finger is not lifted by one frame without it (int-269: every stroke ended after 60..130 ms, so a swipe never paused
-            // and the app switcher never opened); it is held where it was for up to NVT_HOLD_FRAMES frames.
-            if (!slot->missed) slot->miss_reason=miss_reason(slot,found,used_contact,nfound,(const int (*)[2])palms,npalms);
-            if (++slot->missed<=NVT_HOLD_FRAMES) continue;
+            const int reason = miss_reason(slot, found, used_contact, nfound, (const int (*)[2])palms, npalms);
+            if (!slot->missed) slot->miss_reason = reason;
+            // Keep a partial dropout, including a fading signal at the finger.
+            // An otherwise quiet matrix with only distant noise is a release.
+            ++slot->missed;
+            if ((peak_active || reason == NVT_MISS_WEAK) && slot->age >= 2 && slot->missed <= NVT_HOLD_FRAMES) continue;
             ++core->ends[slot->miss_reason];slot->active=0;continue;
         }
         const int dx=found[best].x-slot->x,dy=found[best].y-slot->y,ax=dx<0?-dx:dx,ay=dy<0?-dy:dy;
@@ -305,6 +338,12 @@ int nvt_touch_process(struct nvt_touch_core *core, const int16_t *matrix, unsign
         const int px=slot->rx,py=slot->ry;
         slot->x=found[best].x;slot->y=found[best].y;++slot->age;
         follow(slot,found[best].x,found[best].y,found[best].peak<NVT_DOWN_THRESHOLD);
+        // HID decides edge origin from tip-down. Debounce for two samples, but
+        // publish the first sample's position on that first visible report.
+        if (slot->age == 2) {
+            slot->rx = px;
+            slot->ry = py;
+        }
         found[best].x=slot->rx;found[best].y=slot->ry;
         if (ax<4*NVT_FUZZ && ay<4*NVT_FUZZ) {
             const int ox=slot->rx>px?slot->rx-px:px-slot->rx,oy=slot->ry>py?slot->ry-py:py-slot->ry;

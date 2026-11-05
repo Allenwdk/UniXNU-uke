@@ -24,10 +24,9 @@
 // The centroid weighs a node by how far it is above this share of its blob's peak (percent), so the fringe nodes that come and go with
 // noise do not pull the position around.
 #define NVT_CENTROID_FLOOR 30
-// Maxima this many nodes apart or closer (rows and columns) are one finger. int-272: 187 unlocks for 59 strokes, the lift-off speeds
-// stepped by half a node per frame.
+// Merge nearby maxima of a finger, preserving separate peaks assigned to established fingers.
 #define NVT_MERGE_SPAN 2
-// Frames a tracked finger may go unseen before it counts as lifted (8.3 ms each at 120 Hz). The finger is reported where it was meanwhile.
+// Grace for partial dropouts (8.3 ms per scan at 120 Hz). A quiet scan releases immediately.
 #define NVT_HOLD_FRAMES 3
 #define NVT_SLOTS 12
 #define NVT_STARTUP_FRAMES 72
