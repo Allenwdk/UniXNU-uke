@@ -412,11 +412,15 @@ paths = ["board.toml"]
 inputs = ["The board has no network driver in this port."]
 configuration = ["No network component is selected; the kernel runs with IF_HEADLESS."]
 procedure = ["Nothing to run."]
-findings = ["The port boots and tests over serial and the local display only."]
+findings = ["The port boots and tests over serial and the local display only.",
+  "2026-11-06 source review: stock live DTS, Uke DTBO and qca_cld3_qca6750.ko identify WCN6750 with WPSS and SMEM GLINK IPCRTR. Ath12kWifi main28de7b91 and sheng main46017956 target WCN7850 PCIe/MHI and cannot be enabled as a drop-in hardware driver. Public mac80211/cfg80211, 24A446 WifiNet, supplicant and Qcom transport helpers are reuse candidates; WCN6750 needs an ath11k AHB/hybrid backend. No runtime integration or hardware validation performed."]
 completion = ["Out of scope: no network bring-up is planned for the first boot target."]
 limits = ["Wi-Fi and Bluetooth are not in scope; the catalog lists Ath12kWifi for boards that need it."]
-next_action = ["Revisit if userland networking becomes a goal."]
-evidence = []
+next_action = ["If implementation is requested, pin WCN6750 firmware/BDF/calibration, establish WPSS ready and GLINK/QRTR WLFW service, then integrate ath11k DMA/MSI and scanning before WifiNet and DHCP. Source review is complete; the component remains unselected."]
+evidence = [
+  { kind = "source", reference = "https://github.com/UniXNU/Ath12kWifi/blob/28de7b91d7a880682b777e0e3564245a99dbc3f5/src/nw_wifi.c", result = "Source review only: startup calls MHI, QRTR-over-MHI and ath12k PCI initialization. This transport cannot be selected unchanged for the stock WCN6750 WPSS path. Workspace report: docs/status/wifi-upstream-feasibility-2026-11-06.md; no build or device result inferred." },
+  { kind = "source", reference = "https://github.com/torvalds/linux/blob/v6.1/drivers/net/wireless/ath/ath11k/ahb.c", result = "Linux provides a WCN6750 AHB/hybrid implementation with remoteproc boot and its own window and MSI operations; this is an implementation reference, not uke hardware acceptance." },
+]
 
 [[area]]
 id = "audio"

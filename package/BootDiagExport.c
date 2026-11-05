@@ -30,8 +30,10 @@ static void *latency_data;static uint32_t latency_size;
 enum {LatencyCapacity=16+524288*72};
 
 static const char *const diag_roots[] = {
-  "/private/var/mobile/Library/Caches/com.apple.backboardd/m2v/frames.trace",
-  "/private/var/root/Library/Caches/com.apple.backboardd/m2v/frames.trace",
+  // The m2v directories are scanned, not just frames.trace: the bridge's pipeline journal is named
+  // pipelines-<pid>.log, so an exact path cannot be listed here. bl_latency_file still decides what leaves.
+  "/private/var/mobile/Library/Caches/com.apple.backboardd/m2v",
+  "/private/var/root/Library/Caches/com.apple.backboardd/m2v",
   "/private/var/mobile/Library/Logs/CrashReporter",
   "/private/var/root/Library/Logs/CrashReporter",
 };

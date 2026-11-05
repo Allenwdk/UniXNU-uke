@@ -35,7 +35,7 @@ name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/Allenwdk/AdrenoMetal.git"
 # Upstream icon Metal records with Uke pass-timing and rendering repairs.
-commit = "cac5e73f16c16a1f1d0340d3d50d752f409ab549"
+commit = "e07ed70d51d142e4faccb0f1ef80b2ba7789a75d"
 
 [[source]]
 name = "ShengUfs"

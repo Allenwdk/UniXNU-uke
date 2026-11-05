@@ -19,6 +19,7 @@ static inline int bl_crash_process(const char *path) {
 static inline int bl_latency_file(const char *path) {
  return !strcmp(path,"/private/var/mobile/Library/Caches/com.apple.backboardd/m2v/frames.trace") ||
         !strcmp(path,"/private/var/root/Library/Caches/com.apple.backboardd/m2v/frames.trace") ||
+        bl_latency_contains(path,strlen(path),"/Library/Caches/com.apple.backboardd/m2v/pipelines-") ||
         (bl_latency_contains(path,strlen(path),"/Library/Logs/CrashReporter/") && bl_crash_process(path)>=0);
 }
 static inline int bl_latency_message(const char *line,size_t size) {
