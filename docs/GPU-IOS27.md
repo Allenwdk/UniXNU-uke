@@ -687,3 +687,8 @@ sheng main4601795筛选完成：缺少可隔离触摸算法3b44b1b、后台负�
 
 9948本轮用户确认“图标渲染正常”。228新槽/1820旧槽，export成功且逐pass链有效；151普通作业GPU8.03/12.60ms，69超8.333ms。详细窗口仅到200s，后期9次恢复/图标Jetsam另记。已限定逐pass打点到backboardd并抑制无后端cameracaptured，正式构建候选 **A1C5694B2210EE9B** 已备未刷（vendor_boot0763dd69…/45,301,760B）。未跑额外本地测试；设备取完留原厂四分区+A槽+TWRP，性能收益待验。
 实际限制/源SHA/签名及回退见工作区docs/status/gpu-client-overhead-2026-11-05.md。
+
+
+## 2026-11-05 A1C5授权刷入
+
+用户本次“刷吧”授权，2026-11-05T21:09:55.318496+08:00至2026-11-05T21:10:02.846969+08:00，CRC **A1C5694B2210EE9B** 已刷boot_a/vendor_boot_a/boot_b/vendor_boot_b，全部Sending/Writing OKAY；set_active a、current-slot a回读及reboot OKAY。SHA256SUMS11项通过，product uke/is-userspace no，四分区容量各0x6000000。主机未写userdata；真实启动、图标保持与性能效果待实机。证据：`uke-port/releases/2026-11-05-gpu-client-overhead/flash-result-20261105-210955.json`及对应flash日志。
