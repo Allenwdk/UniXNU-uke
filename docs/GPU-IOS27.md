@@ -647,3 +647,12 @@ Data实际有ngpu/per-pass和tu_debug，先前“未安装”推断已更正。�
 修正版 **2DFC638817B9A440** 正式构建/包内门禁通过，vendor_boot `25e049f61ca5cf96ee6e7cf2191bf6766532f5734fa94a7ee63d467d96942887` /44,896,256B，待授权刷入。
 设备取完留原厂四分区+A槽+TWRP，主机未写userdata。图标/像素恢复、采样链实机有效性和120Hz待验。
 详见 [回读与修正](../../docs/status/gpu-roaa-repair-2026-11-05.md)。
+
+## 2026-11-05 上游main同步完成，候选 6063137DD24BD4FA 已备
+
+Core main18155b4和Metal maine82788d已合入当前构建线，Core `066efad2f2ed938f092529047ab3a88d750b53db`、Metal `29a85d88f40b8f4928b933b92fd5456c692c2767`、Adreno740 `176e0168e548846ae1fdb0f41e3eab9f2bcdaef3`。
+Adreno740/GOP/ArmCpu/Smmu4K/XnuPrelink已含其上游main；新增sheng CP抢占线程回调与稳定等待栈保护。
+模式4接入图标服务Metal记录，原ROAA、A732/LLCC、IOKit与addon精确长度修正保留。
+正式kernel/插件/payload、定点检查与15项主线测试通过，vendor_boot `6f4a7f3782b8a7b8b6777b540957ad77b7ef767e52f62c04abdd4e35fa13283a` /44,900,352B。
+候选 **6063137DD24BD4FA** 未刷，设备沿用原厂四分区+A槽+TWRP，本轮无设备操作，图标和120Hz待真机。
+见 [同步、范围与证据](../../docs/status/upstream-main-sync-2026-11-05.md)。

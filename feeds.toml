@@ -15,14 +15,13 @@ kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
 commit = "b21db76e3251d3910bd6c4902751c8c9caf7079e"
 
-# Current local GPU performance checkpoint, deployed as79EC diagnostics.
-# Hardware BR counter activity and ordinary120Hz remain pending.
+# Local upstream-main integration checkpoint, pending device qualification.
 [[source]]
 name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
 # GPU preflight lifecycle and scoped BR31-counter capture.
-commit = "e29c04e6449d701aad352c52f02a21da05ca8803"
+commit = "176e0168e548846ae1fdb0f41e3eab9f2bcdaef3"
 
 [[source]]
 name = "GopFramebuffer"
@@ -35,8 +34,8 @@ commit = "b688eb27996f6bd5f4b075255046b25b0cec0fbd"
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/Allenwdk/AdrenoMetal.git"
-# Render-server wakeup coalescing and transient GMEM selection.
-commit = "d3355fc28999cea1ad2a49321857e91099f3256d"
+# Upstream icon Metal records with Uke pass-timing and rendering repairs.
+commit = "29a85d88f40b8f4928b933b92fd5456c692c2767"
 
 [[source]]
 name = "ShengUfs"
