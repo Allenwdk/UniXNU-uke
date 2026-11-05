@@ -1,5 +1,13 @@
 # WCN6750 Wi-Fi development
 
+Repair candidate `983B83D46E8BAFB5`, source
+`0e124681cdcfe3687bd068089aaa7a34e40e0e88`: formal kernel/payload and the
+focused firmware memory check pass. The final `loadSegments` contains 253
+instructions with no DC ZVA or direct generic-memory calls. GPU runtime
+inputs and missing/stubbed sets remain unchanged. Release:
+`uke-port/releases/2026-11-06-wifi-wpss-mapped-stores/`. Not flashed; WPSS
+startup and wireless operation remain unverified.
+
 ## D774 failure and mapped-store repair
 
 D774 is withdrawn (`DO_NOT_FLASH`). The user's panic photo resolves in the
