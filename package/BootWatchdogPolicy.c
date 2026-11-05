@@ -34,6 +34,8 @@ static const char lite_jobs[]=
  // obliteration is a data-wipe daemon with nothing to do here. IconServices stays enabled
  // as in current upstream: both system icons and widget resources need the real service.
  "com.apple.fairplayd.A2,com.apple.passd,com.apple.mobile.obliteration,com.apple.coreduetd,"
+ // No camera backend on Uke; upstream also suppresses this persistent GPU client.
+ "com.apple.cameracaptured,"
  // Upstream sheng lite-mode background load policy (d4c299b, 25a0eaa).
  "com.apple.PerfPowerServices,com.apple.PerfPowerServicesExtended,com.apple.perfpowermetricd,com.apple.siriinferenced,"
  "com.apple.siriknowledged,com.apple.siriactionsd,com.apple.duetexpertd,com.apple.modelcatalogd";
