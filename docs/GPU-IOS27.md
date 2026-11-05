@@ -676,3 +676,8 @@ sheng main4601795筛选完成：缺少可隔离触摸算法3b44b1b、后台负�
 
 三项已合入设备源码cddcc1e：触摸3b44b1b、lite九项后台减负、连续HID帧统计。无合并冲突后直接正式kernel/payload出图，CRC **9948DB2F165FF012**，vendor_boot45,305,856B/SHA256 affedc70729f193286347754d1b2059bc1646b69269de4d98248ba76a3b1440a。按用户要求未跑额外本地测试；保留2098图标配置和Uke喂狗，未刷、无设备操作，效果待真机。
 详细镜像/回退边界见工作区docs/status/sheng-touch-lite-2026-11-05.md；新增后台服务可能影响建议/统计功能，实际收益待设备。
+
+
+## 2026-11-05 9948授权刷入
+
+用户当次“刷吧”授权，2026-11-05T20:43:20.698661+08:00至2026-11-05T20:43:28.242450+08:00，候选 **9948DB2F165FF012** 已刷入boot_a/vendor_boot_a/boot_b/vendor_boot_b，Sending/Writing均OKAY；set_active a、current-slot a回读和reboot均OKAY。SHA256SUMS11项通过，product uke/is-userspace no，四分区容量均0x6000000。未从主机写userdata。设备已重启，真实启动、图标/触摸/性能与120Hz待实机反馈。证据：`uke-port/releases/2026-11-05-sheng-touch-lite/flash-result-20261105-204320.json`及配对flash日志。
