@@ -698,3 +698,8 @@ sheng main4601795筛选完成：缺少可隔离触摸算法3b44b1b、后台负�
 
 A1C5回读175新槽/1873旧槽，camera后台不再出现；530普通GPU作业10.69/12.68ms，479超8.333ms。发现旧pass时钟整数52ns换算使绝对时间偏约200ms；校正后509作业确认，其中390单Metal encoder实际两个Vulkan pass。已修精确时钟并接入已有拆分/纹理复制计数，归因候选 **30178EB01160B66E** 正式出图未刷（vendor_boot43a7df65…/45,309,952B）。本轮不宣称提速，未跑额外本地测试；设备留原厂四分区+A槽+TWRP。
 详细CPU/GPU关联、计时修正和验收边界见工作区docs/status/gpu-pass-attribution-2026-11-05.md。
+
+
+## 2026-11-05 3017归因版授权刷入
+
+用户当次“刷吧”授权，2026-11-05T21:37:16.275755+08:00至2026-11-05T21:37:23.828744+08:00，CRC **30178EB01160B66E** 已刷boot_a/vendor_boot_a/boot_b/vendor_boot_b，Sending/Writing均OKAY；set_active a、current-slot a回读及reboot OKAY。SHA256SUMS11项通过，uke/non-userspace、四分区各0x6000000，未从主机写userdata。实际启动、图标保持、type24/25/26与拆分归因待实机；该版本不宣称提速。证据：`uke-port/releases/2026-11-05-gpu-pass-attribution/flash-result-20261105-213716.json`与配对flash日志。
