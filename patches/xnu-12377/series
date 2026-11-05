@@ -72,3 +72,6 @@ uke-vm-delayed-work-pool.patch
 
 # Match native class registration to the existing OSKext lock order.
 uke-kext-registration-lock-order.patch
+
+# Original launchd consumes the signed owner cache with the icon-service policy.
+uke-icon-services-cache.patch

@@ -1,0 +1,25 @@
+From: Uke integration <uke@local>
+Subject: [PATCH] Install the signed icon-service launchd cache through the owner overlay
+
+Adapt the xpc cache mount from UniXNU-sheng main's
+sheng-wifi-launchd-cache.patch for the Uke icon-service environment policy.
+The original cache loader and detached signature verification consume it.
+
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8696,6 +8696,15 @@
+ 	native_gpu_addon_mount(p, scratch, 0xa00, audio_source, sizeof(audio_source), audio_point, sizeof(audio_point),
+ 	    "/System/Library/Audio/Plug-Ins/HAL/BuiltinAudioPlugin.driver", "/System/Library/Audio/Plug-Ins/HAL/ShengAudio.driver/Info.plist",
+ 	    &native_gpu_addon4_stage, &native_gpu_addon4_status);
++	/* The selected OS launchd cache carries the board's icon-service environment.
++	 * Its detached signature is installed beside it and verified by the OS. */
++	static const char icon_xpc_source[] = "/private/var/ngpu/xpc";
++	static const char icon_xpc_point[] = "/System/Library/xpc";
++	static volatile int icon_cache_stage, icon_cache_status;
++	native_gpu_addon_mount(p, scratch, 0x600, icon_xpc_source, sizeof(icon_xpc_source),
++	    icon_xpc_point, sizeof(icon_xpc_point), "/System/Library/xpc/foreground_user_endpoints.plist",
++	    "/System/Library/xpc/launchd.plist", &icon_cache_stage, &icon_cache_status);
++	printf("UKE ICON CACHE: stage=%d status=%d\n", icon_cache_stage, icon_cache_status);
+ 	native_cryptex_os_view(p, scratch);
+ 	native_gestalt_cache_drop(p, scratch);
+ 	native_ls_store_drop(p, scratch);

@@ -1,6 +1,14 @@
 # Board description of the Xiaomi Pad 7 (uke, SM7675), read by the unixnu build driver.
 schema_version = 2
 
+# Uke prepares signed runtime assets explicitly, reusing its preserved Data seed.
+[payload.runtime]
+enabled = false
+
+[payload.runtime.launchd_job_environment."com.apple.iconservices.iconservicesagent"]
+FORCE_SOFTWARE_RENDERER = "0"
+CI_ENABLE_METAL_GPU = "0"
+
 [board]
 name = "uke"
 soc = "SM7675"
