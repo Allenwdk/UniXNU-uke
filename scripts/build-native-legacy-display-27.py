@@ -559,7 +559,7 @@ sources = [ROOT / 'drivers/GopFramebuffer/NativeLegacyDisplay.cpp', ROOT / 'driv
            ROOT / 'scripts' / ABI_PATH.name, keystore_source, ROOT / 'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',
            ROOT / 'scripts/hid-device-24A446.json', hid_probe]
 sources += [ROOT / 'kits/uke/DisplayCallTrace27.cpp', ROOT / 'kits/uke/LegacyDisplayProbe.cpp']
-sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiQrtr', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h')]]
+sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiQrtr', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h'), ('UkeWpssMemory', '.h')]]
 sources += list(remoteproc.glob('*.c')) + list(remoteproc.glob('*.h'))
 (OUT / 'build-report.json').write_text(json.dumps(dict(
     source_sha256={str(p.relative_to(ROOT)): sha(p) for p in sources}, generated_abi_sha256=sha(OUT / 'OriginalLegacyFramebufferABI.h'),

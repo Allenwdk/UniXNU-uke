@@ -1,5 +1,29 @@
 # WCN6750 Wi-Fi development
 
+## D774 failure and mapped-store repair
+
+D774 is withdrawn (`DO_NOT_FLASH`). The user's panic photo resolves in the
+exact shipped image to `bzero+0x48`, instruction `DC ZVA,X3`, called by
+`loadSegments+0x208`. ESR is `0x96000061`. The recovered ring has only one
+new valid slot and ends at 52.600944 s, before any Wi-Fi-stage line was saved.
+It does not independently establish WPSS progress.
+
+The repair preserves the firmware mapping and PAS authentication path.
+`UkeWpssMemory.h` replaces generic destination memcpy/bzero with volatile
+aligned 32-bit writes and byte heads/tails, retaining the loader's barrier.
+The focused firmware check now copies all original segment data, zeros BSS
+and verifies untouched gaps over a 25 MiB reservation bounded by guard
+pages. Final ARM64 code must also be checked for the absence of DC ZVA and
+generic memory calls in the loader. Hardware acceptance remains pending.
+
+Deployment, 2026-11-06 02:03:25–02:03:33 +08:00: candidate CRC
+`D774B827AA0C2341` was flashed under the user's current authorization.
+All four boot/vendor_boot writes, slot-a readback and reboot succeeded;
+14 hashes passed and no userdata write occurred. Actual boot, WPSS readiness
+and WLFW discovery remain unverified. Evidence:
+`uke-port/releases/2026-11-06-wifi-wpss/flash-result-20261106-020325.json`
+in the workspace. This is transport/deployment evidence only.
+
 Development branch: `feat/uke-wifi-20261106`, based on the latest local GPU
 sources, including the pipeline journal and diagnostic export repairs.
 Workspace status and the full staged plan live in

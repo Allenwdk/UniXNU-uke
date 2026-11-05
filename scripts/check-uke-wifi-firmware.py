@@ -12,7 +12,10 @@ VERIFY = r'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "QcomMdt.h"
+#include "UkeWpssMemory.h"
 static QcomMdtSplit split;
 static FILE *pieces[QCOM_MDT_MAX_SEGMENTS];
 static int piece_read(void *unused, unsigned piece, uint64_t at, void *to, size_t n) {
@@ -62,11 +65,51 @@ int main(int argc, char **argv) {
     REQUIRE(fread(original, 1, metadata_size + 1, h) == metadata_size); fclose(h);
     REQUIRE(memcmp(metadata, original, metadata_size) == 0);
     REQUIRE(qcom_mdt_span(&image) == 0x1900000);
+    /* Exercise the actual runtime store helpers on all original segments.
+     * Guard pages catch writes outside the reservation; the full expected
+     * image also proves gaps and partial final words remain untouched. */
+    const size_t span = 0x1900000, page = (size_t)sysconf(_SC_PAGESIZE);
+    uint8_t *mapping = mmap(NULL, span + 2 * page, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    REQUIRE(mapping != MAP_FAILED);
+    REQUIRE(mprotect(mapping, page, PROT_NONE) == 0);
+    REQUIRE(mprotect(mapping + page + span, page, PROT_NONE) == 0);
+    uint8_t *actual = mapping + page, *expected = malloc(span), *bounce = malloc(256 * 1024);
+    REQUIRE(expected && bounce);
+    memset(actual, 0xa5, span); memset(expected, 0xa5, span);
+    for (unsigned i = 0; i < image.count; ++i) {
+        const QcomMdtSegment *s = &image.segment[i];
+        if (!s->load) continue;
+        uint64_t at = 0;
+        REQUIRE(qcom_mdt_place(&image, i, 0x9bb00000, span, &at) == QcomMdtOk);
+        for (uint64_t done = 0; done < s->file_size;) {
+            size_t take = s->file_size - done < 256 * 1024 ? (size_t)(s->file_size - done) : 256 * 1024;
+            REQUIRE(read_joined(NULL, s->file_offset + done, bounce, take) == 0);
+            uke_wpss_memory_copy(actual + at + done, bounce, take);
+            memcpy(expected + at + done, bounce, take);
+            done += take;
+        }
+        uke_wpss_memory_zero(actual + at + s->file_size, (size_t)(s->memory_size - s->file_size));
+        memset(expected + at + s->file_size, 0, (size_t)(s->memory_size - s->file_size));
+    }
+    REQUIRE(memcmp(actual, expected, span) == 0);
+    /* End exactly at a guard page with every possible byte alignment. */
+    for (unsigned n = 1; n <= 15; ++n) {
+        memset(actual + span - 32, 0xa5, 32);
+        uke_wpss_memory_copy(actual + span - n, metadata + 1, n);
+        REQUIRE(memcmp(actual + span - n, metadata + 1, n) == 0);
+        REQUIRE(actual[span - n - 1] == 0xa5);
+        uke_wpss_memory_zero(actual + span - n, n);
+        for (unsigned j = 0; j < n; ++j) REQUIRE(actual[span - n + j] == 0);
+        REQUIRE(actual[span - n - 1] == 0xa5);
+    }
+    free(expected); free(bounce); REQUIRE(munmap(mapping, span + 2 * page) == 0);
     unsigned char sentinel;
     REQUIRE(read_joined(NULL, split.size, &sentinel, 1) == QcomMdtOutside);
     printf("WPSS ELF%u: %u load segments, %llu file bytes, span %llu, metadata %zu matches stock MDT\n",
         image.elf64 ? 64 : 32, count, (unsigned long long)total,
         (unsigned long long)qcom_mdt_span(&image), metadata_size);
+    puts("Mapped-store helpers: actual firmware bytes/BSS/gaps and guard-page tails match");
     free(metadata); free(original);
     for (unsigned i = 0; i < split.count; ++i) if (pieces[i]) fclose(pieces[i]);
     return 0;
@@ -93,8 +136,8 @@ def main():
         temporary = Path(temporary)
         source, executable = temporary / 'check.c', temporary / 'check'
         source.write_text(VERIFY)
-        subprocess.run([args.cc, '-std=c11', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
-                        '-I', str(args.protocol_dir), str(source), str(args.protocol_dir / 'QcomMdt.c'),
+        subprocess.run([args.cc, '-std=c11', '-D_DEFAULT_SOURCE', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
+                        '-I', str(ROOT / 'package'), '-I', str(args.protocol_dir), str(source), str(args.protocol_dir / 'QcomMdt.c'),
                         '-o', str(executable)], check=True)
         subprocess.run([str(executable), str(args.firmware.resolve())], check=True)
     print(f"PASS: {len(manifest['files'])} firmware pins and {len(provenance['files'])} unchanged upstream protocol files")

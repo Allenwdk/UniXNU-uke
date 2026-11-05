@@ -11,6 +11,7 @@
 #include <kern/thread.h>
 #include <sys/errno.h>
 #include <pexpert/pexpert.h>
+#include "UkeWpssMemory.h"
 extern "C" {
 #include "QcomGlink.h"
 #include "QcomMdt.h"
@@ -335,14 +336,15 @@ int loadSegments(Image &image, uint64_t base, uint64_t size) {
         uint64_t at = 0;
         if (!s.load) continue;
         if (qcom_mdt_place(&image.mdt, i, base, size, &at)) {rc = -7; break;}
-        uint8_t *to = const_cast<uint8_t *>(region.va) + at;
+        volatile uint8_t *to = region.va + at;
         for (uint64_t done = 0; !rc && done < s.file_size;) {
             const size_t n = s.file_size - done < kChunk ? (size_t)(s.file_size - done) : kChunk;
             if (sheng_fw_read(image.file, s.file_offset + done, bounce, n)) {rc = -5; break;}
-            memcpy(to + done, bounce, n);
+            uke_wpss_memory_copy(to + done, bounce, n);
             done += n;
         }
-        if (!rc && s.memory_size > s.file_size) bzero(to + s.file_size, (size_t)(s.memory_size - s.file_size));
+        if (!rc && s.memory_size > s.file_size)
+            uke_wpss_memory_zero(to + s.file_size, (size_t)(s.memory_size - s.file_size));
     }
     __asm__ volatile("dsb sy" ::: "memory");
     if (bounce) IOFreeData(bounce, kChunk);
