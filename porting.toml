@@ -406,18 +406,24 @@ evidence = [
 
 [[area]]
 id = "network"
-status = "not-applicable"
-components = []
-paths = ["board.toml"]
-inputs = ["The board has no network driver in this port."]
-configuration = ["No network component is selected; the kernel runs with IF_HEADLESS."]
-procedure = ["Nothing to run."]
-findings = ["The port boots and tests over serial and the local display only.",
-  "2026-11-06 source review: stock live DTS, Uke DTBO and qca_cld3_qca6750.ko identify WCN6750 with WPSS and SMEM GLINK IPCRTR. Ath12kWifi main28de7b91 and sheng main46017956 target WCN7850 PCIe/MHI and cannot be enabled as a drop-in hardware driver. Public mac80211/cfg80211, 24A446 WifiNet, supplicant and Qcom transport helpers are reuse candidates; WCN6750 needs an ath11k AHB/hybrid backend. No runtime integration or hardware validation performed."]
-completion = ["Out of scope: no network bring-up is planned for the first boot target."]
-limits = ["Wi-Fi and Bluetooth are not in scope; the catalog lists Ath12kWifi for boards that need it."]
-next_action = ["If implementation is requested, pin WCN6750 firmware/BDF/calibration, establish WPSS ready and GLINK/QRTR WLFW service, then integrate ath11k DMA/MSI and scanning before WifiNet and DHCP. Source review is complete; the component remains unselected."]
+status = "planned"
+components = ["Sm7675Platform"]
+paths = ["board.toml", "package/WifiProbe.cpp", "package/WifiQrtr.c", "package/UkeWpss.h", "package/AdspFirmware.c", "firmware/wcn6750/**", "scripts/check-uke-wifi-firmware.py", "docs/WIFI-WCN6750.md"]
+inputs = ["Stock WCN6750 signed WPSS pieces from the read-only modem_a firmware partition, pinned in firmware/wcn6750/manifest.json.",
+  "Uke live DTS: WPSS25MiB at0x9bb00000, MSA12MiB at0xa6400000, SMEM GLINK/IPCRTR remotePID13 and IPCC client24; PAS6."]
+configuration = ["WPSS control worker is linked through the 24A446 Legacy board archive; startup mode2 defaults in the Wi-Fi branch, with explicit uke-wifi=0/1/2 override. Existing999-byte boot line and GPU addon are preserved.",
+  "No ath11k data path or WifiNet/supplicant is selected yet. Shared CX/MX maximum cmd-db votes and XO are retained by this diagnostic; runtime vote ownership remains pending."]
+procedure = ["./unixnu build kernel && ./unixnu build payload",
+  "python3 ../UniXNU-uke-build/scripts/check-uke-wifi-firmware.py --protocol-dir ../UniXNU-sm7675-common/kits/Sm7675Platform/remoteproc",
+  "After current flash authorization, inspect fresh UKE WIFI stage/ready/IPCRTR/WLFW logs before adding ath11k DMA and MSI."]
+findings = ["2026-11-06: seven source repositories branched from the latest local GPU checkpoint. WPSS board glue and upstream protocol cores are integrated into the formal kernel; network data-path implementation remains planned.",
+  "The focused ASan/UBSan check verifies78 original file pins and17 unchanged protocol files; the actual firmware parses as ELF32,11 nonoverlapping load segments,8198565 file bytes,26214400-byte span, and4844 metadata bytes identical to stock MDT.",
+  "2026-11-06 source review: stock live DTS, Uke DTBO and qca_cld3_qca6750.ko identify WCN6750 with WPSS and SMEM GLINK IPCRTR. Ath12kWifi main28de7b91 and sheng main46017956 target WCN7850 PCIe/MHI and cannot be enabled as a drop-in hardware driver. Public mac80211/cfg80211, 24A446 WifiNet, supplicant and Qcom transport helpers are reuse candidates; WCN6750 needs an ath11k AHB/hybrid backend. That initial source-review phase performed no runtime integration or hardware validation."]
+completion = ["WPSS ready and WLFW discovery, then ath11k DMA/MSI and scanning, then 24A446 WifiNet/supplicant association, DHCP and sustained bidirectional traffic, each with device evidence."]
+limits = ["The current implementation covers authenticated WPSS startup/control transport only. No radio, scanning or Internet result has been measured. Bluetooth remains outside this task."]
+next_action = ["Deploy the control-transport candidate under current authorization and collect fresh WPSS/GLINK/QRTR logs; integrate the pinned Linux ath11k WCN6750 AHB/hybrid backend, matching BDF, DMA and MSI without replacing the latest GPU baseline."]
 evidence = [
+  { kind = "host", reference = "docs/WIFI-WCN6750.md", result = "First WPSS control transport compiles in the formal24A446 kernel. Runtime MDT parser verifies original signed metadata and reserved-region bounds; this is not WPSS startup or network acceptance.", command = "./unixnu build kernel && python3 ../UniXNU-uke-build/scripts/check-uke-wifi-firmware.py --protocol-dir ../UniXNU-sm7675-common/kits/Sm7675Platform/remoteproc" },
   { kind = "source", reference = "https://github.com/UniXNU/Ath12kWifi/blob/28de7b91d7a880682b777e0e3564245a99dbc3f5/src/nw_wifi.c", result = "Source review only: startup calls MHI, QRTR-over-MHI and ath12k PCI initialization. This transport cannot be selected unchanged for the stock WCN6750 WPSS path. Workspace report: docs/status/wifi-upstream-feasibility-2026-11-06.md; no build or device result inferred." },
   { kind = "source", reference = "https://github.com/torvalds/linux/blob/v6.1/drivers/net/wireless/ath/ath11k/ahb.c", result = "Linux provides a WCN6750 AHB/hybrid implementation with remoteproc boot and its own window and MSI operations; this is an implementation reference, not uke hardware acceptance." },
 ]

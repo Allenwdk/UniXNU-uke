@@ -11,3 +11,21 @@ novatek/novatek_nt36532_o82_fw_csot.bin|a4f949fb89c7eaad9da85a5885cd2dcc1fffbf08
 novatek/novatek_nt36532_o82_fw_tm.bin|12ce2693b965a35e3469984fd95afebb4c0a740ca908159b0a5e6bdad5968619
 target-volumes/static-trustcache.bin|da88460e6e513438d5307e5c526f76497a74754476a24da29f239f0c90120fc2
 -uke/uefiplat.cfg|-
+
+# WCN6750 WPSS: original read-only modem_a:/image/qca6750 split image.
+# Runtime reads it in place; local copies are for pin/parser verification.
+# BDF and calibration selection await WLFW target identity; all captured assets
+# and their sources are recorded in firmware/wcn6750/manifest.json.
+uke-wifi/qca6750/wpss.b00|2f0b37ad814da7e612bdd420c411a323367936efea2eea32f19c9b796244b0d4
+uke-wifi/qca6750/wpss.b01|3dd190536edda87cda85b69fcc7d03174e948daa3618ca5b9a5e902f4dd2d7d4
+uke-wifi/qca6750/wpss.b02|bcaff73b3436be65aa26cf06b5e5f3e4eef3b8b5a625cc78e9169e7c9b3f5dc0
+uke-wifi/qca6750/wpss.b03|b7a3b1f97ef810824c8660222d4deb8689de77ea809c6c9ed8d779ec48dfea1d
+uke-wifi/qca6750/wpss.b04|41870cea04a11339ed8e99324e33ff2119c8de23cb77d0ad3fc7b52de059f8c9
+uke-wifi/qca6750/wpss.b05|aae176b232881e8b9258e1844a9b946a4e4690b9bb5463b281cd1ba2b3ee1f14
+uke-wifi/qca6750/wpss.b06|2b9d868e0d776659f3741d9cce75f7239f4693596181657e420c5693979473a3
+uke-wifi/qca6750/wpss.b07|d7846f851ef64896a307db5b0e08249cfd9319f0769ec91988156d92833de9fa
+uke-wifi/qca6750/wpss.b08|0de7c47d174666be7f6a820951225ce0d50c97007aa186191e9ef25356efcb34
+uke-wifi/qca6750/wpss.b09|57464f648ec1a089770e642b7c35717bf9b925e65996ba5d7671e9c77321de13
+uke-wifi/qca6750/wpss.b10|26d0fc62bd7983c7c95c03079e751e8a3188a5965b7e0c4a101ad26331819a0c
+uke-wifi/qca6750/wpss.b12|a98cb542421e46381467903e86801a9e369a4434ab4a6adc975205f0225f58c7
+uke-wifi/qca6750/wpss.mdt|d33bc95fffe36c1f34b61426ef22b540c3c71a4b709f24495ae658348ea7e168

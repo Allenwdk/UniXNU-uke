@@ -332,7 +332,8 @@ def compile_c(src, dst, recipe='osfmk/DEVELOPMENT/startup.o.json'):
         elif not value.startswith('-W'):
             cmd.append(value)
         i += 1
-    cmd += ['-Wall', '-Wextra', '-Werror', '-mgeneral-regs-only', '-I', str(ROOT / '.cache/xnu-work/osfmk'), '-I', str(ROOT / 'kits/uke')]
+    cmd += ['-Wall', '-Wextra', '-Werror', '-mgeneral-regs-only', '-I', str(ROOT / '.cache/xnu-work/osfmk'), '-I', str(ROOT / 'kits/uke'),
+            '-I', str(ROOT / 'kits/Sm7675Platform/remoteproc')]
     run_compile(cmd, rc['directory'], Path(dst).stem)
 
 
@@ -510,10 +511,20 @@ board_dir.mkdir(exist_ok=True)
 KITS = ROOT / 'kits/uke'
 board_objects = []
 for stem, extra in [('CpuFreqProbe', ()),
+                    ('WifiProbe', ('-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'))),
                     ('TouchProbe', ('-I', str(ROOT / 'drivers/QcomGeniSpi'), '-I', str(ROOT / 'drivers/ShengNovatekTouch'))),
                     ('DpuProbe', ()),
                     ('GpuPowerProbe', tuple(x for d in ('drivers/Adreno740', 'kits/ArmSmmu4K', 'kits/AdrenoFirmware', 'kits/AdrenoPM4', 'kits/Sm7675Platform', 'build/sheng-gmu', 'build/sheng-gpu-smmu') for x in ('-I', str(ROOT / d))))]:
     compile_cpp(KITS / (stem + '.cpp'), board_dir / (stem + '.o'), extra)
+    board_objects.append(board_dir / (stem + '.o'))
+# WCN6750 WPSS: the upstream protocol cores live in the SoC kit; board
+# firmware access uses the actual BSD ABI and reads modem_a/modem_b only.
+remoteproc = ROOT / 'kits/Sm7675Platform/remoteproc'
+for stem in ('QcomMdt', 'QcomSmem', 'QcomSmp2p', 'QcomGlink', 'QcomQmp', 'QcomRpmh', 'QcomQrtr', 'FatVolume'):
+    compile_c(remoteproc / (stem + '.c'), board_dir / (stem + '.o'))
+    board_objects.append(board_dir / (stem + '.o'))
+for stem in ('AdspFirmware', 'WifiQrtr'):
+    compile_c(KITS / (stem + '.c'), board_dir / (stem + '.o'), 'bsd/DEVELOPMENT/kern_exec.o.json')
     board_objects.append(board_dir / (stem + '.o'))
 for stem in ('UkeGpuExport', 'BootLatencyTrace', 'BootProcessProbe', 'BootUiTraceProbe', 'LegacyDisplayStubs'):
     compile_c(KITS / (stem + '.c'), board_dir / (stem + '.o'))
@@ -548,6 +559,8 @@ sources = [ROOT / 'drivers/GopFramebuffer/NativeLegacyDisplay.cpp', ROOT / 'driv
            ROOT / 'scripts' / ABI_PATH.name, keystore_source, ROOT / 'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',
            ROOT / 'scripts/hid-device-24A446.json', hid_probe]
 sources += [ROOT / 'kits/uke/DisplayCallTrace27.cpp', ROOT / 'kits/uke/LegacyDisplayProbe.cpp']
+sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiQrtr', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h')]]
+sources += list(remoteproc.glob('*.c')) + list(remoteproc.glob('*.h'))
 (OUT / 'build-report.json').write_text(json.dumps(dict(
     source_sha256={str(p.relative_to(ROOT)): sha(p) for p in sources}, generated_abi_sha256=sha(OUT / 'OriginalLegacyFramebufferABI.h'),
     kernelcache_sha256=abi['kernelcache_sha256'], compiled_object_sha256=sha(obj), archive_sha256=sha(archive),

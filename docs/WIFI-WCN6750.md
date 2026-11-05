@@ -1,0 +1,70 @@
+# WCN6750 Wi-Fi development
+
+Development branch: `feat/uke-wifi-20261106`, based on the latest local GPU
+sources, including the pipeline journal and diagnostic export repairs.
+Workspace status and the full staged plan live in
+`/home/allenwdk/UniXNU/docs/status/wifi-wcn6750-port-2026-11-06.md`.
+
+## WPSS control transport
+
+`package/WifiProbe.cpp` adapts sheng's remote-processor worker at
+`460179565a018c741b93e0b1efa07c55d4de497a`. The unchanged MDT, SMEM, SMP2P,
+GLINK, QMP, RPMh, QRTR and FAT cores are in
+`Sm7675Platform/remoteproc`, with source hashes in `upstream.json`.
+`AdspFirmware.c` retains the upstream read-only UFS/FAT firmware interface;
+its allocations are explicitly checked and initialized.
+
+The worker reads `modem:qca6750/wpss` from the original firmware partition.
+It validates all segments against the 25 MiB WPSS reservation, preserves
+the signed metadata, and invokes PAS init/memory-setup/authentication for
+peripheral 6. Authentication errors stop startup. No firmware binary is
+embedded or committed.
+
+Uke inputs: IPCC `0x406000`, remote client 24, remote PID 13, SMP2P items
+617/616, crash reason 626, WPSS `0x9bb00000 + 0x1900000`, and GLINK items
+478/479/480. `WifiQrtr.c` registers IPCRTR before WPSS starts and records
+WLFW service `0x45`, instance 3. These are source inputs, not device results.
+
+The current branch defaults to startup mode 2 so no bytes need to be added
+to the existing 999-byte command line. An explicit `uke-wifi=0` disables
+it, `uke-wifi=1` surveys only, and `uke-wifi=2` starts the control transport.
+To add an override to a payload, first keep the complete command line below
+the board's 1000-byte limit.
+
+CX/MX are shared resources: this diagnostic requests their highest cmd-db
+levels and retains those votes and XO through handover. Do not clear the
+AP's shared votes at WPSS handover. Shared vote ownership and runtime power
+management remain implementation work. TCS1 and its interrupt must be free;
+startup refuses existing ownership and times out failed requests.
+
+## Build and evidence
+
+```sh
+cd /home/allenwdk/UniXNU/UniXNU-build
+./unixnu build kernel
+./unixnu build payload
+python3 scripts/porting-record.py check --device ../UniXNU-uke-build
+```
+
+The payload build needs the existing EDK II `TianoCompress` directory on
+PATH, recorded in the workspace environment index.
+
+The one focused host check uses the imported runtime parser on the actual
+stock pieces and compares its authentication metadata byte-for-byte with
+the stock MDT, also checking all file hashes and reserved-memory bounds:
+
+```sh
+python3 ../UniXNU-uke-build/scripts/check-uke-wifi-firmware.py \
+  --protocol-dir ../UniXNU-sm7675-common/kits/Sm7675Platform/remoteproc
+```
+
+Private copies are in `.cache/firmware/uke-wifi/qca6750/`; the 78 file hashes
+are in `firmware/wcn6750/manifest.json`. BDF selection still needs the real
+target's board identity. The first firmware is ELF32 with 11 load segments;
+the parser supports both ELF32 and ELF64 regardless of the Linux descriptor.
+
+Device acceptance requires fresh `UKE WIFI:` stages, WPSS ready, GLINK
+negotiation, IPCRTR link, then a WLFW service announcement. A formal build
+does not establish those results. The ath11k hardware backend, DMA/MSI,
+scan/association, WifiNet, supplicant and DHCP are not yet integrated. No
+network interface is published by this first control-transport candidate.

@@ -670,6 +670,7 @@ extern void native_qemu_metal_publish(void);
 extern void sheng_cpufreq_probe(void);
 extern void sheng_gpu_power_probe(void);
 extern void native_touch_probe(void);
+extern void uke_wpss_probe(void);
 // The DPU track's read-only snapshot and controlled-pipe test (package/DpuProbe.cpp):
 // a thread that waits for the firmware's scanout and then reads or (only with
 // uke-dpu-test=<n>) briefly writes the live pipes. Default off.
@@ -760,6 +761,7 @@ void native_legacy_display_late_probe(void) {
     sheng_gpu_power_probe();
     native_dpu_probe();
     native_touch_probe();
+    uke_wpss_probe();
     native_hid_input_probe();
     native_virtio_input_probe();
     native_shared_window_probe();

@@ -13,7 +13,7 @@ commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 name = "sm7675"
 kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
-commit = "b21db76e3251d3910bd6c4902751c8c9caf7079e"
+commit = "88c9da52d125c5cc6dc55cf98c271b2d82b88a9b"
 
 # Local upstream-main integration checkpoint, pending device qualification.
 [[source]]

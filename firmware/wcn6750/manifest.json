@@ -1,0 +1,321 @@
+{
+  "schema": 1,
+  "device": "uke",
+  "source": "read-only /vendor/firmware_mnt/image/qca6750 on modem_a; device b8a81f12 in TWRP, 2026-11-06",
+  "runtime_image": "modem:qca6750/wpss",
+  "files": {
+    "Data.msc": {
+      "size": 1157103,
+      "sha256": "98fe676c47b6ba286e40c4da4898a1b4ef760d0f6138d04bd2567aebc0f504d9"
+    },
+    "bd_n16t.elf": {
+      "size": 59944,
+      "sha256": "07d05a4f8e36267d5b2138a5b41a83543ef96e182c943274a73df103ae52440a"
+    },
+    "bd_n16tgl.elf": {
+      "size": 59948,
+      "sha256": "fc9181d7a348f1e82f23bf5cd75edf52c1999e974aa268d6b68d67435fdce0f3"
+    },
+    "bd_n16tin.elf": {
+      "size": 59944,
+      "sha256": "7087c2514fb962bc2ea1c0c4ab3a791cf123b58e8dadcd73ef5cbe407a71275e"
+    },
+    "bd_n9.elf": {
+      "size": 59924,
+      "sha256": "da7be8dd07f566cc3ad81189a1f4abdbd9e69cf0373c4241b113b93db29563fb"
+    },
+    "bd_n9in.elf": {
+      "size": 59924,
+      "sha256": "a7ab6f6343dfad268b6ce0ed1efc00e895694a63de03e168add193551945bbe1"
+    },
+    "bd_o82.elf": {
+      "size": 59952,
+      "sha256": "7d54a04f146b1a09c32c5d712d00846e2d761b191b10220fcb74c2b5202d74e2"
+    },
+    "bd_o82gl.elf": {
+      "size": 59928,
+      "sha256": "dc4a46400832e730f3aa6adf0137931f1d450e543279fffae977bd86046ad300"
+    },
+    "bd_o82in.elf": {
+      "size": 59932,
+      "sha256": "ac80d3726459afb35a945a7563714557828bdaf855ce96cdfe72209d4c703500"
+    },
+    "bdwlan.b01": {
+      "size": 58180,
+      "sha256": "007dbb66eded15106ffa99200814e1263d45b9b8d6fe66b3e928cdff8328eba4"
+    },
+    "bdwlan.b02": {
+      "size": 58180,
+      "sha256": "7b184514dde194e56b09193ab9eab664aba20ef15966b38bc58ad823dce4abd6"
+    },
+    "bdwlan.b03": {
+      "size": 58180,
+      "sha256": "7daea010742fae5faf3e21c8ee0594b60b747f8c79e1f9d4700fbf3041607959"
+    },
+    "bdwlan.b04": {
+      "size": 58180,
+      "sha256": "a4d21a27731a42977d934f691501f02b2120e24a178fd9a680459d0af1a7b1bd"
+    },
+    "bdwlan.b05": {
+      "size": 58180,
+      "sha256": "2088ccacd250a19b8ad0928cb6805b518d4f27eb4423563c828127d2b4068a60"
+    },
+    "bdwlan.b06": {
+      "size": 58180,
+      "sha256": "9463f4bfce185d08397861fc93142e83ede710095ced48847a41d5b0308fde12"
+    },
+    "bdwlan.b07": {
+      "size": 58180,
+      "sha256": "b349f98fa6b2cdba61e61698abcbf483fb277513ef96f62e9556e0ac1ebc8433"
+    },
+    "bdwlan.b08": {
+      "size": 58180,
+      "sha256": "dee3dd9637d3b1aa09f3b9d817c58858b41011fcbf4fb0e2e47a3dfbe5f35641"
+    },
+    "bdwlan.b09": {
+      "size": 58180,
+      "sha256": "c977464ad94fbb8dde1187fc13223fd77a1e2ff7d93707e205bcae524326e57d"
+    },
+    "bdwlan.b0a": {
+      "size": 58180,
+      "sha256": "63f074b2fba775409e4cfdd38f16f05201d1eee42228ee631736600b46eea233"
+    },
+    "bdwlan.b0b": {
+      "size": 58180,
+      "sha256": "0955378e02a83a46f509a76891fb2590c41d31b5ef8961afa970d04c39ce1df0"
+    },
+    "bdwlan.b0c": {
+      "size": 58180,
+      "sha256": "b1fb2c113ca9296c7fba36ab832a23b2f86872cada06da66e49f7a62aa0d9364"
+    },
+    "bdwlan.b0d": {
+      "size": 58180,
+      "sha256": "a65dbd43da15ae7e4eb3aa6b4d1dcf26b653f6b991f54e6e10426ee78d0de354"
+    },
+    "bdwlan.b0e": {
+      "size": 58180,
+      "sha256": "38efe2431682ae5aad8f906db3404ce26f92f61f50e6a1c18cd673fad94a5bc2"
+    },
+    "bdwlan.b0f": {
+      "size": 58180,
+      "sha256": "140a9652def425d50716c6b943b045cec5243bd9eb386720132e2638fed8301b"
+    },
+    "bdwlan.b10": {
+      "size": 58180,
+      "sha256": "f6754f1163f964c4674950acfd0fe98c5c09f5a35d413c4a9acd7a2833aadd5a"
+    },
+    "bdwlan.b101": {
+      "size": 58180,
+      "sha256": "7065dc433d0f9c654b9d4e2488a79c9f18cf9ff81f2d20f8bc3b7dd371b37007"
+    },
+    "bdwlan.b12": {
+      "size": 58180,
+      "sha256": "d37a3f695aa9e8772456abfa5871e1efb3901606a388e397ce3052a2d55914d9"
+    },
+    "bdwlan.b13": {
+      "size": 58180,
+      "sha256": "13266d7b3de7f626e29cbdf002bb91ec22f7d1a4b5afb09b3e440f65fa7cdc1e"
+    },
+    "bdwlan.b14": {
+      "size": 58180,
+      "sha256": "1564b337874f2780495b08be795a6389de6e27057e2a468e2c6f9037e44d63c4"
+    },
+    "bdwlan.b15": {
+      "size": 58180,
+      "sha256": "506db62d45b178b9abd9e9ba00dbcc772cade261e811e51a7540c6ca146e816c"
+    },
+    "bdwlan.b16": {
+      "size": 58180,
+      "sha256": "a92858c22103a9f5088883916279d50657c5a3d6bb6aa443f3fca75b7b5ebfbf"
+    },
+    "bdwlan.b17": {
+      "size": 58180,
+      "sha256": "613231e450d270a4a9eb4104bb48d5e7c4873583050dd08cfea5360bd7a03a7f"
+    },
+    "bdwlan.b18": {
+      "size": 58180,
+      "sha256": "1a05fd2938872ee48e9c91601e4530b45067b765412477b00d1614f526ffb2fd"
+    },
+    "bdwlan.b20": {
+      "size": 58180,
+      "sha256": "d4ec5bf72e6eaa641da99a170a0f25c9f1691d600a3c1319c341e925b8311bd0"
+    },
+    "bdwlan.bin": {
+      "size": 58180,
+      "sha256": "778b4cafe9f6740df462363feb80be458584310fe6d05b633ccd69c55b921f98"
+    },
+    "bdwlan.e01": {
+      "size": 59932,
+      "sha256": "841aad22c30e01c16cf88074a23a766c1f749c00d1b8c860e5cf3d6a7e244255"
+    },
+    "bdwlan.e02": {
+      "size": 59932,
+      "sha256": "cc724550ae9701c5aba18003804a7be66a7cbf8752a0f4c512154172fe860a1f"
+    },
+    "bdwlan.e03": {
+      "size": 59932,
+      "sha256": "5ab3c6b7409a257f7a89f046a58b98881d747da229e70da799fef5688e7cae51"
+    },
+    "bdwlan.e04": {
+      "size": 59932,
+      "sha256": "ee6756e9078aefb1e9d25e97fcd7192382f672f26dea6190423a4d0c105e3b17"
+    },
+    "bdwlan.e05": {
+      "size": 59932,
+      "sha256": "d677e648065521b8822aa29345266aa8fa6d797487f2951ec4a90b769455673a"
+    },
+    "bdwlan.e06": {
+      "size": 59932,
+      "sha256": "99ba0137764ea01cd1b82bbe5dac7d523dd79a3dd94c812a5b0e4ac66014ac84"
+    },
+    "bdwlan.e07": {
+      "size": 59932,
+      "sha256": "1939c93d42542c7e7eb60d6d9e3accf0be641c6f7cf211691679d33fcf67d910"
+    },
+    "bdwlan.e08": {
+      "size": 59932,
+      "sha256": "32830cd2e03ec4df6363ffeb29363b3c5fff7ec705708ccf2d73cb8f3efa0f79"
+    },
+    "bdwlan.e09": {
+      "size": 59932,
+      "sha256": "03de810341c79c6442100736e64754e8bf88a066b5da6d5eb08a014b97a7af2a"
+    },
+    "bdwlan.e0a": {
+      "size": 59932,
+      "sha256": "40314edf52d2c05125ce32bc363aab358191e792ce27a94e80ebc7d33cece59a"
+    },
+    "bdwlan.e0b": {
+      "size": 59932,
+      "sha256": "b99a5e5397585f661922445228b9a0700a96ba53cc7f94abb94079f5957b8631"
+    },
+    "bdwlan.e0c": {
+      "size": 59932,
+      "sha256": "37af3bb042ffb624c9f6fe369181d5ca616c9a2afe914e1adc1263e833fe3c95"
+    },
+    "bdwlan.e0d": {
+      "size": 59932,
+      "sha256": "a9c045a12b1680f81e41cc7d42fb656d09061b43fc0aaf037f2994a97892fcf9"
+    },
+    "bdwlan.e0e": {
+      "size": 59932,
+      "sha256": "f60b274274bcd164a875aa1d76fba614c573abb9a87829847c18c1763cc7122d"
+    },
+    "bdwlan.e0f": {
+      "size": 59932,
+      "sha256": "a75162c689072777982570f865277edab6f839ca7a7a4ba1fc43edbc1010d0a6"
+    },
+    "bdwlan.e10": {
+      "size": 59932,
+      "sha256": "e8fccfbd22b6643e8877c392e46018e1159c27f6ed4b7ca06d37261870364245"
+    },
+    "bdwlan.e101": {
+      "size": 59872,
+      "sha256": "4067a7dc605530b63def14e90d50cb070f53e1417fafb66bfdb1aec4ca8b7d3c"
+    },
+    "bdwlan.e12": {
+      "size": 59932,
+      "sha256": "f4a41bd39957ef5f1e900cb3bf584bf3b49a2e2cb3c8c99da5a5adc41630f98a"
+    },
+    "bdwlan.e13": {
+      "size": 60000,
+      "sha256": "238ad7f7b70cbc0a7e27a8bd8d4d2e7f4f2b688708fb04acfed0df140e1e27f7"
+    },
+    "bdwlan.e14": {
+      "size": 60000,
+      "sha256": "5c625d7addaa45bfff2a273364d70b35e356eb151c0f1c4960f847b41bb33d96"
+    },
+    "bdwlan.e15": {
+      "size": 59868,
+      "sha256": "6cc9b977306e5de63e4ab87b039789de6f2f2567c1749826a4223b254cd684ce"
+    },
+    "bdwlan.e16": {
+      "size": 59868,
+      "sha256": "ece3c60e20f0e496399b46494458308b5c8a9b8289845665cd443d7b57122f63"
+    },
+    "bdwlan.e17": {
+      "size": 60000,
+      "sha256": "29f35bbc19430f3bbd502a447b62ea9cfb5fb2ed66f7623806d6a44c6179daaf"
+    },
+    "bdwlan.e18": {
+      "size": 59836,
+      "sha256": "d9367ca142b4d67867177210587982310928c2cac301f7d332e9801c4f479541"
+    },
+    "bdwlan.e20": {
+      "size": 59836,
+      "sha256": "164d68329902134b06fab6d6a2523b49cdc998018da5358408dcc4b3d0e08853"
+    },
+    "bdwlan.elf": {
+      "size": 59932,
+      "sha256": "96dcdebe248f61d1c74e1a24d4e85d6e72eef799eb1c3b353ff405259cc01684"
+    },
+    "qdss_trace_config.cfg": {
+      "size": 1813,
+      "sha256": "bc87db5883749bc982e52fe448ce0016ce4689a575d069771e3e9aec060e83bc"
+    },
+    "regdb.bin": {
+      "size": 24278,
+      "sha256": "d617af4e3348795eb564915f546e6a96e8042aeb1648433dbe7e11f737ab5800"
+    },
+    "regdb_xiaomi.bin": {
+      "size": 24278,
+      "sha256": "fca5bbfaf5a9d490d9214ac6397fe7c42412af33f8f600dde518639376255c3f"
+    },
+    "wpss.b00": {
+      "size": 468,
+      "sha256": "2f0b37ad814da7e612bdd420c411a323367936efea2eea32f19c9b796244b0d4"
+    },
+    "wpss.b01": {
+      "size": 6440,
+      "sha256": "3dd190536edda87cda85b69fcc7d03174e948daa3618ca5b9a5e902f4dd2d7d4"
+    },
+    "wpss.b02": {
+      "size": 460985,
+      "sha256": "bcaff73b3436be65aa26cf06b5e5f3e4eef3b8b5a625cc78e9169e7c9b3f5dc0"
+    },
+    "wpss.b03": {
+      "size": 1104,
+      "sha256": "b7a3b1f97ef810824c8660222d4deb8689de77ea809c6c9ed8d779ec48dfea1d"
+    },
+    "wpss.b04": {
+      "size": 256,
+      "sha256": "41870cea04a11339ed8e99324e33ff2119c8de23cb77d0ad3fc7b52de059f8c9"
+    },
+    "wpss.b05": {
+      "size": 4096,
+      "sha256": "aae176b232881e8b9258e1844a9b946a4e4690b9bb5463b281cd1ba2b3ee1f14"
+    },
+    "wpss.b06": {
+      "size": 6072342,
+      "sha256": "2b9d868e0d776659f3741d9cce75f7239f4693596181657e420c5693979473a3"
+    },
+    "wpss.b07": {
+      "size": 118588,
+      "sha256": "d7846f851ef64896a307db5b0e08249cfd9319f0769ec91988156d92833de9fa"
+    },
+    "wpss.b08": {
+      "size": 275644,
+      "sha256": "0de7c47d174666be7f6a820951225ce0d50c97007aa186191e9ef25356efcb34"
+    },
+    "wpss.b09": {
+      "size": 352760,
+      "sha256": "57464f648ec1a089770e642b7c35717bf9b925e65996ba5d7671e9c77321de13"
+    },
+    "wpss.b10": {
+      "size": 906350,
+      "sha256": "26d0fc62bd7983c7c95c03079e751e8a3188a5965b7e0c4a101ad26331819a0c"
+    },
+    "wpss.b12": {
+      "size": 4376,
+      "sha256": "a98cb542421e46381467903e86801a9e369a4434ab4a6adc975205f0225f58c7"
+    },
+    "wpss.mdt": {
+      "size": 4844,
+      "sha256": "d33bc95fffe36c1f34b61426ef22b540c3c71a4b709f24495ae658348ea7e168"
+    },
+    "wpss.qdb": {
+      "size": 516,
+      "sha256": "f5d029a49b38dee301310d04e43efb9d45bd7c89f805e8fbb3ae9665aefb88f5"
+    }
+  },
+  "board_data_selection": "not yet selected; board/QMI identity required before choosing BDF"
+}
