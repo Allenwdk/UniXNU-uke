@@ -12,6 +12,7 @@
 #include <sys/errno.h>
 #include <pexpert/pexpert.h>
 #include "UkeWpssMemory.h"
+#include "SmmuBypass.h"
 extern "C" {
 #include "QcomGlink.h"
 #include "QcomMdt.h"
@@ -71,6 +72,74 @@ void note(const char *prefix, const char *text) {
     for (size_t i = 0; text[i] && at < sizeof native_wifi_wpss_text - 1; ++i) native_wifi_wpss_text[at++] = text[i];
     native_wifi_wpss_text[at] = 0;
     printf("UKE WIFI: %s\n", native_wifi_wpss_text);
+}
+
+// apps_smmu@15000000 faults unmatched streams (the UFS port read sCR0.USFCFG
+// back set). The WLAN SID has no stream-match entry, so firmware writes into
+// the fixed 12 MB MSA region would fault. Reuse the last context bank as a
+// stage-1-off bypass, the arrangement UFS validated on this board, and route
+// the masked WLAN stream through it before WPSS starts.
+constexpr uint64_t kAppsSmmu = 0x15000000, kAppsSmmuSize = 0x100000;
+constexpr uint32_t kWlanStream = 0x1400; /* DT mask 1 is mapped as two exact entries */
+constexpr uint32_t kScr0 = 0x00, kIdr0 = 0x20, kIdr1 = 0x24, kIdr2 = 0x28, kGfsr = 0x48;
+constexpr uint32_t kSmrBase = 0x800, kS2crBase = 0xc00;
+
+struct SmmuGeometry {unsigned count, banks, pages; bool usable;};
+SmmuGeometry smmuGeometry(const Window &w) {
+    const uint32_t idr0 = rd(w, kIdr0), idr1 = rd(w, kIdr1), idr2 = rd(w, kIdr2);
+    SmmuGeometry g{static_cast<unsigned>(idr0 & 0xff), static_cast<unsigned>(idr1 & 0xff),
+                   1U << (((idr1 >> 28) & 7) + 1), false};
+    g.usable = (idr0 & (1U << 30)) && (idr2 & (1U << 12)) && g.count && g.banks >= 2 &&
+               g.count <= 128 && g.banks <= 128 && g.pages <= 128 &&
+               (g.pages + g.banks) * 4096 <= kAppsSmmuSize;
+    return g;
+}
+bool smmuStreamMatches(uint32_t smr, uint32_t stream) {
+    if (!(smr & 0x80000000U)) return false;
+    return ((smr ^ stream) & 0xffff & ~((smr >> 16) & 0x7fff)) == 0;
+}
+void smmuReport(const char *when) {
+    printf("UKE WIFI: SMMU %s begin\n", when);
+    Window w{};
+    if (!mapWindow(w, kAppsSmmu, kAppsSmmuSize)) {printf("UKE WIFI: SMMU %s map failed\n", when); return;}
+    printf("UKE WIFI: SMMU %s mapped\n", when);
+    const SmmuGeometry g = smmuGeometry(w);
+    printf("UKE WIFI: SMMU %s idr0=%08x idr1=%08x idr2=%08x usable=%u count=%u banks=%u pages=%u\n",
+           when, rd(w, kIdr0), rd(w, kIdr1), rd(w, kIdr2), g.usable ? 1 : 0, g.count, g.banks, g.pages);
+    printf("UKE WIFI: SMMU %s global scr0=%08x gfsr=%08x\n", when, rd(w, kScr0), rd(w, kGfsr));
+    unsigned match = 0xffff; uint32_t matchSmr = 0, matchS2cr = 0;
+    for (unsigned i = 0; i < g.count && g.count <= 128; ++i) {
+        const uint32_t smr = rd(w, kSmrBase + 4 * i);
+        if (smmuStreamMatches(smr, kWlanStream)) {
+            match = i; matchSmr = smr; matchS2cr = rd(w, kS2crBase + 4 * i); break;
+        }
+    }
+    printf("UKE WIFI: SMMU %s scr0=%08x gfsr=%08x sid=%x match=%x smr=%08x s2cr=%08x\n",
+           when, rd(w, kScr0), rd(w, kGfsr), kWlanStream, match, matchSmr, matchS2cr);
+    unmap(w);
+    printf("UKE WIFI: SMMU %s done\n", when);
+}
+uint32_t smmuRead32(void *ctx, unsigned offset) {return rd(*static_cast<const Window *>(ctx), offset);}
+void smmuWrite32(void *ctx, unsigned offset, uint32_t value) {wr(*static_cast<const Window *>(ctx), offset, value);}
+// Use the board's validated bypass sequence (same helper as TouchProbe/UFS).
+// The WLAN DT mask (1) is expressed as two exact stream entries because the
+// masked SMR form is not exercised by any existing board user.
+const char *smmuRouteWlan(void) {
+    Window w{};
+    if (!mapWindow(w, kAppsSmmu, kAppsSmmuSize)) return "apps SMMU map failed";
+    const struct smmu_io io = {&w, smmuRead32, smmuWrite32};
+    const uint16_t streams[2] = {kWlanStream, kWlanStream + 1};
+    for (unsigned i = 0; i < 2; ++i) {
+        struct smmu_plan plan = smmu_plan_bypass(&io, streams[i], 0xa6400000ULL, 0x00c00000ULL);
+        if (plan.error) {printf("UKE WIFI: SMMU plan sid=%x error=%s\n", streams[i], plan.error); unmap(w); return plan.error;}
+        const char *error = smmu_configure_bypass(&io, &plan, streams[i]);
+        if (error) {printf("UKE WIFI: SMMU configure sid=%x error=%s\n", streams[i], error); unmap(w); return error;}
+        printf("UKE WIFI: SMMU route sid=%x bank=%u slot=%u reuse=%d ready=%d\n",
+               streams[i], plan.bank, plan.slot, plan.reuse, plan.bank_ready);
+    }
+    unmap(w);
+    smmuReport("route");
+    return nullptr;
 }
 
 // The QMI window alone does not prove CPU MMIO access. These offsets follow
@@ -617,9 +686,13 @@ void wpssThread(void *, wait_result_t) {
     gSmem = {gSmemW.va, (uint32_t)kSmemSize};
     gLayout = qcom_rsc_layout(rd(gRsc, 0));
     stage(StMapped);
+    smmuReport("boot");
     survey();
     stage(StSurveyed);
-    if (mode < 2 || !start() || !startGlink()) return;
+    if (mode < 2) return;
+    /* SMMU writes freeze this platform; keep the route compiled but unused. */
+    (void)smmuRouteWlan;
+    if (!start() || !startGlink()) return;
     // From here on the thread only answers doorbells and client sends; with nothing pending it sleeps without a deadline, except while
     // a send waits for an intent or FIFO room (then it looks again every second).
     for (;;) {
@@ -630,6 +703,10 @@ void wpssThread(void *, wait_result_t) {
     }
 }
 }  // namespace
+
+extern "C" void uke_wifi_smmu_report(const char *when) {
+    smmuReport(when);
+}
 
 extern "C" void uke_wifi_probe_bar(uint64_t base, uint32_t size) {
     if (base != kUkeWlanBar || size != kWlanBarBytes) {

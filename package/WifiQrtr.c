@@ -12,6 +12,7 @@
 
 extern uint64_t uke_wpss_now_ms(void);
 extern void uke_wifi_probe_bar(uint64_t base, uint32_t size);
+extern void uke_wifi_smmu_report(const char *when);
 extern int uke_wlfw_load_stock_data(unsigned type, uint8_t **data, uint32_t *length);
 extern void uke_wlfw_release_stock_data(uint8_t *data, uint32_t length);
 extern void *uke_wlfw_alloc(size_t bytes, int zero);
@@ -19,6 +20,7 @@ extern void uke_wlfw_free(void *data);
 
 static QcomQrtr router;
 static UkeWpssChannel *channel;
+static unsigned qmi_rx_logs, board_retries;
 volatile uint32_t native_wifi_qrtr_stats[8];
 /* stage, rx, bad, service-count, WLFW-node, WLFW-port, instance, links */
 volatile uint32_t native_wifi_qmi_stats[10];
@@ -122,6 +124,7 @@ static void board_segment_accepted(void)
     uint32_t remaining = board_data.length - board_data.offset;
     board_data.offset += remaining > NW_WCN6750_BDF_CHUNK ? NW_WCN6750_BDF_CHUNK : remaining;
     ++board_data.segment;
+    board_retries = 0;
     if (board_data.offset != board_data.length) return;
     unsigned type = board_data.type;
     printf("UKE WIFI: board data accepted type=%u bytes=%u segments=%u\n",
@@ -134,6 +137,7 @@ static void board_segment_accepted(void)
         board_data.probes |= kProbeAfterData;
         if (board_data.init_done) board_data.probes |= kProbeAfterInit;
         native_wifi_qmi_stats[0] = 9;
+        uke_wifi_smmu_report("data-done");
     }
 }
 
@@ -147,6 +151,10 @@ static void qmi_receive(void *context, QcomQrtr *q, uint32_t local_port,
         return;
     }
     if (message.type == QCOM_QMI_INDICATION && message.length + QCOM_QMI_HEADER == length) {
+        if (message.message != kFirmwareInitDone && message.message != kFirmwareReady && qmi_rx_logs < 48) {
+            qmi_rx_logs++;
+            printf("UKE WIFI: QMI indication msg=%x len=%u\n", message.message, length);
+        }
         if (message.message == kFirmwareInitDone && !board_data.init_done) {
             board_data.init_done = true;
             if (board_data.complete) board_data.probes |= kProbeAfterInit;
@@ -158,6 +166,11 @@ static void qmi_receive(void *context, QcomQrtr *q, uint32_t local_port,
     }
     if (!qmi_pending || message.type != QCOM_QMI_RESPONSE ||
         message.transaction != qmi_transaction || message.message != qmi_message) {
+        if (qmi_rx_logs < 48) {
+            qmi_rx_logs++;
+            printf("UKE WIFI: QMI unmatched type=%x msg=%x txn=%u len=%u pending=%d\n",
+                   message.type, message.message, message.transaction, length, qmi_pending);
+        }
         native_wifi_qmi_stats[4]++;
         return;
     }
@@ -217,10 +230,17 @@ void uke_wifi_qrtr_tick(void)
 {
     if (qmi_pending && uke_wpss_now_ms() >= qmi_deadline) {
         qmi_pending = 0;
-        release_board_data();
-        native_wifi_qmi_stats[0] = (uint32_t)-4;
         native_wifi_qmi_stats[3]++;
         printf("UKE WIFI: QMI timeout message=%x txn=%u\n", qmi_message, qmi_transaction);
+        uke_wifi_smmu_report("timeout");
+        if (qmi_message == kBoardData && board_data.data && board_retries < 1) {
+            board_retries++;
+            printf("UKE WIFI: board data retry type=%u seg=%u txn=%u\n",
+                   board_data.type, board_data.segment, qmi_transaction);
+            return;
+        }
+        release_board_data();
+        native_wifi_qmi_stats[0] = (uint32_t)-4;
     }
     if (board_data.probes) {
         const unsigned phase = board_data.probes;
