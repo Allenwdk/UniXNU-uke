@@ -664,3 +664,9 @@ Adreno740/GOP/ArmCpu/Smmu4K/XnuPrelink已含其上游main；新增sheng CP抢占
 
 
 仅主机证据；签名逐页与缓存语义检查已过，Apple私有libxpc和真机接受未测。报告位于工作区docs/status/icon-service-config-2026-11-05.md。
+
+
+## 2026-11-05 Sheng useful-change review (host only)
+
+sheng main4601795筛选完成：缺少可隔离触摸算法3b44b1b、后台负载策略及新的连续输入/vsync/频率/SpringBoard诊断。隔离ASan/UBSan复跑上游新增用例：当前触摸算法在安静扫描释放断言失败，上游完整通过；仅主机行为证据。LAT1新38/39/41与Uke冲突，不能直接cherry-pick。没有合运行代码、新镜像或设备操作；当前2098未变。
+详见工作区docs/status/sheng-useful-review-2026-11-05.md；touch-3b44b1b-review.patch仅apply-check未应用，现有2098镜像不变。
