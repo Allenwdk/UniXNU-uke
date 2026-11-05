@@ -670,3 +670,9 @@ Adreno740/GOP/ArmCpu/Smmu4K/XnuPrelink已含其上游main；新增sheng CP抢占
 
 sheng main4601795筛选完成：缺少可隔离触摸算法3b44b1b、后台负载策略及新的连续输入/vsync/频率/SpringBoard诊断。隔离ASan/UBSan复跑上游新增用例：当前触摸算法在安静扫描释放断言失败，上游完整通过；仅主机行为证据。LAT1新38/39/41与Uke冲突，不能直接cherry-pick。没有合运行代码、新镜像或设备操作；当前2098未变。
 详见工作区docs/status/sheng-useful-review-2026-11-05.md；touch-3b44b1b-review.patch仅apply-check未应用，现有2098镜像不变。
+
+
+## 2026-11-05 sheng触摸/lite/连续触摸统计候选
+
+三项已合入设备源码cddcc1e：触摸3b44b1b、lite九项后台减负、连续HID帧统计。无合并冲突后直接正式kernel/payload出图，CRC **9948DB2F165FF012**，vendor_boot45,305,856B/SHA256 affedc70729f193286347754d1b2059bc1646b69269de4d98248ba76a3b1440a。按用户要求未跑额外本地测试；保留2098图标配置和Uke喂狗，未刷、无设备操作，效果待真机。
+详细镜像/回退边界见工作区docs/status/sheng-touch-lite-2026-11-05.md；新增后台服务可能影响建议/统计功能，实际收益待设备。
