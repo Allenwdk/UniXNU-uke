@@ -33,15 +33,10 @@ def main():
         if not line or line.startswith('#') or line in skip: continue
         if line.startswith('ath12k:') or line.startswith('mhi:'): continue
         tree, _, name = line.partition(':') if ':' in line else ('', '', line)
-        base = module / 'out' / tree if tree in ('mac80211', 'cfg80211', 'crypto') else module
+        base = module / 'out' / tree if tree in ('mac80211', 'cfg80211', 'crypto', 'generated') else module
         sources.append(base / name)
     ath = json.loads((module / 'out/ath11k-identity.json').read_text())
     sources += [module / 'out/ath11k-src' / n for n in ath['sources']]
-    # ath11k needs the full mac80211/cfg80211 surface, not only the ath12k subset.
-    optional = {'ethtool.c', 'led.c', 'fils_aead.c', 'mesh.c', 'mesh_hwmp.c', 'mesh_pathtbl.c', 'mesh_plink.c',
-                'mesh_ps.c', 'mesh_sync.c', 'mesh_pm.c', 'aead_api.c', 'aes_cmac.c'}
-    for d in ('mac80211', 'cfg80211'):
-        sources += [f for f in sorted((module / 'out' / d).glob('*.c')) if f.name not in optional]
     sources.append(module / 'out/ath11k-src/reg.c')
     sources = [s for s in sources if s.is_file()]
     def object_name(src):
