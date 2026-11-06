@@ -109,14 +109,22 @@ void smmuReport(const char *when) {
     printf("UKE WIFI: SMMU %s idr0=%08x idr1=%08x idr2=%08x usable=%u count=%u banks=%u pages=%u\n",
            when, rd(w, kIdr0), rd(w, kIdr1), rd(w, kIdr2), g.usable ? 1 : 0, g.count, g.banks, g.pages);
     printf("UKE WIFI: SMMU %s global scr0=%08x sacr=%08x gfsr=%08x\n", when, rd(w, kScr0), rd(w, 0x10), rd(w, kGfsr));
-    unsigned match = 0xffff, smrs = 0, banks = 0; uint32_t matchSmr = 0, matchS2cr = 0;
+    unsigned match = 0xffff, smrs = 0, banks = 0, clean = 0; uint32_t matchSmr = 0, matchS2cr = 0;
     for (unsigned i = 0; i < g.count && g.count <= 128; ++i) {
         const uint32_t smr = rd(w, kSmrBase + 4 * i);
-        if (!(smr & 0x80000000U)) continue;
         const uint32_t s2cr = rd(w, kS2crBase + 4 * i);
+        if (!(smr & 0x80000000U)) {if (!s2cr) clean++; continue;}
         if (smmuStreamMatches(smr, kWlanStream) && match == 0xffff) {match = i; matchSmr = smr; matchS2cr = s2cr;}
-        if (smrs < 24) {smrs++; printf("UKE WIFI: SMMU %s smr[%u]=%08x s2cr=%08x\n", when, i, smr, s2cr);}
+        smrs++; printf("UKE WIFI: SMMU %s smr[%u]=%08x s2cr=%08x\n", when, i, smr, s2cr);
     }
+    unsigned zero_s2cr = 0, s2cr70 = 0, other = 0;
+    for (unsigned i = 0; i < g.count && g.count <= 128; ++i) {
+        const uint32_t smr = rd(w, kSmrBase + 4 * i), s2cr = rd(w, kS2crBase + 4 * i);
+        if ((smr & 0x80000000U) || !s2cr) {if (!s2cr) zero_s2cr++; continue;}
+        if (s2cr == 0x46) {if (s2cr70 < 12) printf("UKE WIFI: SMMU %s s2cr70[%u] smr=%08x\n", when, i, smr); s2cr70++;}
+        else if (other < 12) {other++; printf("UKE WIFI: SMMU %s s2cr_other[%u]=%08x\n", when, i, s2cr);}
+    }
+    printf("UKE WIFI: SMMU %s clean_slots=%u zero_s2cr=%u s2cr70=%u other=%u\n", when, clean, zero_s2cr, s2cr70, other);
     for (unsigned b = 0; b < g.banks && g.banks <= 128 && banks < 24; ++b) {
         const uint32_t sctlr = rd(w, (g.pages + b) * 4096);
         const uint32_t cbar = rd(w, 0x1000 + 4 * b), cba2r = rd(w, 0x1800 + 4 * b);
@@ -128,25 +136,40 @@ void smmuReport(const char *when) {
     unmap(w);
     printf("UKE WIFI: SMMU %s done\n", when);
 }
-uint32_t smmuRead32(void *ctx, unsigned offset) {return rd(*static_cast<const Window *>(ctx), offset);}
-void smmuWrite32(void *ctx, unsigned offset, uint32_t value) {wr(*static_cast<const Window *>(ctx), offset, value);}
-// Use the board's validated bypass sequence (same helper as TouchProbe/UFS).
-// The WLAN DT mask (1) is expressed as two exact stream entries because the
-// masked SMR form is not exercised by any existing board user.
+// Route the WLAN stream to the bypass bank that touch/UFS already share.
+// A slot counts as free only when both SMR and S2CR read zero: an invalid
+// SMR with a stale S2CR is not a proven free group. The 2 s pause lets the
+// userdata writer flush the chosen slot/bank before any write happens.
 const char *smmuRouteWlan(void) {
     Window w{};
     if (!mapWindow(w, kAppsSmmu, kAppsSmmuSize)) return "apps SMMU map failed";
-    const struct smmu_io io = {&w, smmuRead32, smmuWrite32};
-    const uint16_t streams[2] = {kWlanStream, kWlanStream + 1};
-    for (unsigned i = 0; i < 2; ++i) {
-        struct smmu_plan plan = smmu_plan_bypass(&io, streams[i], 0xa6400000ULL, 0x00c00000ULL);
-        if (plan.error) {printf("UKE WIFI: SMMU plan sid=%x error=%s\n", streams[i], plan.error); unmap(w); return plan.error;}
-        const char *error = smmu_configure_bypass(&io, &plan, streams[i]);
-        if (error) {printf("UKE WIFI: SMMU configure sid=%x error=%s\n", streams[i], error); unmap(w); return error;}
-        printf("UKE WIFI: SMMU route sid=%x bank=%u slot=%u reuse=%d ready=%d\n",
-               streams[i], plan.bank, plan.slot, plan.reuse, plan.bank_ready);
+    const SmmuGeometry g = smmuGeometry(w);
+    if (!g.usable) {unmap(w); return "unsupported apps SMMU geometry";}
+    unsigned bank = g.banks, slot = g.count;
+    for (unsigned i = 0; i < g.count; ++i) {
+        const uint32_t smr = rd(w, kSmrBase + 4 * i), s2cr = rd(w, kS2crBase + 4 * i);
+        if ((smr & 0x80000000U) && smmuStreamMatches(smr, kWlanStream)) {unmap(w); return "WLAN stream already mapped";}
+        if ((smr & 0x80000000U) && ((s2cr >> 16) & 3) == 0) bank = s2cr & 0xff;
     }
+    if (bank < g.banks) for (unsigned i = 0; i < g.count; ++i) {
+        const uint32_t smr = rd(w, kSmrBase + 4 * i), s2cr = rd(w, kS2crBase + 4 * i);
+        if (!(smr & 0x80000000U) && s2cr == bank && slot == g.count) slot = i;
+    }
+    if (bank >= g.banks) {unmap(w); return "no bypass bank referenced by a live stream";}
+    const uint32_t sctlr = rd(w, (g.pages + bank) * 4096), cbar = rd(w, 0x1000 + 4 * bank), cba2r = rd(w, 0x1800 + 4 * bank);
+    printf("UKE WIFI: SMMU route bank=%u sctlr=%08x cbar=%08x cba2r=%08x slot=%u\n", bank, sctlr, cbar, cba2r, slot);
+    if (sctlr || cbar != 0x10000 || cba2r != 1) {unmap(w); return "live bypass bank readback mismatch";}
+    if (slot == g.count) {unmap(w); return "no clean stream-match group";}
     unmap(w);
+    IOSleep(2100);
+    Window x{};
+    if (!mapWindow(x, kAppsSmmu, kAppsSmmuSize)) return "apps SMMU remap failed";
+    const uint32_t smr = 0x80000000U | kWlanStream;
+    wr(x, kSmrBase + 4 * slot, smr);
+    const uint32_t rs = rd(x, kSmrBase + 4 * slot), rc = rd(x, kS2crBase + 4 * slot);
+    printf("UKE WIFI: SMMU route sid=%x slot=%u smr=%08x s2cr=%08x (SMR-only write)\n", kWlanStream, slot, rs, rc);
+    if (rs != smr || rc != bank) {unmap(x); return "stream mapping readback mismatch";}
+    unmap(x);
     smmuReport("route");
     return nullptr;
 }
@@ -742,8 +765,8 @@ void wpssThread(void *, wait_result_t) {
     survey();
     stage(StSurveyed);
     if (mode < 2) return;
-    /* SMMU writes freeze this platform; keep the route compiled but unused. */
-    (void)smmuRouteWlan;
+    const char *smmuError = smmuRouteWlan();
+    if (smmuError) printf("UKE WIFI: SMMU route failed: %s\n", smmuError);
     if (!start() || !startGlink()) return;
     // From here on the thread only answers doorbells and client sends; with nothing pending it sleeps without a deadline, except while
     // a send waits for an intent or FIFO room (then it looks again every second).
