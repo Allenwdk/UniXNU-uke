@@ -164,18 +164,28 @@ const char *smmuRouteWlan(void) {
     IOSleep(2100);
     Window x{};
     if (!mapWindow(x, kAppsSmmu, kAppsSmmuSize)) return "apps SMMU remap failed";
-    const uint32_t oldS2cr = rd(x, kS2crBase + 4 * slot);
-    const uint32_t smr = 0x80000000U | kWlanStream;
-    printf("UKE WIFI: SMMU step1 SMR-only sid=%x slot=%u old_s2cr=%08x\n", kWlanStream, slot, oldS2cr);
-    IOSleep(2100);
-    wr(x, kSmrBase + 4 * slot, smr);
-    printf("UKE WIFI: SMMU step1 readback smr=%08x s2cr=%08x\n", rd(x, kSmrBase + 4 * slot), rd(x, kS2crBase + 4 * slot));
-    IOSleep(2100);
-    printf("UKE WIFI: SMMU step2 S2CR->bank%u\n", bank);
-    wr(x, kS2crBase + 4 * slot, bank);
-    const uint32_t rs = rd(x, kSmrBase + 4 * slot), rc = rd(x, kS2crBase + 4 * slot);
-    printf("UKE WIFI: SMMU step2 readback smr=%08x s2cr=%08x\n", rs, rc);
-    if (rs != smr || rc != bank) {unmap(x); return "stream mapping readback mismatch";}
+    for (unsigned sid = kWlanStream; sid <= kWlanStream + 1; ++sid) {
+        unsigned free = g.count;
+        for (unsigned i = 0; i < g.count; ++i) {
+            const uint32_t smr = rd(x, kSmrBase + 4 * i);
+            if (smr & 0x80000000U) {if ((smr & 0xffff) == sid) {unmap(x); return "WLAN stream already mapped";}}
+            else if (free == g.count) free = i;
+        }
+        if (free == g.count) {unmap(x); return "no stream-match group";}
+        const uint32_t oldS2cr = rd(x, kS2crBase + 4 * free);
+        const uint32_t smr = 0x80000000U | sid;
+        printf("UKE WIFI: SMMU step1 SMR-only sid=%x slot=%u old_s2cr=%08x\n", sid, free, oldS2cr);
+        IOSleep(2100);
+        wr(x, kSmrBase + 4 * free, smr);
+        printf("UKE WIFI: SMMU step1 readback smr=%08x s2cr=%08x\n", rd(x, kSmrBase + 4 * free), rd(x, kS2crBase + 4 * free));
+        IOSleep(2100);
+        const uint32_t oldS2cr2 = rd(x, kS2crBase + 4 * free);
+        printf("UKE WIFI: SMMU step2 sid=%x S2CR->bank%u old=%08x\n", sid, bank, oldS2cr2);
+        wr(x, kS2crBase + 4 * free, bank);
+        const uint32_t rs = rd(x, kSmrBase + 4 * free), rc = rd(x, kS2crBase + 4 * free);
+        printf("UKE WIFI: SMMU step2 readback smr=%08x s2cr=%08x\n", rs, rc);
+        if (rs != smr || rc != bank) {unmap(x); return "stream mapping readback mismatch";}
+    }
     unmap(x);
     smmuReport("route");
     return nullptr;

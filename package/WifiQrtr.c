@@ -22,7 +22,9 @@ extern void uke_wlfw_free(void *data);
 static QcomQrtr router;
 static UkeWpssChannel *channel;
 static unsigned qmi_rx_logs, board_retries;
-static int liveness;
+static int liveness, msa_ready_ind, msa_ind_timed_out;
+static unsigned liveness_probes;
+static uint64_t msa_deadline;
 volatile uint32_t native_wifi_qrtr_stats[8];
 /* stage, rx, bad, service-count, WLFW-node, WLFW-port, instance, links */
 volatile uint32_t native_wifi_qmi_stats[10];
@@ -38,6 +40,7 @@ enum {
     kClientPort = 0x4000,
     kRegister = 0x20, kHostCapability = 0x34, kCapability = 0x24, kDeviceInfo = 0x4c,
     kBoardData = 0x25, kFirmwareReady = 0x21, kFirmwareInitDone = 0x38,
+    kMsaInfo = 0x2d, kMsaReady = 0x2e, kMsaReadyInd = 0x2b,
     kProbeBeforeData = 1, kProbeAfterData = 2, kProbeAfterInit = 4,
 };
 
@@ -83,6 +86,40 @@ static void query(unsigned message)
     printf("UKE WIFI: QMI request message=%x txn=%u node=%u port=%u\n", message, qmi_transaction, qmi_node, qmi_port);
 }
 
+static void query_msa_info(void) {
+    uint8_t request[25];
+    if (++qmi_transaction == 0) ++qmi_transaction;
+    request[0] = QCOM_QMI_REQUEST;
+    request[1] = qmi_transaction & 0xff; request[2] = qmi_transaction >> 8;
+    request[3] = kMsaInfo & 0xff; request[4] = kMsaInfo >> 8;
+    request[5] = 18; request[6] = 0;
+    request[7] = 0x01; request[8] = 8; request[9] = 0;
+    for (unsigned i = 0; i < 8; ++i) request[10 + i] = (uint8_t)(0xa6400000ULL >> (8 * i));
+    request[18] = 0x02; request[19] = 4; request[20] = 0;
+    for (unsigned i = 0; i < 4; ++i) request[21 + i] = (uint8_t)(0x00c00000U >> (8 * i));
+    if (qcom_qrtr_send_data(&router, kClientPort, qmi_node, qmi_port, request, sizeof request)) {
+        printf("UKE WIFI: QMI MSA info send failed\n");
+        return;
+    }
+    start_transaction(kMsaInfo, 10);
+    printf("UKE WIFI: QMI MSA info request txn=%u addr=a6400000 size=c00000\n", qmi_transaction);
+}
+
+static void query_msa_ready(void) {
+    uint8_t request[7];
+    if (++qmi_transaction == 0) ++qmi_transaction;
+    request[0] = QCOM_QMI_REQUEST;
+    request[1] = qmi_transaction & 0xff; request[2] = qmi_transaction >> 8;
+    request[3] = kMsaReady & 0xff; request[4] = kMsaReady >> 8;
+    request[5] = 0; request[6] = 0;
+    if (qcom_qrtr_send_data(&router, kClientPort, qmi_node, qmi_port, request, sizeof request)) {
+        printf("UKE WIFI: QMI MSA ready send failed\n");
+        return;
+    }
+    start_transaction(kMsaReady, 11);
+    printf("UKE WIFI: QMI MSA ready request txn=%u\n", qmi_transaction);
+}
+
 static void send_board_segment(void)
 {
     if (!board_data.data) {
@@ -103,8 +140,9 @@ static void send_board_segment(void)
         release_board_data();
         return;
     }
-    int length = nw_wcn6750_bdf_request(qmi_transaction, board_data.type, 0xff,
-                                       board_data.segment, remaining, board_data.data + board_data.offset,
+    int length = nw_wcn6750_bdf_request(qmi_transaction, board_data.type, 0,
+                                       board_data.segment, board_data.length, remaining,
+                                       board_data.data + board_data.offset,
                                        workspace, kBdfRequestBytes);
     int sent = length < 0 ? length : qcom_qrtr_send_data_buffered(&router, kClientPort, qmi_node, qmi_port,
                    workspace, (uint32_t)length, workspace + kBdfRequestBytes, kBdfPacketBytes);
@@ -157,6 +195,10 @@ static void qmi_receive(void *context, QcomQrtr *q, uint32_t local_port,
             qmi_rx_logs++;
             printf("UKE WIFI: QMI indication msg=%x len=%u\n", message.message, length);
         }
+        if (message.message == kMsaReadyInd && !msa_ready_ind) {
+            msa_ready_ind = 1;
+            printf("UKE WIFI: QMI MSA_READY_IND\n");
+        }
         if (message.message == kFirmwareInitDone && !board_data.init_done) {
             board_data.init_done = true;
             if (board_data.complete) board_data.probes |= kProbeAfterInit;
@@ -192,6 +234,26 @@ static void qmi_receive(void *context, QcomQrtr *q, uint32_t local_port,
     native_wifi_identity.error = (uint16_t)(result[2] | (uint16_t)result[3] << 8);
     native_wifi_qmi_stats[8] = native_wifi_identity.result;
     native_wifi_qmi_stats[9] = native_wifi_identity.error;
+    if (qmi_message == kMsaInfo) {
+        uint32_t region_bytes = 0;
+        const uint8_t *regions = qcom_qmi_tlv(&message, 3, &region_bytes);
+        printf("UKE WIFI: QMI MSA info result=%u error=%u regions=%u\n",
+               native_wifi_identity.result, native_wifi_identity.error, region_bytes);
+        (void)regions;
+        /* WCN6750 answers NOT_SUPPORTED (94); the OEM driver still sends MSA_READY. */
+        query_msa_ready();
+        return;
+    }
+    if (qmi_message == kMsaReady) {
+        printf("UKE WIFI: QMI MSA ready result=%u error=%u\n",
+               native_wifi_identity.result, native_wifi_identity.error);
+        if (native_wifi_identity.result || native_wifi_identity.error) {
+            printf("UKE WIFI: MSA ready rejected; continuing without MSA_READY_IND\n");
+            msa_ind_timed_out = 1;
+        } else if (!msa_ready_ind) msa_deadline = uke_wpss_now_ms() + 10000;
+        query(kCapability);
+        return;
+    }
     int decoded = nw_wcn6750_query_decode(qmi_message, data, length, &native_wifi_identity);
     if (decoded < 0) {
         native_wifi_qmi_stats[0] = (uint32_t)-3;
@@ -201,10 +263,17 @@ static void qmi_receive(void *context, QcomQrtr *q, uint32_t local_port,
         return;
     }
     if (qmi_message == kBoardData) {
+        /* Downstream: the end=1 CRC check may fail with MALFORMED_MSG (1/1)
+         * and the firmware still uses the board file. */
+        if (native_wifi_identity.result == 1 && native_wifi_identity.error == 1) {
+            printf("UKE WIFI: board data CRC warning (MALFORMED_MSG) accepted\n");
+            board_segment_accepted();
+            return;
+        }
         board_segment_accepted();
     } else if (qmi_message == kRegister || qmi_message == kHostCapability) {
         printf("UKE WIFI: QMI accepted message=%x txn=%u\n", qmi_message, qmi_transaction);
-        query(qmi_message == kRegister ? kHostCapability : kCapability);
+        if (qmi_message == kRegister) query(kHostCapability); else query_msa_info();
     } else if (qmi_message == kCapability) {
         if (liveness) {
             liveness = 0;
@@ -250,9 +319,11 @@ void uke_wifi_qrtr_tick(void)
             uke_wpss_crash_report();
             release_board_data();
             native_wifi_qmi_stats[0] = (uint32_t)-4;
-            liveness = 1;
-            query(kCapability);
-            printf("UKE WIFI: QMI liveness request message=%x\n", kCapability);
+            if (liveness_probes++ < 1) {
+                liveness = 1;
+                query(kCapability);
+                printf("UKE WIFI: QMI liveness request message=%x\n", kCapability);
+            }
         }
     }
     if (board_data.probes) {
@@ -261,7 +332,13 @@ void uke_wifi_qrtr_tick(void)
         printf("UKE WIFI: MMIO phase=%x\n", phase);
         uke_wifi_probe_bar(native_wifi_identity.bar_address, native_wifi_identity.bar_size);
     }
-    if (!qmi_pending && board_data.type) send_board_segment();
+    if (board_data.type && !msa_ready_ind && !msa_ind_timed_out && msa_deadline) {
+        if (uke_wpss_now_ms() >= msa_deadline) {
+            msa_ind_timed_out = 1;
+            printf("UKE WIFI: MSA_READY_IND timeout; proceeding\n");
+        }
+    }
+    if (!qmi_pending && board_data.type && (msa_ready_ind || msa_ind_timed_out)) send_board_segment();
 }
 
 uint32_t uke_wifi_qrtr_wait_ms(void)
@@ -286,6 +363,8 @@ static void state(void *context, int up)
     router.remote_count = 0;
     router.remote_node = QCOM_QRTR_NODE_BROADCAST;
     qmi_pending = 0;
+    msa_ready_ind = msa_ind_timed_out = 0;
+    msa_deadline = 0;
     release_board_data();
     bzero(&board_data, sizeof board_data);
     bzero(&native_wifi_identity, sizeof native_wifi_identity);
