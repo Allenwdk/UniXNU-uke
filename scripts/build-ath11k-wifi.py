@@ -26,18 +26,19 @@ def main():
              '-nostdinc', '-isystem', str(module / 'shim/libc'), '-isystem', res, '-include', 'lx_pci.h',
              '-I', str(module / 'shim/include'), '-I', str(module / 'include'), '-I', str(module / 'out/pinned'),
              '-I', str(module / 'out/ath11k-src'), '-I', str(module / 'out'), '-I', str(module / 'out/mac80211'), '-I', str(module / 'out/cfg80211'), '-I', str(module / 'out/crypto'), '-I', str(module / 'shim/crypto'), '-I', str(module)]
-    skip = {'src/nw_mainline.c', 'src/nw_mhi.c', 'src/nw_pci.c', 'src/nw_qrtr_mhi.c', 'src/nw_wifi.c', 'src/nw_debug.c', 'src/nw_cfg80211_native.c'}
+    skip = {'src/nw_mainline.c', 'src/nw_mhi.c', 'src/nw_pci.c', 'src/nw_qrtr_mhi.c', 'src/nw_wifi.c', 'src/nw_debug.c'}
     sources = []
     for line in (module / 'tools/sources.txt').read_text().splitlines():
         line = line.strip()
         if not line or line.startswith('#') or line in skip: continue
         if line.startswith('ath12k:') or line.startswith('mhi:'): continue
         tree, _, name = line.partition(':') if ':' in line else ('', '', line)
-        base = module / 'out' / tree if tree in ('mac80211', 'cfg80211', 'crypto', 'generated') else module
+        base = (module / 'out') if tree == 'generated' else (module / 'out' / tree if tree in ('mac80211', 'cfg80211', 'crypto') else module)
         sources.append(base / name)
     ath = json.loads((module / 'out/ath11k-identity.json').read_text())
     sources += [module / 'out/ath11k-src' / n for n in ath['sources']]
     sources.append(module / 'out/ath11k-src/reg.c')
+    sources += [module / 'deps/linux/drivers/soc/qcom/qmi_interface.c', module / 'deps/linux/drivers/soc/qcom/qmi_encdec.c']
     sources = [s for s in sources if s.is_file()]
     def object_name(src):
         parts = src.parts
@@ -48,7 +49,8 @@ def main():
         stale.unlink()
     def build(src):
         obj = out / object_name(src)
-        r = subprocess.run([clang, *flags, '-c', str(src), '-o', str(obj)], capture_output=True, text=True)
+        extra = ['-I', str(module / 'out/cfg80211')] if src.name == 'nw_cfg80211_native.c' else []
+        r = subprocess.run([clang, *extra, *flags, '-c', str(src), '-o', str(obj)], capture_output=True, text=True)
         return src, obj, r
     with ThreadPoolExecutor(8) as pool:
         results = list(pool.map(build, sources))
