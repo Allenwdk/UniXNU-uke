@@ -796,6 +796,32 @@ void wpssThread(void *, wait_result_t) {
 }
 }  // namespace
 
+extern "C" void uke_wifi_msa_report(void) {
+    Window w{};
+    if (!mapWindow(w, 0xa6400000ULL, 0x00c00000ULL)) {printf("UKE WIFI: MSA map failed\n"); return;}
+    volatile uint32_t *p = reinterpret_cast<volatile uint32_t *>(w.va);
+    printf("UKE WIFI: MSA[0..7]=%08x %08x %08x %08x %08x %08x %08x %08x\n",
+           p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+    uint32_t hits = 0, first = 0;
+    for (uint32_t off = 0; off < 0x40000; off += 4) {
+        if (p[off / 4] == 0x464c457fU) {if (!hits) first = off; hits++;}
+    }
+    printf("UKE WIFI: MSA elf_hits=%u first=%x\n", hits, first);
+    unmap(w);
+}
+
+extern "C" int uke_wifi_msa_write(uint64_t offset, const void *data, uint32_t length) {
+    if (offset + length > 0x00c00000ULL) return -1;
+    Window w{};
+    if (!mapWindow(w, 0xa6400000ULL, 0x00c00000ULL)) return -2;
+    volatile uint8_t *dst = w.va + offset;
+    const volatile uint8_t *src = static_cast<const volatile uint8_t *>(data);
+    for (uint32_t i = 0; i < length; ++i) dst[i] = src[i];
+    __asm__ volatile("dsb sy" ::: "memory");
+    unmap(w);
+    return 0;
+}
+
 extern "C" void uke_wpss_crash_report(void) {
     uint32_t size = 0;
     volatile uint32_t *p = reinterpret_cast<volatile uint32_t *>(item(kItemCrash, &size));

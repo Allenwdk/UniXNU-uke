@@ -14,6 +14,8 @@ extern uint64_t uke_wpss_now_ms(void);
 extern void uke_wifi_probe_bar(uint64_t base, uint32_t size);
 extern void uke_wifi_smmu_report(const char *when);
 extern void uke_wpss_crash_report(void);
+extern void uke_wifi_msa_report(void);
+extern int uke_wifi_msa_write(uint64_t offset, const void *data, uint32_t length);
 extern int uke_wlfw_load_stock_data(unsigned type, uint8_t **data, uint32_t *length);
 extern void uke_wlfw_release_stock_data(uint8_t *data, uint32_t length);
 extern void *uke_wlfw_alloc(size_t bytes, int zero);
@@ -140,9 +142,13 @@ static void send_board_segment(void)
         release_board_data();
         return;
     }
-    int length = nw_wcn6750_bdf_request(qmi_transaction, board_data.type, 0,
-                                       board_data.segment, board_data.length, remaining,
-                                       board_data.data + board_data.offset,
+    if (board_data.offset == 0) {
+        int wrc = uke_wifi_msa_write(0, board_data.data, board_data.length);
+        printf("UKE WIFI: MSA stage write type=%u bytes=%u rc=%d\n", board_data.type, board_data.length, wrc);
+    }
+    int length = nw_wcn6750_bdf_request(qmi_transaction, board_data.type, 0xff,
+                                       0, board_data.length, board_data.length, 1,
+                                       board_data.data,
                                        workspace, kBdfRequestBytes);
     int sent = length < 0 ? length : qcom_qrtr_send_data_buffered(&router, kClientPort, qmi_node, qmi_port,
                    workspace, (uint32_t)length, workspace + kBdfRequestBytes, kBdfPacketBytes);
@@ -161,8 +167,7 @@ static void send_board_segment(void)
 
 static void board_segment_accepted(void)
 {
-    uint32_t remaining = board_data.length - board_data.offset;
-    board_data.offset += remaining > NW_WCN6750_BDF_CHUNK ? NW_WCN6750_BDF_CHUNK : remaining;
+    board_data.offset = board_data.length;  /* MSA stage: one notification per file */
     ++board_data.segment;
     board_retries = 0;
     if (board_data.offset != board_data.length) return;
@@ -317,6 +322,7 @@ void uke_wifi_qrtr_tick(void)
                    board_data.type, board_data.segment, qmi_transaction);
         } else {
             uke_wpss_crash_report();
+            uke_wifi_msa_report();
             release_board_data();
             native_wifi_qmi_stats[0] = (uint32_t)-4;
             if (liveness_probes++ < 1) {
