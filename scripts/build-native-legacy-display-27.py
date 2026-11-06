@@ -511,6 +511,7 @@ board_dir.mkdir(exist_ok=True)
 KITS = ROOT / 'kits/uke'
 board_objects = []
 for stem, extra in [('CpuFreqProbe', ()),
+                    ('WifiAth11k', ()),
                     ('WifiProbe', ('-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'), '-I', str(ROOT / 'kits/ArmSmmu4K'))),
                     ('TouchProbe', ('-I', str(ROOT / 'drivers/QcomGeniSpi'), '-I', str(ROOT / 'drivers/ShengNovatekTouch'))),
                     ('DpuProbe', ()),
@@ -528,11 +529,18 @@ for stem in ('AdspFirmware', 'WifiQrtr', 'WifiQmiSupport'):
     board_objects.append(board_dir / (stem + '.o'))
 qmi_module = ROOT / 'drivers/Ath12kWifi'
 require((qmi_module / 'tools/stage-wcn6750-qmi.py').is_file(), 'WCN6750 identity codec source (select/pin Ath12kWifi)')
+ath11k_output = OUT / 'ath11k-wifi'
+ath11k_lines = run(['python3', str(ROOT / 'scripts/build-ath11k-wifi.py'), str(ROOT / 'drivers/Ath12kWifi'), str(ath11k_output), '--target', TRIPLE], text=True)
+ath11k_objects = [Path(line[4:]) for line in ath11k_lines.splitlines() if line.startswith('OBJ ')]
+if not ath11k_objects:
+    ath11k_objects = sorted(ath11k_output.glob('*.o'))
+require(len(ath11k_objects) > 90, 'ath11k stack objects present')
 qmi_output = OUT / 'wcn6750-qmi'
 qmi_lines = run(['python3', ROOT / 'scripts/build-wcn6750-qmi.py', qmi_module, qmi_output, '--target', TRIPLE], text=True)
 qmi_objects = [Path(line[4:]) for line in qmi_lines.splitlines() if line.startswith('OBJ ')]
 require(len(qmi_objects) == 2, 'Both original QMI codec and descriptor objects')
 board_objects += qmi_objects
+board_objects += ath11k_objects
 for stem in ('UkeGpuExport', 'BootLatencyTrace', 'BootProcessProbe', 'BootUiTraceProbe', 'LegacyDisplayStubs'):
     compile_c(KITS / (stem + '.c'), board_dir / (stem + '.o'))
     board_objects.append(board_dir / (stem + '.o'))
@@ -566,7 +574,7 @@ sources = [ROOT / 'drivers/GopFramebuffer/NativeLegacyDisplay.cpp', ROOT / 'driv
            ROOT / 'scripts' / ABI_PATH.name, keystore_source, ROOT / 'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',
            ROOT / 'scripts/hid-device-24A446.json', hid_probe]
 sources += [ROOT / 'kits/uke/DisplayCallTrace27.cpp', ROOT / 'kits/uke/LegacyDisplayProbe.cpp']
-sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiQrtr', '.c'), ('WifiQmiSupport', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h'), ('UkeWpssMemory', '.h')]]
+sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiAth11k', '.cpp'), ('WifiQrtr', '.c'), ('WifiQmiSupport', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h'), ('UkeWpssMemory', '.h')]]
 sources += [qmi_module / 'include/nw_wcn6750_qmi.h', ROOT / 'scripts/build-wcn6750-qmi.py']
 sources += list(remoteproc.glob('*.c')) + list(remoteproc.glob('*.h'))
 (OUT / 'build-report.json').write_text(json.dumps(dict(

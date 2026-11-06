@@ -58,8 +58,21 @@ def main():
     for s, r in failed[:12]:
         print(s.name, 'FAILED:', next((l for l in r.stderr.splitlines() if 'error:' in l), r.stderr[:160]))
     objs = [o for _, o, r in results if not r.returncode]
+    keep = {'_nw_ahb_start', '_nw_ahb_stop', '_nw_ahb_qrtr_input', '_nw_ahb_qrtr_down',
+            '_nw_wifi_start', '_nw_wifi_step', '_nw_wifi_stop', '_nw_wifi_stats', '_nw_wifi_set_events',
+            '_nw_wifi_scan', '_nw_wifi_bss_count', '_nw_wifi_bss_get', '_nw_wifi_connect', '_nw_wifi_disconnect',
+            '_nw_wifi_tx', '_nw_wifi_status_get', '_nw_wifi_where', '_nw_wifi_tx_reasons'}
+    names = set()
+    for o in objs:
+        for line in subprocess.check_output(['llvm-nm', '-g', '--defined-only', str(o)], text=True).splitlines():
+            fields = line.split()
+            if len(fields) == 3 and fields[2] not in keep: names.add(fields[2])
+    mapping = out / 'rename.txt'
+    mapping.write_text(''.join(f'{n} _nwk{n}\n' for n in sorted(names)))
+    for o in objs:
+        subprocess.run(['llvm-objcopy', '--redefine-syms=' + str(mapping), str(o)], check=True)
     report = {'built': len(objs), 'total': len(sources), 'failed': [str(s) for s, _ in failed],
-              'objects': [str(o) for o in objs], 'linked_backend': False, 'hardware_verified': False}
+              'objects': [str(o) for o in objs], 'renamed_globals': len(names), 'linked_backend': False, 'hardware_verified': False}
     (out / 'build-report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(f'ath11k stack: {len(objs)}/{len(sources)} objects')
 if __name__ == '__main__':
