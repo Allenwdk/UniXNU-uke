@@ -511,7 +511,7 @@ board_dir.mkdir(exist_ok=True)
 KITS = ROOT / 'kits/uke'
 board_objects = []
 for stem, extra in [('CpuFreqProbe', ()),
-                    ('WifiProbe', ('-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'))),
+                    ('WifiProbe', ('-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'), '-I', str(ROOT / 'kits/ArmSmmu4K'))),
                     ('TouchProbe', ('-I', str(ROOT / 'drivers/QcomGeniSpi'), '-I', str(ROOT / 'drivers/ShengNovatekTouch'))),
                     ('DpuProbe', ()),
                     ('GpuPowerProbe', tuple(x for d in ('drivers/Adreno740', 'kits/ArmSmmu4K', 'kits/AdrenoFirmware', 'kits/AdrenoPM4', 'kits/Sm7675Platform', 'build/sheng-gmu', 'build/sheng-gpu-smmu') for x in ('-I', str(ROOT / d))))]:

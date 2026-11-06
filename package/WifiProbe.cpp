@@ -12,6 +12,8 @@
 #include <sys/errno.h>
 #include <pexpert/pexpert.h>
 #include "UkeWpssMemory.h"
+#include "ArmSmmu4K.h"
+#include "ArmSmmu4KContext.h"
 #include "SmmuBypass.h"
 extern "C" {
 #include "QcomGlink.h"
@@ -106,16 +108,23 @@ void smmuReport(const char *when) {
     const SmmuGeometry g = smmuGeometry(w);
     printf("UKE WIFI: SMMU %s idr0=%08x idr1=%08x idr2=%08x usable=%u count=%u banks=%u pages=%u\n",
            when, rd(w, kIdr0), rd(w, kIdr1), rd(w, kIdr2), g.usable ? 1 : 0, g.count, g.banks, g.pages);
-    printf("UKE WIFI: SMMU %s global scr0=%08x gfsr=%08x\n", when, rd(w, kScr0), rd(w, kGfsr));
-    unsigned match = 0xffff; uint32_t matchSmr = 0, matchS2cr = 0;
+    printf("UKE WIFI: SMMU %s global scr0=%08x sacr=%08x gfsr=%08x\n", when, rd(w, kScr0), rd(w, 0x10), rd(w, kGfsr));
+    unsigned match = 0xffff, smrs = 0, banks = 0; uint32_t matchSmr = 0, matchS2cr = 0;
     for (unsigned i = 0; i < g.count && g.count <= 128; ++i) {
         const uint32_t smr = rd(w, kSmrBase + 4 * i);
-        if (smmuStreamMatches(smr, kWlanStream)) {
-            match = i; matchSmr = smr; matchS2cr = rd(w, kS2crBase + 4 * i); break;
-        }
+        if (!(smr & 0x80000000U)) continue;
+        const uint32_t s2cr = rd(w, kS2crBase + 4 * i);
+        if (smmuStreamMatches(smr, kWlanStream) && match == 0xffff) {match = i; matchSmr = smr; matchS2cr = s2cr;}
+        if (smrs < 24) {smrs++; printf("UKE WIFI: SMMU %s smr[%u]=%08x s2cr=%08x\n", when, i, smr, s2cr);}
     }
-    printf("UKE WIFI: SMMU %s scr0=%08x gfsr=%08x sid=%x match=%x smr=%08x s2cr=%08x\n",
-           when, rd(w, kScr0), rd(w, kGfsr), kWlanStream, match, matchSmr, matchS2cr);
+    for (unsigned b = 0; b < g.banks && g.banks <= 128 && banks < 24; ++b) {
+        const uint32_t sctlr = rd(w, (g.pages + b) * 4096);
+        const uint32_t cbar = rd(w, 0x1000 + 4 * b), cba2r = rd(w, 0x1800 + 4 * b);
+        if (!sctlr && !cbar && !cba2r) continue;
+        banks++; printf("UKE WIFI: SMMU %s bank[%u] sctlr=%08x cbar=%08x cba2r=%08x\n", when, b, sctlr, cbar, cba2r);
+    }
+    printf("UKE WIFI: SMMU %s scr0=%08x gfsr=%08x sid=%x match=%x smr=%08x s2cr=%08x smrs=%u banks=%u\n",
+           when, rd(w, kScr0), rd(w, kGfsr), kWlanStream, match, matchSmr, matchS2cr, smrs, banks);
     unmap(w);
     printf("UKE WIFI: SMMU %s done\n", when);
 }
@@ -674,6 +683,48 @@ bool startGlink() {
     return true;
 }
 
+// Build the WLAN MSA stage-1 tables and context image in real kernel memory,
+// using the encoders the GPU path already links. Nothing is written to the
+// SMMU: activation needs a free bank and a quiescent moment, both still open.
+void wlanMsaPlan(void) {
+    Window smmu{};
+    if (!mapWindow(smmu, kAppsSmmu, kAppsSmmuSize)) {printf("UKE WIFI: MSA plan smmu map failed\n"); return;}
+    const uint32_t id0 = rd(smmu, kIdr0), id2 = rd(smmu, kIdr2);
+    unmap(smmu);
+    const uint64_t kPoolBytes = 16 * 4096;
+    IOBufferMemoryDescriptor *pool = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+        (IOOptionBits)kIODirectionInOut | (IOOptionBits)kIOMemoryPhysicallyContiguous, kPoolBytes, 0xfffffff000ULL);
+    if (!pool || pool->prepare() != kIOReturnSuccess) {
+        printf("UKE WIFI: MSA plan pool failed\n");
+        if (pool) pool->release();
+        return;
+    }
+    const uint64_t pa = pool->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+    uint64_t *tables = static_cast<uint64_t *>(pool->getBytesNoCopy());
+    ArmSmmu4KConfig cfg{};
+    cfg.input_bits = 36; cfg.output_bits = 36; cfg.table_physical = pa; cfg.leaf_budget = 16 * 512;
+    ArmSmmu4KRange range{};
+    range.iova = 0xa6400000ULL; range.physical = 0xa6400000ULL; range.bytes = 0x00c00000ULL;
+    range.permissions = ArmSmmu4KRead | ArmSmmu4KWrite; range.writeback = 1; range.shareability = 3;
+    ArmSmmu4KResult result{};
+    ArmSmmu4KStatus st = ArmSmmu4KBuild(&cfg, &range, 1, tables, 16, &result);
+    printf("UKE WIFI: MSA plan build=%d pa=%llx root=%llx pages=%zu leaves=%zu level=%u\n", (int)st,
+           (unsigned long long)pa, (unsigned long long)result.root_physical, result.table_pages,
+           result.leaf_pages, result.start_level);
+    if (st == ArmSmmu4KSuccess) {
+        ArmSmmu4KContextConfig cc{};
+        cc.lower = &cfg; cc.lower_tables = &result; cc.id0 = id0; cc.id2 = id2;
+        cc.asid = 1; cc.coherent_walk = 1;
+        ArmSmmu4KContextImage image{};
+        st = ArmSmmu4KEncodeContext(&cc, &image);
+        printf("UKE WIFI: MSA context=%d cbar=%08x cba2r=%08x tcr=%08x tcr2=%08x mair0=%08x mair1=%08x sctlr=%08x ttbr0=%llx\n",
+               (int)st, image.cbar, image.cba2r, image.tcr, image.tcr2, image.mair0, image.mair1,
+               image.sctlr, (unsigned long long)image.ttbr0);
+    }
+    pool->complete();
+    pool->release();
+}
+
 void wpssThread(void *, wait_result_t) {
     thread_set_thread_name(current_thread(), "uke-wifi");
     unsigned mode = 2;
@@ -687,6 +738,7 @@ void wpssThread(void *, wait_result_t) {
     gLayout = qcom_rsc_layout(rd(gRsc, 0));
     stage(StMapped);
     smmuReport("boot");
+    wlanMsaPlan();
     survey();
     stage(StSurveyed);
     if (mode < 2) return;
