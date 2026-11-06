@@ -234,7 +234,8 @@ configuration = ["Kernel arguments offline-legacy-* (register, gop, phase 4), of
   "The default-surface fallback is disabled so only resolved overlay surfaces present.",
   "DPU track: uke-dpu=<1|2> runs the read-only live DPU snapshot (default off); uke-dpu-test=<1..4> runs the bounded controlled-pipe test (default off); uke-dpu-scanout>=1 builds the display bank's stage-1 window in NativeUfs (default off)."]
 procedure = ["Build the legacy display archive and boot with the offline-legacy arguments."]
-findings = ["2026-11-03 ca-surface-track: user explicitly confirms normal upward-swipe entry without the previous freeze; CRC0485290E96ACC9B3/final988d162c/vendor150b5c06. Evidence is user report, not only flash or host checks.",
+findings = [
+  "2026-11-06: build-native-legacy-display-27.py only gained an ArmSmmu4K include path for WifiProbe; display objects and behaviour are unchanged.","2026-11-03 ca-surface-track: user explicitly confirms normal upward-swipe entry without the previous freeze; CRC0485290E96ACC9B3/final988d162c/vendor150b5c06. Evidence is user report, not only flash or host checks.",
   "2026-11-06 WPSS repair adds its mapped-store header to the shared Legacy archive source hashes; display/GPU/touch implementations and their late-probe startup calls remain unchanged.",
   "The present chain resolved the overlay layer and put real UI on screen (white lock screen, home indicator, swipe prompt).",
   "A blank after a few seconds was the blank/idle transaction falling back to the pure-black default surface; v3 presents only resolved overlay surfaces.",
