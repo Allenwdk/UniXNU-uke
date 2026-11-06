@@ -13,6 +13,7 @@
 extern uint64_t uke_wpss_now_ms(void);
 extern void uke_wifi_probe_bar(uint64_t base, uint32_t size);
 extern void uke_wifi_smmu_report(const char *when);
+extern void uke_wpss_crash_report(void);
 extern int uke_wlfw_load_stock_data(unsigned type, uint8_t **data, uint32_t *length);
 extern void uke_wlfw_release_stock_data(uint8_t *data, uint32_t length);
 extern void *uke_wlfw_alloc(size_t bytes, int zero);
@@ -21,6 +22,7 @@ extern void uke_wlfw_free(void *data);
 static QcomQrtr router;
 static UkeWpssChannel *channel;
 static unsigned qmi_rx_logs, board_retries;
+static int liveness;
 volatile uint32_t native_wifi_qrtr_stats[8];
 /* stage, rx, bad, service-count, WLFW-node, WLFW-port, instance, links */
 volatile uint32_t native_wifi_qmi_stats[10];
@@ -204,6 +206,12 @@ static void qmi_receive(void *context, QcomQrtr *q, uint32_t local_port,
         printf("UKE WIFI: QMI accepted message=%x txn=%u\n", qmi_message, qmi_transaction);
         query(qmi_message == kRegister ? kHostCapability : kCapability);
     } else if (qmi_message == kCapability) {
+        if (liveness) {
+            liveness = 0;
+            printf("UKE WIFI: QMI liveness CAP valid=%x chip=%x soc=%x (firmware alive)\n",
+                   native_wifi_identity.valid, native_wifi_identity.chip_id, native_wifi_identity.soc_id);
+            return;
+        }
         native_wifi_qmi_stats[0] = 4;
         printf("UKE WIFI: QMI CAP valid=%x chip=%x family=%x board=%x soc=%x fw=%x\n",
                native_wifi_identity.valid, native_wifi_identity.chip_id, native_wifi_identity.chip_family,
@@ -231,15 +239,20 @@ void uke_wifi_qrtr_tick(void)
     if (qmi_pending && uke_wpss_now_ms() >= qmi_deadline) {
         qmi_pending = 0;
         native_wifi_qmi_stats[3]++;
-        printf("UKE WIFI: QMI timeout message=%x txn=%u\n", qmi_message, qmi_transaction);
+        printf("UKE WIFI: QMI timeout message=%x txn=%u liveness=%d\n", qmi_message, qmi_transaction, liveness);
+        if (liveness && qmi_message == kCapability) {liveness = 0; printf("UKE WIFI: QMI liveness timeout (firmware unresponsive)\n");}
         uke_wifi_smmu_report("timeout");
         if (qmi_message == kBoardData && board_data.data && board_retries < 1) {
             board_retries++;
             printf("UKE WIFI: board data retry type=%u seg=%u txn=%u\n",
                    board_data.type, board_data.segment, qmi_transaction);
         } else {
+            uke_wpss_crash_report();
             release_board_data();
             native_wifi_qmi_stats[0] = (uint32_t)-4;
+            liveness = 1;
+            query(kCapability);
+            printf("UKE WIFI: QMI liveness request message=%x\n", kCapability);
         }
     }
     if (board_data.probes) {

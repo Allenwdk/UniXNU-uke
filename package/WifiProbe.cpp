@@ -152,22 +152,29 @@ const char *smmuRouteWlan(void) {
         if ((smr & 0x80000000U) && ((s2cr >> 16) & 3) == 0) bank = s2cr & 0xff;
     }
     if (bank < g.banks) for (unsigned i = 0; i < g.count; ++i) {
-        const uint32_t smr = rd(w, kSmrBase + 4 * i), s2cr = rd(w, kS2crBase + 4 * i);
-        if (!(smr & 0x80000000U) && s2cr == bank && slot == g.count) slot = i;
+        const uint32_t smr = rd(w, kSmrBase + 4 * i);
+        if (!(smr & 0x80000000U) && slot == g.count) slot = i;
     }
     if (bank >= g.banks) {unmap(w); return "no bypass bank referenced by a live stream";}
     const uint32_t sctlr = rd(w, (g.pages + bank) * 4096), cbar = rd(w, 0x1000 + 4 * bank), cba2r = rd(w, 0x1800 + 4 * bank);
     printf("UKE WIFI: SMMU route bank=%u sctlr=%08x cbar=%08x cba2r=%08x slot=%u\n", bank, sctlr, cbar, cba2r, slot);
     if (sctlr || cbar != 0x10000 || cba2r != 1) {unmap(w); return "live bypass bank readback mismatch";}
-    if (slot == g.count) {unmap(w); return "no clean stream-match group";}
+    if (slot == g.count) {unmap(w); return "no stream-match group";}
     unmap(w);
     IOSleep(2100);
     Window x{};
     if (!mapWindow(x, kAppsSmmu, kAppsSmmuSize)) return "apps SMMU remap failed";
+    const uint32_t oldS2cr = rd(x, kS2crBase + 4 * slot);
     const uint32_t smr = 0x80000000U | kWlanStream;
+    printf("UKE WIFI: SMMU step1 SMR-only sid=%x slot=%u old_s2cr=%08x\n", kWlanStream, slot, oldS2cr);
+    IOSleep(2100);
     wr(x, kSmrBase + 4 * slot, smr);
+    printf("UKE WIFI: SMMU step1 readback smr=%08x s2cr=%08x\n", rd(x, kSmrBase + 4 * slot), rd(x, kS2crBase + 4 * slot));
+    IOSleep(2100);
+    printf("UKE WIFI: SMMU step2 S2CR->bank%u\n", bank);
+    wr(x, kS2crBase + 4 * slot, bank);
     const uint32_t rs = rd(x, kSmrBase + 4 * slot), rc = rd(x, kS2crBase + 4 * slot);
-    printf("UKE WIFI: SMMU route sid=%x slot=%u smr=%08x s2cr=%08x (SMR-only write)\n", kWlanStream, slot, rs, rc);
+    printf("UKE WIFI: SMMU step2 readback smr=%08x s2cr=%08x\n", rs, rc);
     if (rs != smr || rc != bank) {unmap(x); return "stream mapping readback mismatch";}
     unmap(x);
     smmuReport("route");
@@ -778,6 +785,14 @@ void wpssThread(void *, wait_result_t) {
     }
 }
 }  // namespace
+
+extern "C" void uke_wpss_crash_report(void) {
+    uint32_t size = 0;
+    volatile uint32_t *p = reinterpret_cast<volatile uint32_t *>(item(kItemCrash, &size));
+    if (!p) {printf("UKE WIFI: WPSS crash item unavailable\n"); return;}
+    printf("UKE WIFI: WPSS crash item bytes=%u words=%08x %08x %08x %08x %08x %08x\n", size,
+           p[0], p[1], p[2], p[3], p[4], p[5]);
+}
 
 extern "C" void uke_wifi_smmu_report(const char *when) {
     smmuReport(when);
