@@ -237,10 +237,10 @@ void uke_wifi_qrtr_tick(void)
             board_retries++;
             printf("UKE WIFI: board data retry type=%u seg=%u txn=%u\n",
                    board_data.type, board_data.segment, qmi_transaction);
-            return;
+        } else {
+            release_board_data();
+            native_wifi_qmi_stats[0] = (uint32_t)-4;
         }
-        release_board_data();
-        native_wifi_qmi_stats[0] = (uint32_t)-4;
     }
     if (board_data.probes) {
         const unsigned phase = board_data.probes;
