@@ -190,10 +190,28 @@ jobs:
           from pathlib import Path
           from types import SimpleNamespace
           import tomllib
-          from unixnu.ipsw import Ipsw
+          import http.client, time
+          import unixnu.ipsw as ipsw
+          class RetryingRangeFile(ipsw.RangeFile):
+              def _block(self, index):
+                  for attempt in range(8):
+                      try:
+                          data = super()._block(index)
+                          # Keep bounded metadata/read-ahead, not the entire 8 GiB OS.
+                          while len(self.cache) > 8:
+                              self.cache.pop(next(iter(self.cache)))
+                          if index % 32 == 0:
+                              print(f'OS range offset {index * self.block // (1 << 20)} MiB', flush=True)
+                          return data
+                      except (http.client.IncompleteRead, TimeoutError, ConnectionError) as error:
+                          if attempt == 7:
+                              raise
+                          print(f'retry OS range {index}: {type(error).__name__}', flush=True)
+                          time.sleep(min(2 ** attempt, 20))
+          ipsw.RangeFile = RetryingRangeFile
           profile = tomllib.loads(Path('profiles/os/ipados-27.0.1-24A446/profile.toml').read_text())
           ctx = SimpleNamespace(board={'ipsw': profile['ipsw']}, out_root=Path('out'))
-          print(Ipsw(ctx, profile['ipsw']['url']).extract('OS'))
+          print(ipsw.Ipsw(ctx, profile['ipsw']['url']).extract('OS'))
           FETCH
           OS=$(tail -1 /tmp/uke-os-member.txt)
           case "$OS" in
