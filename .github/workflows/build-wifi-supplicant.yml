@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib, json, pathlib, subprocess, urllib.request
+          import hashlib, json, pathlib, subprocess, tarfile, urllib.request
 
           component = pathlib.Path('Ath12kWifi')
           lock = json.loads((component / 'tools/source-lock.json').read_text())
@@ -87,6 +87,16 @@ jobs:
               if hashlib.sha256(partial.read_bytes()).hexdigest() != supplicant['sha256']:
                   raise SystemExit('supplicant archive differs from the lock')
               partial.rename(archive)
+          # --check verifies the extracted release tree, not just the archive.
+          extracted = component / 'deps' / supplicant['directory']
+          if not extracted.exists():
+              with tarfile.open(archive) as package:
+                  for member in package.getmembers():
+                      path = (component / 'deps' / member.name).resolve()
+                      if (not (member.isfile() or member.isdir()) or
+                              extracted.resolve() not in (path, *path.parents)):
+                          raise SystemExit('unexpected archive member: ' + member.name)
+                  package.extractall(component / 'deps')
           PY
           python3 Ath12kWifi/tools/fetch-sources.py --check
 
