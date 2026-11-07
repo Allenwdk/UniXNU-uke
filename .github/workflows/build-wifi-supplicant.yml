@@ -20,6 +20,11 @@ name: build-uke-wifi-supplicant
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "Build supplicant or Apple launchd cache"
+        type: choice
+        options: [supplicant, cache]
+        default: supplicant
       driver_commit:
         description: 'Ath12kWifi commit to build from'
         required: false
@@ -30,6 +35,7 @@ permissions:
 
 jobs:
   supplicant:
+    if: ${{ inputs.mode != 'cache' }}
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -153,3 +159,83 @@ jobs:
             supplicant-report.json
             entitlements.plist
           if-no-files-found: error
+
+  cache:
+    if: ${{ inputs.mode == 'cache' }}
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: UniXNU-uke
+      - uses: actions/checkout@v4
+        with:
+          repository: Allenwdk/UniXNU
+          ref: 5dc00d201496a1e7a72d1f5db23f041eb94ace1c
+          path: UniXNU
+      - uses: actions/checkout@v4
+        with:
+          repository: Allenwdk/UniXNU-sm7675-common
+          ref: feat/ipados27-gpu-parity
+          path: UniXNU-sm7675-common
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch the original 24A446 OS
+        working-directory: UniXNU
+        run: |
+          set -euo pipefail
+          brew install ipsw
+          ./unixnu ipsw fetch OS -D ../UniXNU-uke | tee /tmp/uke-os-member.txt
+          OS=$(tail -1 /tmp/uke-os-member.txt)
+          case "$OS" in
+            *.aea)
+              PLAIN=$(PYTHONPATH=scripts python3 -c 'import pathlib,sys; from unixnu.ipsw import decrypt_aea; print(decrypt_aea(pathlib.Path(sys.argv[1])))' "$OS" | tail -1)
+              rm -f "$OS"
+              OS="$PLAIN"
+              ;;
+          esac
+          test -f "$OS"
+          OS_ABSOLUTE=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$OS")
+          echo "OS_IMAGE=$OS_ABSOLUTE" >> "$GITHUB_ENV"
+      - name: Build and check the cache with Apple tools
+        working-directory: UniXNU
+        run: |
+          set -euo pipefail
+          mkdir -p os-mount wifi-daemons cache-device
+          ln -s "$PWD/../UniXNU-uke/scripts" cache-device/scripts
+          hdiutil attach -readonly -nobrowse -mountpoint "$PWD/os-mount" "$OS_IMAGE"
+          trap 'hdiutil detach "$PWD/os-mount" || true' EXIT
+          python3 - <<'PYCODE'
+          import hashlib, plistlib
+          from pathlib import Path
+          source = Path('os-mount/System/Library/xpc/launchd.plist')
+          expected = '7291b582e38f721c69474e266ee669a7f83cf62fe085b08c76dcc6f5e66a6016'
+          if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+              raise SystemExit('original 24A446 launchd cache identity mismatch')
+          job = {'Label': 'org.unixnu.wifi.supplicant', 'ProgramArguments': [
+              '/usr/libexec/unixnu-wpa_supplicant', '-Dsheng', '-ien0',
+              '-c/private/var/ngpu/etc/wifi/wpa_supplicant.conf', '-q'],
+              'RunAtLoad': True, 'KeepAlive': True, 'ThrottleInterval': 3,
+              'UserName': 'root', 'Umask': 0o77, 'ProcessType': 'Interactive',
+              'StandardOutPath': '/var/log/unixnu-wifi.log',
+              'StandardErrorPath': '/var/log/unixnu-wifi.log'}
+          Path('wifi-daemons/org.unixnu.wifi.supplicant.plist').write_bytes(plistlib.dumps(job))
+          Path('cache-device/board.toml').write_text(
+              '[payload.runtime.launchd_job_environment."com.apple.iconservices.iconservicesagent"]\n'
+              'FORCE_SOFTWARE_RENDERER = "0"\nCI_ENABLE_METAL_GPU = "0"\n')
+          PYCODE
+          python3 ../UniXNU-uke/scripts/build-wifi-launchd-cache-macos.py \
+            --core . --device cache-device \
+            --source os-mount/System/Library/xpc/launchd.plist \
+            --signature os-mount/System/Library/xpc/launchd.plist.sig \
+            --daemons wifi-daemons --output wifi-cache
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uke-wifi-apple-cache
+          path: |
+            UniXNU/wifi-cache/launchd.plist
+            UniXNU/wifi-cache/launchd.plist.sig
+            UniXNU/wifi-cache/cache-report.json
+          if-no-files-found: error
+          retention-days: 14
