@@ -186,7 +186,15 @@ jobs:
         run: |
           set -euo pipefail
           brew install ipsw
-          ./unixnu ipsw fetch OS -D ../UniXNU-uke | tee /tmp/uke-os-member.txt
+          PYTHONPATH=scripts python3 - <<'FETCH' | tee /tmp/uke-os-member.txt
+          from pathlib import Path
+          from types import SimpleNamespace
+          import tomllib
+          from unixnu.ipsw import Ipsw
+          profile = tomllib.loads(Path('profiles/os/ipados-27.0.1-24A446/profile.toml').read_text())
+          ctx = SimpleNamespace(board={'ipsw': profile['ipsw']}, out_root=Path('out'))
+          print(Ipsw(ctx, profile['ipsw']['url']).extract('OS'))
+          FETCH
           OS=$(tail -1 /tmp/uke-os-member.txt)
           case "$OS" in
             *.aea)
