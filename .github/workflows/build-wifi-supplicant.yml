@@ -45,8 +45,48 @@ jobs:
           ref: ${{ inputs.driver_commit }}
           path: Ath12kWifi
 
-      - name: Resolve the locked sources
-        run: python3 Ath12kWifi/tools/fetch-sources.py
+      # fetch-sources.py's non-check path adds the locked paths with
+      # `git sparse-checkout add`, which a fresh clone's cone mode rejects
+      # ("specify directories rather than patterns"). Materialise the two locked
+      # checkouts in non-cone mode here from tools/source-lock.json, download the
+      # locked supplicant archive, then let the module's own --check verify it.
+      - name: Materialise the locked sources
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess, urllib.request
+
+          component = pathlib.Path('Ath12kWifi')
+          lock = json.loads((component / 'tools/source-lock.json').read_text())
+          for name in ('linux', 'freebsd'):
+              source = lock[name]
+              directory = component / 'deps' / name
+              if not directory.exists():
+                  subprocess.run(['git', 'clone', '--filter=blob:none', '--no-checkout',
+                                  source['url'], str(directory)], check=True)
+              subprocess.run(['git', '-C', str(directory), 'sparse-checkout', 'init', '--no-cone'], check=True)
+              subprocess.run(['git', '-C', str(directory), 'checkout', '--detach', source['commit']], check=True)
+              subprocess.run(['git', '-C', str(directory), 'sparse-checkout', 'set', '--no-cone', '--stdin'],
+                             input='\n'.join(source['paths']) + '\n', text=True, check=True)
+              head = subprocess.check_output(['git', '-C', str(directory), 'rev-parse', 'HEAD'], text=True).strip()
+              if head != source['commit']:
+                  raise SystemExit(f'{name}: expected {source["commit"]}, found {head}')
+
+          supplicant = lock['supplicant']
+          archive = component / 'deps' / supplicant['archive']
+          if not archive.exists():
+              partial = archive.with_suffix('.part')
+              with urllib.request.urlopen(supplicant['url'], timeout=60) as response, partial.open('wb') as output:
+                  while True:
+                      chunk = response.read(1024 * 1024)
+                      if not chunk:
+                          break
+                      output.write(chunk)
+              if hashlib.sha256(partial.read_bytes()).hexdigest() != supplicant['sha256']:
+                  raise SystemExit('supplicant archive differs from the lock')
+              partial.rename(archive)
+          PY
+          python3 Ath12kWifi/tools/fetch-sources.py --check
 
       - name: Report the runner toolchain
         run: |
