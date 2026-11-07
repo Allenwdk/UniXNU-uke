@@ -62,8 +62,10 @@ jobs:
               source = lock[name]
               directory = component / 'deps' / name
               if not directory.exists():
-                  subprocess.run(['git', 'clone', '--filter=blob:none', '--no-checkout',
-                                  source['url'], str(directory)], check=True)
+                  # Shallow like the module's own fetch: the server ignores blob
+                  # filters, and the supplicant build only needs the locked tree.
+                  subprocess.run(['git', 'clone', '--depth', '1', '--branch', source['ref'],
+                                  '--no-checkout', source['url'], str(directory)], check=True)
               subprocess.run(['git', '-C', str(directory), 'sparse-checkout', 'init', '--no-cone'], check=True)
               subprocess.run(['git', '-C', str(directory), 'checkout', '--detach', source['commit']], check=True)
               subprocess.run(['git', '-C', str(directory), 'sparse-checkout', 'set', '--no-cone', '--stdin'],
