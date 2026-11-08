@@ -1,5 +1,41 @@
 # WCN6750 Wi-Fi development
 
+## 2026-11-08 当前验收结论（覆盖下方旧候选阶段）
+
+V4.9.7 **680B9BF31C100A14**，vendor_boot SHA `5ac7fbff02795a8049502237f9e5ecfc6cbb362ec9d467dfd0ac667019a53ce1`，已刷已回读并通过本轮基础功能：设置Wi-Fi行、开放/输入密码RSN-CCMP网络、DHCP、应用/Safari流量。用户确认“设置出现wifi行，连接也没啥问题，第二个加入的是输入密码的网络”。原MG wi-fi valid1/true，Bluetooth false不伪造。
+
+网关ARP阶段36.683ms（前版60.339s），DHCP ACK→发布1.699810s；第二地址192.168.1.51，密钥/授权/DHCP闭环。192344新环932条无重复seq、raw SHA6cf2915d…；同boot一次GPU自动恢复status0/dead0独立待归因。TLS日期复测、错密码/关开/冷启动/唤醒/长期压力、原UI停住根因另保留。
+
+设备因取证当前原厂boot/vendor_boot A+B+A槽+TWRP，未恢复移植镜像，未写userdata。后续baseline为192344-wifi-v49-7-readback.bin。根docs入口：[总结](../../docs/status/wifi-wcn6750-summary-2026-11-08.md)、[本次回读](../../docs/status/wifi-v49-7-readback-2026-11-08.md)、[当前交接](../../docs/status/wifi-wcn6750-handoff-2026-11-08.md)。本轮仅日志和总结，无新实现或候选、未提交推送。
+
+## 下方为逐版历史记录
+
+
+2026-11-08 **V4.9.7修复候选已就绪未刷，CRC 680B9BF31C100A14**。仅补WifiNet原KPI的BPF RX/TX包tap，以及当前format2 board.toml的/chosen/mac-address-wifi0（匹配配置en0的020000756750）；不改原MG/Preferences布尔或显示逻辑。正式kernel/payload、原函数包边界ASan/UBSan、最终ADT与编译BPF调用、45SHA/13区通过。原AMFI/trust/签名/PAC/两卷认证与SystemOS修复、用户态/GPU addon/Data seed、999B诊断参数保持。设置行和延迟改善待真机；HTTPS日期复测/蓝牙不在本版范围。见 [V4.9.7](wifi-v49-7-bpf-capability-2026-11-08.md)。
+
+2026-11-08 **V4.9.6用户确认应用与Safari能联网，仍约一分钟后才就绪，设置缺Wi-Fi。** 184318新环1000条，无重复seq；WebKit三类原AMFI均通过、同boot流量稳定。用户补充未校准日期、HTTPS本轮先不修；另缺蓝牙但蓝牙尚未bring-up，不伪造能力。原MG快照wi-fi valid1/false；configd网关BPF阶段60.339秒且无线已收到reply，源码缺BPF包tap。原卡死本轮未报告，不能宣布根因已修。设备原厂四分区/A槽/TWRP，未写userdata。见 [V4.9.6回读](wifi-v49-6-readback-2026-11-08.md)。
+
+
+2026-11-08 **V4.9.6诊断候选已就绪未刷**：仅payload参数换成sheng-diag=1 + sheng-gpu-trace=1（移除mode4/log-wifi），999 B；原内核逐字节与V4.9.5相同，CRC仍 **ADDDAFDE557D876C**，必须用vendor_boot **f390cfb04fba98c63fb8b72dd70af6edcd7f030969d07c2de3d9f3791250b6c6**区分。正式payload、35SHA/13区通过，无运行源码改动。启用已有线程/IPC/GPU环，现成较晚导出阈值240 worker秒；新测试若画面停住，至少再等2分钟进fastboot。设备原厂四分区/A槽/TWRP，未写userdata。baseline181901 V4.9.5；本版不是功能修复。见 [V4.9.6](wifi-v49-6-ui-freeze-trace-2026-11-08.md)。
+
+2026-11-08 **V4.9.5回读：打开Safari后全画面停住，触控/回桌面均无反应（用户确认）。** 495条新记录、无重复seq；ROOTFS v495 status0，首个WebContent原AMFI error0，局部启动阻塞已修；239.999232秒最后落盘合成命令完成，此后无新帧，内核/触摸仍记录到约298秒，无panic/GPU recovery。自动快照200.756845秒早于Safari232.908362秒，未覆盖现场；相关IPS与上轮完整快照实际新增0。根因仍未知，不改JIT/AMFI/资源限额。原V4.9.5已DO_NOT_FLASH。见 [V4.9.5回读](wifi-v49-5-readback-2026-11-08.md)。
+
+
+2026-11-08 **V4.9.5已正式构建留档未刷：CRC ADDDAFDE557D876C**。V4.9.4已证外部TCP双向，但WebKit实际SystemOS APFS根挂载缺MNT_ROOTFS、原AMFI c1拒绝；本版仅在原两卷认证/boot manifest、精确UUID/device、只读APFS、真实rootvnode与union拓扑均成立后补该实际根位。原AMFI/trust/签名/PAC和卷认证返回保持，Data/bindfs不获身份。正式kernel/payload、13区、38SHA、生产helper正例+21负例ASan/UBSan通过。Safari/设置收益未验；设备原厂四分区/A槽/TWRP，未写userdata。见 [V4.9.5](wifi-v49-5-systemos-rootfs-2026-11-08.md)。
+
+
+2026-11-08 **V4.9.4 已就绪未刷：CRC 0D545D3AB293579C**。按用户指定核对，原构建确实缺上游ee54dcd；已原样补入root union statfs64 fsid修复，并扩展WebKit/Safari/Preferences/IconServices启动事实取证。该上游修复针对BaseBoard系统分区判断/通知，不直接改变AMFI c1的内核卷条件。正式kernel/payload、13区、39项SHA通过；Wi-Fi/GPU native源码、用户态/trust/Data seed与V4.9.3一致，内核mount flags和原AMFI返回保持。实际fsid分支已见于编译代码。外网/设置收益待真机；设备原厂四分区/A槽/TWRP，未写userdata。见 [V4.9.4](wifi-v49-4-launch-trace-2026-11-08.md)。
+
+
+2026-11-08 V4.9.3实机开放网络关联、DHCP与网关ARP成立；外网/WPA2/设置未验收。WebKit c1拒绝及Settings归属更正见根docs/status/wifi-v49-3-readback-2026-11-08.md；本轮扩展launch facts观察实际卷身份。
+
+
+2026-11-08T16:26:27.150367+08:00：V4.9.3 CRC653F7447CAFF934D 已按当次“刷吧”授权部署；40项SHA/CRC通过，boot_a/vendor_boot_a/boot_b/vendor_boot_b Sending与Writing全OKAY，set_active a/current-slot a/reboot均成功，未写userdata。设备已执行重启，屏幕启动、稳定INFO、关联/DHCP/双向流量及设置Wi-Fi行待用户测试。证据 uke-port/releases/2026-11-08-wifi-v49-3-worker-poll/flash-result-20261108-162617.json。
+
+
+2026-11-08 **V4.9.3 修复候选已正式构建留档、未刷**：按 sheng 补齐板级 `pollGl → nw_wifi_poll`，使嵌套固件等待也能排入 control/data work；补 sheng 式 debug 过滤/去重并保留控制链取证。一次聚焦 ASan/UBSan 夹具对照：缺 poll 时请求超过 3000 ms 未分发，修正后模拟 INFO 95 ms 回复，持锁门禁/MSI/GLINK/重复 error 均保持。CRC **653F7447CAFF934D**，vendor_boot `60d6815c11269593…`，kernel-final `f61a2beafa304db0…`；正式 kernel/payload、13 区、一次 UEFI 压缩往返通过。联网与设置入口仍未验收；设备最后已知原厂四分区/A 槽/TWRP，本轮未操作设备。下一步按当次授权部署后先验稳定 INFO，再开放 AP join/DHCP/双向流量。见 [V4.9.3](../../docs/status/wifi-v49-3-worker-poll-2026-11-08.md)。
+
+
 ## B883 MMIO readback and stock board-data transport
 
 B883 returned 0x170acce5 from both REO1_MISC and CE0_DST_CTRL.
@@ -158,3 +194,15 @@ negotiation, IPCRTR link, then a WLFW service announcement. A formal build
 does not establish those results. The ath11k hardware backend, DMA/MSI,
 scan/association, WifiNet, supplicant and DHCP are not yet integrated. No
 network interface is published by this first control-transport candidate.
+
+
+## 2026-11-08 V4.6 readback and V4.7 owner launch role
+
+V4.6 firmware/scan/en0/wifid run, but AMFI c8 still blocks the native supplicant. Seventy unique PIDs were denied, zero real control clients attached and two open joins timed out after30s. Preferences has a crash record; lack of framework logs does not prove its Wi-Fi extension was never loaded. Device remains stock boot/vendor_boot A+B, slot A, TWRP; no userdata write.
+
+Pinned24A446 binary analysis identifies the system-service fallback as built-in category6 with constraint identifier8. V2 trust capability is7 (bit2 set even for category0). Category5 is accepted by the original service manager and requires platform validation plus the original init/mbfloagent parent policy. V4.7 changes only the owner supplicant entry metadata02000000->02000500, keeping v2, the cache entry0 and all four prior modules unchanged. Hardware result pending. Canonical workspace report: ../../docs/status/wifi-amfi-launch-role-2026-11-08.md; evidence: ../../uke-port/fixes/2026-11-08-wifi-amfi-policy-proof/launch-role-proof.json.
+
+
+## 2026-11-08 handoff refresh after V4.8 deployment
+
+Canonical current handoff: ../../docs/status/wifi-wcn6750-handoff-2026-11-08.md. V4.8 CRC977C5379420FA182 was flashed to all four boot/vendor_boot slots, selectedA and rebooted at06:51:46+08:00; no post-reboot user observation/readback yet. V4.7 passed AMFI category5 but has85 control sessions and81 persisted INFO timeouts. Current next action is V4.8 RX/worker/TX evidence against the V4.7 063724 ring, not restarting P0/P1 or treating the old TWRP capture state as current. No device action occurred during this documentation update.

@@ -12,6 +12,7 @@
 #include <sys/errno.h>
 #include <pexpert/pexpert.h>
 #include "UkeWpssMemory.h"
+#include "BootResetCore.h"
 #include "ArmSmmu4K.h"
 #include "ArmSmmu4KContext.h"
 #include "SmmuBypass.h"
@@ -27,6 +28,19 @@ extern "C" {
 int sheng_fw_open(const char *path, void **handle, uint64_t *size);
 void uke_wifi_qrtr_start(void);
 void uke_wifi_qrtr_tick(void);
+void nw_ahb_qrtr_input(const void *data, size_t length);
+void nw_ahb_qrtr_up(void);
+void nw_ahb_qrtr_down(void);
+int uke_wifi_ath11k_start(void);
+int lx_pump(void);
+void uke_wifi_msi_stats(unsigned *counts, unsigned *vectors);
+void uke_wifi_station_step(void);
+void uke_wifi_scan_selftest(void);
+struct net_device *nw_cfg80211_primary(void);
+/* Only the fields the progress line reports; the layout follows nw_abi.h. */
+struct nw_wifi_stats { uint32_t stage, scans, frames, beacons, bss_seen; int last_err; };
+extern struct nw_wifi_stats nw_wifi_stats;
+void *gAhbGlChannel;
 uint32_t uke_wifi_qrtr_wait_ms(void);
 int sheng_fw_read(void *handle, uint64_t offset, void *to, size_t length);
 void sheng_fw_close(void *handle);
@@ -43,7 +57,7 @@ extern "C" {volatile int32_t native_wifi_wpss_stats[16]; char native_wifi_wpss_t
 namespace {
 enum Stage {
     StMapped = 1, StSurveyed = 2, StFirmware = 3, StSmp2p = 4, StDoorbells = 5, StLoadState = 6, StRails = 7, StDtb = 8, StLoaded = 9,
-    StStarted = 10, StReady = 11, StGlink = 12, StChannel = 13,
+    StStarted = 10, StReady = 11, StGlink = 12, StChannel = 13, StSleepClock = 15,
 };
 constexpr uint64_t kSmem = 0x81d00000, kSmemSize = 0x200000, kMutex = 0x1f40000 + 3 * 0x1000, kIpcc = 0x406000, kAoss = 0xc300000;
 constexpr uint64_t kRscDrv = 0x17a20000, kRscTcs = 0xd00, kCmdDb = 0x81c60000, kCmdDbSize = 0x20000;
@@ -66,6 +80,75 @@ bool mapWindow(Window &w, uint64_t base, uint64_t size, IOOptionBits cache = kIO
 void unmap(Window &w) {if (w.map) w.map->release(); w = {};}
 uint32_t rd(const Window &w, uint64_t at) {return *reinterpret_cast<volatile uint32_t *>(w.va + at);}
 void wr(const Window &w, uint64_t at, uint32_t value) {*reinterpret_cast<volatile uint32_t *>(w.va + at) = value; __asm__ volatile("dsb sy" ::: "memory");}
+// sheng's PMK8550 sleep-clock setup, with uke DT inputs verified separately:
+// spmi_bus EE 0, SID 0, GPIO base 0xb800, gpio3/func1, output, no bias, VIN0.
+struct SleepClockSpmi {
+    Window core{}, cnfg{}, obs{}, chn{};
+    ~SleepClockSpmi() {unmap(chn); unmap(obs); unmap(cnfg); unmap(core);}
+};
+
+int sleepClockRead(volatile uint32_t *observer, const br_arbiter &arb, int apid, uint8_t *values) {
+    static const uint8_t regs[] = {0x04, 0x05, 0x40, 0x41, 0x42, 0x44, 0x46};
+    for (unsigned i = 0; i < sizeof regs; ++i) {
+        if (br_read8(observer, &arb, apid, regs[i], &values[i])) return -EIO;
+    }
+    return 0;
+}
+
+bool sleepClockConfigured(const uint8_t *values) {
+    return (values[2] & 3u) == 1u && (values[3] & 7u) == 0u &&
+           (values[4] & 7u) == 5u && values[5] == 2u && (values[6] & 0x80u);
+}
+
+int prepareSleepClock() {
+    constexpr uint32_t kSleepClockPpid = 0x0ba;
+    SleepClockSpmi p;
+    if (!mapWindow(p.core, 0xc400000, 0x3000) ||
+        !mapWindow(p.cnfg, 0xc42d000, 0x4000)) return -ENOMEM;
+    br_arbiter arb{reinterpret_cast<volatile uint32_t *>(p.core.va),
+                   reinterpret_cast<volatile uint32_t *>(p.cnfg.va), 0};
+    const uint32_t version = arb.core[0];
+    const uint32_t apids = arb.core[BR_FEATURES / 4] & BR_FEATURES_APIDS_MASK;
+    printf("UKE WIFI: sleepclk arb=%08x apids=%u ppid=%03x\n", version, apids, kSleepClockPpid);
+    if (version < BR_VERSION_V7_MIN || version >= BR_VERSION_V8_MIN || !apids || apids > 1024)
+        return -ENOTSUP;
+    int apid = -1, owner = -1;
+    for (uint32_t i = 0; i < apids; ++i) {
+        const uint32_t map = arb.core[(BR_APID_MAP + 4 * i) / 4];
+        if (!map || ((map >> 8) & 0xfff) != kSleepClockPpid) continue;
+        const int candidateOwner = arb.cnfg[(BR_CNFG_OWNER + 4 * i) / 4] & 7u;
+        if (apid < 0 || candidateOwner == arb.ee) {
+            apid = i;
+            owner = candidateOwner;
+        }
+    }
+    if (apid < 0) return -ENOENT;
+    if (!mapWindow(p.obs, 0xc440000, (BR_OBS_APID_STRIDE * apids + 0xfffu) & ~0xfffULL) ||
+        !mapWindow(p.chn, 0xc500000, uint64_t(BR_CHNL_APID_STRIDE) * apids)) return -ENOMEM;
+    auto *observer = reinterpret_cast<volatile uint32_t *>(p.obs.va);
+    auto *channels = reinterpret_cast<volatile uint32_t *>(p.chn.va);
+    uint8_t before[7] = {};
+    if (sleepClockRead(observer, arb, apid, before)) return -EIO;
+    printf("UKE WIFI: sleepclk before apid=%d owner=%d type=%02x subtype=%02x mode=%02x vin=%02x pull=%02x source=%02x enable=%02x\n",
+           apid, owner, before[0], before[1], before[2], before[3], before[4], before[5], before[6]);
+    if (before[0] != 0x10 || before[1] < 0x10 || before[1] > 0x13) return -ENOTSUP;
+    if (sleepClockConfigured(before)) {
+        printf("UKE WIFI: sleepclk gpio3 already configured\n");
+        return 0;
+    }
+    if (owner != arb.ee) return -EPERM;
+    // Same order as sheng pmicPrepare: pull, VIN, function, direction, enable.
+    static const uint8_t config[][2] = {{0x42, 5}, {0x41, 0}, {0x44, 2}, {0x40, 1}, {0x46, 0x80}};
+    for (const auto &reg : config) {
+        if (br_write8(channels, apid, reg[0], reg[1])) return -EIO;
+    }
+    uint8_t after[7] = {};
+    if (sleepClockRead(observer, arb, apid, after)) return -EIO;
+    printf("UKE WIFI: sleepclk after mode=%02x vin=%02x pull=%02x source=%02x enable=%02x\n",
+           after[2], after[3], after[4], after[5], after[6]);
+    return sleepClockConfigured(after) ? 0 : -EIO;
+}
+
 void fail(int step, int error) {native_wifi_wpss_stats[1] = error; native_wifi_wpss_stats[0] = -step; printf("UKE WIFI: fail stage=%d error=%d scm=%d/%d\n", step, error, native_wifi_wpss_stats[13], native_wifi_wpss_stats[14]);}
 void stage(int value) {native_wifi_wpss_stats[0] = value; printf("UKE WIFI: stage=%d slave=%x items=%x\n", value, (unsigned)native_wifi_wpss_stats[3], (unsigned)native_wifi_wpss_stats[4]);}
 void note(const char *prefix, const char *text) {
@@ -640,7 +723,10 @@ int openFirmware(Image &image) {
 bool start() {
     Image &image = gWpssImage;
     if (native_wifi_wpss_stats[3] > 0) {fail(StFirmware, -114); return false;}
-    int rc = openFirmware(image);
+    int rc = prepareSleepClock();
+    if (rc) {fail(StSleepClock, rc); return false;}
+    stage(StSleepClock);
+    rc = openFirmware(image);
     if (rc) {fail(StFirmware, rc); return false;}
     native_wifi_wpss_stats[7] = (int32_t)(image.size >> 10);
     // Validate every segment before metadata authentication or any carveout write.
@@ -765,9 +851,83 @@ void wlanMsaPlan(void) {
     pool->release();
 }
 
+extern "C" uint64_t uke_wpss_now_ms(void);
+// Intent accounting while the board driver uploads: a stalled upload shows
+// all remote intents busy, or none valid with intent_asked still set.
+extern "C" int native_ufs_extra_fault(uint32_t *out) __attribute__((weak_import));
+void debugStats() {
+    static uint64_t last;
+    const uint64_t now = uke_wpss_now_ms();
+    if (now - last < 5000) return;
+    last = now;
+    unsigned valid = 0, busy = 0, up = 0, asked = 0;
+    uint32_t queued = 0;
+    for (unsigned i = 0; i < gClientCount; ++i) {
+        UkeWpssChannel &c = gClients[i];
+        queued += c.count;
+        if (!c.glink) continue;
+        up += c.glink->up;
+        asked = c.glink->intent_asked;
+        for (unsigned k = 0; k < QCOM_GLINK_MAX_REMOTE_INTENTS; ++k)
+            if (c.glink->remote[k].valid) {++valid; if (c.glink->remote[k].busy) ++busy;}
+    }
+    printf("UKE WIFI AHB: glink tx=%u rx=%u q=%u clients=%u up=%u rvalid=%u rbusy=%u asked=%u\n",
+           gGlink.tx_messages, gGlink.rx_messages, queued, gClientCount, up, valid, busy, asked);
+    // Vectors the endpoint actually raised. The firmware writes 0x320 + ce_id
+    // (the AHB hybrid hif ops install no compacting get_ce_msi_idx), while the
+    // host registers handlers at compacted CE indices. For CE0..CE3 those two
+    // agree, which is exactly the set the HTC/HTT/WMI bring-up needs; a vector
+    // whose count stays zero is a ring the driver is still waiting on.
+    unsigned counts[32] = {}, mask = 0;
+    uke_wifi_msi_stats(counts, &mask);
+    printf("UKE WIFI AHB: msi mask=%08x ce0-8=%u %u %u %u %u %u %u %u %u\n", mask,
+           counts[0], counts[1], counts[2], counts[3], counts[4], counts[5], counts[6], counts[7], counts[8]);
+    // The default interface appears only once cfg80211 finishes registering the
+    // radio, which happens on the QMI worker after this loop is running; report
+    // it here rather than at start time.
+    printf("UKE WIFI AHB: station primary %s stage %u scans %u frames %u bss %u\n",
+           nw_cfg80211_primary() ? "present" : "absent", nw_wifi_stats.stage,
+           nw_wifi_stats.scans, nw_wifi_stats.frames, nw_wifi_stats.bss_seen);
+    static uint32_t lastFault[10];
+    uint32_t fault[10] = {};
+    if (&native_ufs_extra_fault != nullptr && native_ufs_extra_fault(fault) &&
+        memcmp(fault, lastFault, sizeof fault) != 0) {
+        memcpy(lastFault, fault, sizeof fault);
+        printf("UKE WIFI AHB: smmu gfsr=%08x gsynr0=%08x cbfsr=%08x far=%08x%08x fsynr0=%08x sctlr=%08x tcr=%08x ttbr0=%08x cbar=%08x\n",
+               fault[0], fault[1], fault[2], fault[4], fault[3], fault[5], fault[6], fault[7], fault[8], fault[9]);
+    }
+}
+
+extern "C" volatile uint64_t nw_wifi_where[4];
+// Independent witness: reports where the LX dispatcher last was and for how
+// long, so a wedged work item is visible even when the worker cannot print.
+void ahbWatchdog(void *, wait_result_t) {
+    thread_set_thread_name(current_thread(), "uke-wifi-wd");
+    for (unsigned i = 0; i < 10; ++i) {
+        IOSleep(2000);
+        const uint64_t now = uke_wpss_now_ms();
+        const uint64_t since = nw_wifi_where[3];
+        printf("UKE WIFI WD: t=%llu stage=%d kind=%llu fn=%llx depth=%llu stuck=%llums tx=%u rx=%u\n",
+               now, native_wifi_wpss_stats[0], nw_wifi_where[0], nw_wifi_where[1], nw_wifi_where[2],
+               since ? now - since : 0, gGlink.tx_messages, gGlink.rx_messages);
+    }
+}
+
+extern "C" void lx_irq_polling(int enabled);
+// The endpoint's MSI address is a page in the DMA window (see dma_map_resource):
+// each interrupt is a 32-bit data write into it. The vector is decoded and the
+// matching LX handler raised by the platform poll callback (WifiAth11k.cpp,
+// pollGl -> msiPoll), which is the one the dispatcher runs at the top of every
+// lx_pump() -- including the pumps nested inside ath11k's synchronous waits. The
+// board must not also read the page here: whichever reader runs first consumes
+// the single latched word.
+
+void ahbReceive(void *, const uint8_t *data, uint32_t length) {nw_ahb_qrtr_input(data, length);}
+void ahbState(void *, int up) {if (up) nw_ahb_qrtr_up(); else nw_ahb_qrtr_down();}
+
 void wpssThread(void *, wait_result_t) {
     thread_set_thread_name(current_thread(), "uke-wifi");
-    unsigned mode = 2;
+    unsigned mode = 3;
     PE_parse_boot_argn("uke-wifi", &mode, sizeof mode);
     if (!mapWindow(gSmemW, kSmem, kSmemSize) || !mapWindow(gMutex, kMutex, 0x1000) || !mapWindow(gIpcc, kIpcc, 0x1000) ||
         !mapWindow(gAoss, kAoss, 0x1000) || !mapWindow(gRsc, kRscDrv, 0x10000)) {
@@ -782,6 +942,26 @@ void wpssThread(void *, wait_result_t) {
     survey();
     stage(StSurveyed);
     if (mode < 2) return;
+    if (mode == 3) {
+        if (!start() || !startGlink()) return;
+        static const UkeWpssClient ahbClient = {ahbState, ahbReceive};
+        gAhbGlChannel = uke_wpss_channel("IPCRTR", 0x4400, 10, 0, &ahbClient, nullptr);
+        if (!gAhbGlChannel) {fail(StChannel, -7); return;}
+        lx_irq_polling(0);
+        if (uke_wifi_ath11k_start()) {fail(StChannel, -8); return;}
+        thread_t watchdog = nullptr;
+        if (kernel_thread_start(ahbWatchdog, nullptr, &watchdog) == KERN_SUCCESS) thread_deallocate(watchdog);
+        stage(14);
+        // uke_wifi_station_step() runs the module's own lifecycle, which owns
+        // lx_pump (control poll, dispatcher, station run); the board does not
+        // pump a second time per iteration. service(waitEvents(10)) must run
+        // every round: it consumes kEvSend (the control worker's wake-up) and
+        // drives applyClients()/serviceGlink(). V4.9 briefly skipped service()
+        // whenever nw_wifi_step() reported busy; that regressed the control TX
+        // path (zero controlSend calls, all INFO sessions timing out) and let
+        // WMI dev_close/dev_open flood the HTC credit=1 channel. Reverted.
+        for (;;) {uke_wifi_station_step(); uke_wifi_scan_selftest(); debugStats(); service(waitEvents(10));}
+    }
     const char *smmuError = smmuRouteWlan();
     if (smmuError) printf("UKE WIFI: SMMU route failed: %s\n", smmuError);
     if (!start() || !startGlink()) return;
@@ -795,6 +975,15 @@ void wpssThread(void *, wait_result_t) {
     }
 }
 }  // namespace
+
+// The ath11k QMI client waits synchronously for replies. Its waits run the
+// LX dispatcher, whose board poll calls this to move GLINK frames, so a reply
+// can be delivered while a request is outstanding.
+extern "C" void uke_wpss_glink_poll(void) {
+    if (!gGlinkStarted) return;
+    applyClients();
+    serviceGlink();
+}
 
 extern "C" void uke_wifi_msa_report(void) {
     Window w{};
@@ -828,6 +1017,10 @@ extern "C" void uke_wpss_crash_report(void) {
     if (!p) {printf("UKE WIFI: WPSS crash item unavailable\n"); return;}
     printf("UKE WIFI: WPSS crash item bytes=%u words=%08x %08x %08x %08x %08x %08x\n", size,
            p[0], p[1], p[2], p[3], p[4], p[5]);
+}
+
+extern "C" void uke_wifi_ahb_wake(void) {
+    wake(kEvSend);
 }
 
 extern "C" void uke_wifi_smmu_report(const char *when) {
@@ -899,11 +1092,11 @@ extern "C" int uke_wpss_send(UkeWpssChannel *c, const void *data, uint32_t lengt
 }
 
 extern "C" void uke_wpss_probe(void) {
-    unsigned mode = 2;
+    unsigned mode = 3;
     PE_parse_boot_argn("uke-wifi", &mode, sizeof mode);
-    if (!mode || mode > 2 || native_wifi_wpss_stats[0]) return;
+    if (!mode || mode > 3 || native_wifi_wpss_stats[0]) return;
     gClientLock = IOLockAlloc();
-    if (gClientLock && mode >= 2) uke_wifi_qrtr_start();  // the router link registers before the DSP can open it
+    if (gClientLock && mode == 2) uke_wifi_qrtr_start();  // the router link registers before the DSP can open it
     thread_t thread = nullptr;
     if (!gClientLock || kernel_thread_start(wpssThread, nullptr, &thread) != KERN_SUCCESS) {fail(StMapped, -7); return;}
     thread_deallocate(thread);

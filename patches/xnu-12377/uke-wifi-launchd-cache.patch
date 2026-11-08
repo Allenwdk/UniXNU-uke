@@ -1,0 +1,29 @@
+From: Uke integration <uke@local>
+Subject: [PATCH] Publish the native supplicant at /usr/libexec through the owner overlay
+
+Adapted from UniXNU-sheng main's sheng-wifi-launchd-cache.patch. xpcproxy only
+launches a job whose program lives on a system path, so the addon's wifi-bin
+directory is union-mounted over /usr/libexec (the OS's launchd_cache_loader must
+stay visible). The job itself is added to the icon-service launchd cache
+(uke-icon-services-cache.patch), which keeps every stock job, so no second mount
+of /System/Library/xpc is needed.
+
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8705,6 +8705,16 @@
+ 	    icon_xpc_point, sizeof(icon_xpc_point), "/System/Library/xpc/foreground_user_endpoints.plist",
+ 	    "/System/Library/xpc/launchd.plist", &icon_cache_stage, &icon_cache_status);
+ 	printf("UKE ICON CACHE: stage=%d status=%d\n", icon_cache_stage, icon_cache_status);
++	/* xpcproxy only launches a job whose program lives on a system path, so the
++	 * addon's wifi-bin directory is union-mounted over /usr/libexec; the job itself
++	 * rides the icon-service cache, which keeps every stock job. */
++	static const char wifi_bin_source[] = "/private/var/ngpu/wifi-bin";
++	static const char wifi_bin_point[] = "/usr/libexec";
++	static volatile int wifi_bin_stage, wifi_bin_status;
++	native_gpu_addon_mount(p, scratch, 0xc00, wifi_bin_source, sizeof(wifi_bin_source),
++	    wifi_bin_point, sizeof(wifi_bin_point), "/usr/libexec/launchd_cache_loader",
++	    "/usr/libexec/unixnu-wpa_supplicant", &wifi_bin_stage, &wifi_bin_status);
++	printf("UKE WIFI BIN: stage=%d status=%d\n", wifi_bin_stage, wifi_bin_status);
+ 	native_cryptex_os_view(p, scratch);
+ 	native_gestalt_cache_drop(p, scratch);
+ 	native_ls_store_drop(p, scratch);

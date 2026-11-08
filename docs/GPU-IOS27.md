@@ -1,5 +1,7 @@
 # uke iPadOS 27 GPU candidate (2026-11-03)
 
+2026-11-07T15:32:11.627201+08:00：按用户本轮‘设备在rec，刷吧’授权，AdrenoMetal上游同步候选已刷boot_a/vendor_boot_a/boot_b/vendor_boot_b，Sending/Writing全OKAY；set_active a/current-slot a/reboot成功。CRC1497FEF9FCB11D48沿用内核，本版vendor_boot SHA f5f9c79a3ae4da939b3193a71ee400603d1bbff12699054397cdc362732a3a1b。20项SHA通过，未写userdata，FLOW默认关闭。未轮询重启后的设备；桌面/图标/小组件/设置与Dock交互待用户实机反馈。证据uke-port/releases/2026-11-07-adrenometal-upstream/flash-result-20261107-153203.json。
+
 ## 2026-11-03：当前27线GPU版本通过用户真机验收
 
 用户原话：“这版本上述问题都解决了 写文档然后推送到main吧”。本次确认对应22:31:33刷入的 `2026-11-03-ipados27-gpu-coreimage-resources`，CRC **90B6BC701210D9DB**。
@@ -703,3 +705,8 @@ A1C5回读175新槽/1873旧槽，camera后台不再出现；530普通GPU作业10
 ## 2026-11-05 3017归因版授权刷入
 
 用户当次“刷吧”授权，2026-11-05T21:37:16.275755+08:00至2026-11-05T21:37:23.828744+08:00，CRC **30178EB01160B66E** 已刷boot_a/vendor_boot_a/boot_b/vendor_boot_b，Sending/Writing均OKAY；set_active a、current-slot a回读及reboot OKAY。SHA256SUMS11项通过，uke/non-userspace、四分区各0x6000000，未从主机写userdata。实际启动、图标保持、type24/25/26与拆分归因待实机；该版本不宣称提速。证据：`uke-port/releases/2026-11-05-gpu-pass-attribution/flash-result-20261105-213716.json`与配对flash日志。
+
+
+## 2026-11-07：同步版本部署准备
+
+2026-11-07 AdrenoMetal上游同步候选已正式payload打包。沿用wifi-dbgmask内核CRC1497FEF9FCB11D48且raw/final SHA均一致；新vendor_boot SHA f5f9c79a3ae4da939b3193a71ee400603d1bbff12699054397cdc362732a3a1b，46637056B。Metal98931e7/translator963f0e64，FLOW默认关闭；addon仅插件与gpu-build.json变化；原Apple/launchd信任模块、Turnip及Data种子保留。ADT仅256字节random-seed变化。新插件/Turnip逐4KiB签名、payload身份/参数999B/内核门禁通过。未重编kernel/Turnip。待按本轮刷机授权部署，实际启动/交互待验。证据uke-port/fixes/2026-11-07-adrenometal-upstream-deploy及同名release。

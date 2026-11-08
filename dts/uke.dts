@@ -41,6 +41,20 @@
         compatible = "arm,psci-1.0";
         method = "smc";
     };
+
+    // The Wi-Fi identity 24A446's wifid waits for. Its launchd job
+    // (/System/Library/LaunchDaemons/com.apple.wifid.plist in the launchd cache,
+    // RunAtLoad=true, KeepAlive=true) carries
+    //   _LimitLoadToDeviceTree = [wlan, marconi-wifi, centauri-alpha, centauri-alpha-protium]
+    // and the check runs against this device tree, which the boot image hands the
+    // kernel. Only the node name is matched; sheng's verified node is the
+    // reference for the rest (chip identity string and status). Without a node
+    // named wlan, wifid never starts and Settings has no Wi-Fi pane.
+    wlan {
+        compatible = "qcom,wcn7850";
+        unixnu,adt-name = "wlan";
+        status = "okay";
+    };
 };
 
 // AMP/Edge requires an explicit E/P type; a missing type becomes SMP and

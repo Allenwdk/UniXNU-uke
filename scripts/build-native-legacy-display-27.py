@@ -511,13 +511,22 @@ board_dir.mkdir(exist_ok=True)
 KITS = ROOT / 'kits/uke'
 board_objects = []
 for stem, extra in [('CpuFreqProbe', ()),
-                    ('WifiAth11k', ()),
+                    ('WifiAth11k', ('-I', str(ROOT / 'drivers/Ath12kWifi/include'))),
                     ('WifiProbe', ('-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'), '-I', str(ROOT / 'kits/ArmSmmu4K'))),
                     ('TouchProbe', ('-I', str(ROOT / 'drivers/QcomGeniSpi'), '-I', str(ROOT / 'drivers/ShengNovatekTouch'))),
                     ('DpuProbe', ()),
                     ('GpuPowerProbe', tuple(x for d in ('drivers/Adreno740', 'kits/ArmSmmu4K', 'kits/AdrenoFirmware', 'kits/AdrenoPM4', 'kits/Sm7675Platform', 'build/sheng-gmu', 'build/sheng-gpu-smmu') for x in ('-I', str(ROOT / d))))]:
     compile_cpp(KITS / (stem + '.cpp'), board_dir / (stem + '.o'), extra)
     board_objects.append(board_dir / (stem + '.o'))
+# WifiNet.cpp (the OS network side: en0 + Apple80211). Its IO80211/IONetwork*
+# classes register late, so the board runs __GLOBAL__sub_I_WifiNet.cpp inside a
+# preModLoad/postModLoad window: globalise that constructor and drop the
+# automatic init-func entry, exactly like the other owned late classes.
+compile_cpp(KITS / 'WifiNet.cpp', board_dir / 'WifiNet.o', ('-I', str(ROOT / 'drivers/Ath12kWifi/include')))
+wifi_net_late = board_dir / 'WifiNet.late.o'
+run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func',
+     '--globalize-symbol=__GLOBAL__sub_I_WifiNet.cpp', board_dir / 'WifiNet.o', wifi_net_late])
+board_objects.append(wifi_net_late)
 # WCN6750 WPSS: the upstream protocol cores live in the SoC kit; board
 # firmware access uses the actual BSD ABI and reads modem_a/modem_b only.
 remoteproc = ROOT / 'kits/Sm7675Platform/remoteproc'
@@ -574,8 +583,12 @@ sources = [ROOT / 'drivers/GopFramebuffer/NativeLegacyDisplay.cpp', ROOT / 'driv
            ROOT / 'scripts' / ABI_PATH.name, keystore_source, ROOT / 'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',
            ROOT / 'scripts/hid-device-24A446.json', hid_probe]
 sources += [ROOT / 'kits/uke/DisplayCallTrace27.cpp', ROOT / 'kits/uke/LegacyDisplayProbe.cpp']
-sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiAth11k', '.cpp'), ('WifiQrtr', '.c'), ('WifiQmiSupport', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h'), ('UkeWpssMemory', '.h')]]
+sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiAth11k', '.cpp'), ('WifiNet', '.cpp'), ('WifiQrtr', '.c'), ('WifiQmiSupport', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h'), ('UkeWpssMemory', '.h'), ('UkeClassRegistration', '.h')]]
 sources += [qmi_module / 'include/nw_wcn6750_qmi.h', ROOT / 'scripts/build-wcn6750-qmi.py']
+sources += [KITS / 'BootResetCore.h', ROOT / 'scripts/build-ath11k-wifi.py',
+           qmi_module / 'src/nw_wifi.c', qmi_module / 'src/nw_diag_ahb.c',
+           qmi_module / 'src/nw_ahb.c', qmi_module / 'src/nw_control.c',
+           qmi_module / 'include/nw_control_endpoint.h', qmi_module / 'tools/sources.txt']
 sources += list(remoteproc.glob('*.c')) + list(remoteproc.glob('*.h'))
 (OUT / 'build-report.json').write_text(json.dumps(dict(
     source_sha256={str(p.relative_to(ROOT)): sha(p) for p in sources}, generated_abi_sha256=sha(OUT / 'OriginalLegacyFramebufferABI.h'),

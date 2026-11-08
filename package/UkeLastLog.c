@@ -240,7 +240,7 @@ uke_last_log_write(void)
 #define UKE_UFS_RECORD_BYTES   (16 * 1024)
 #define UKE_UFS_RECORD_BLOCKS  (UKE_UFS_RECORD_BYTES / 4096)
 #define UKE_UFS_PAYLOAD_BYTES  (UKE_UFS_RECORD_BYTES - 32)
-#define UKE_UFS_INTERVAL_MS    2000
+#define UKE_UFS_INTERVAL_MS    500  /* diagnostic: keep the tail of a hang */
 
 int native_ufs_log_open(uint64_t *firstLba, uint64_t *blocks, const char **why);
 int native_ufs_log_write(uint64_t rel, uint32_t blocks, const void *src);

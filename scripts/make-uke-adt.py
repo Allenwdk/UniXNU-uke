@@ -250,7 +250,18 @@ def main():
               # UFS (0x1d84000) lies below the arm-io window, so a child reg offset would be
               # negative. The node exists only for class matching; NativeUfs takes its
               # physical windows from the board DT constants in GccUfs.h.
-              node('ufshc', [('compatible', b'qcom,sm8550-ufshc\0')])]),
+              node('ufshc', [('compatible', b'qcom,sm8550-ufshc\0')]),
+              # The Wi-Fi node 24A446's wifid matches (porting/network requires the
+              # board to export /arm-io/wlan). No reg/interrupts: the board owns the
+              # WPSS, the MSI vectors and the DMA window (WifiProbe/WifiAth11k), and
+              # this is the fixed address the board reports to the stack.
+              node('wlan', [('compatible', b'qcom,wcn6750\0'),
+                            ('local-mac-address', bytes([0x02, 0x00, 0x00, 0x75, 0x67, 0x50]))])]),
+        # wifid's launchd job is limited to device trees that contain a node named
+        # wlan (see dts/uke.dts for the list). The DTB carries one at the root; this
+        # mirror keeps the same name reachable through the ADT as well.
+        node('wlan', [('compatible', b'qcom,wcn7850\0'), ('status', b'okay\0'),
+                      ('local-mac-address', bytes([0x02, 0x00, 0x00, 0x75, 0x67, 0x50]))]),
     ])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(tree)

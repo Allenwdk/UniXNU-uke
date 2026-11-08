@@ -1,0 +1,57 @@
+Subject: [PATCH] Observe Wi-Fi service launch facts without changing AMFI decisions
+
+Record the actual vnode mount, code-signing flags and CDHash at the original
+launch-constraint hook. Include Apple's cache loader as a same-directory
+comparison. V4.9.4 extends the observation to the WebKit children, Safari,
+Preferences and IconServices, including the exact MNT_ROOTFS predicate.
+The original hook, denial reason, error and goto remain intact.
+
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8613,9 +8613,46 @@
+ 
+ 	/* call the launch constraints hook */
+ 	os_reason_t launch_constraint_reason;
++	const char *wifi_launch_name = vnode_getname(imgp->ip_vp);
++	boolean_t wifi_launch_trace = wifi_launch_name &&
++	    (!strcmp(wifi_launch_name, "unixnu-wpa_supplicant") ||
++	    !strcmp(wifi_launch_name, "launchd_cache_loader") ||
++	    !strcmp(wifi_launch_name, "com.apple.WebKit.WebContent") ||
++	    !strcmp(wifi_launch_name, "com.apple.WebKit.Networking") ||
++	    !strcmp(wifi_launch_name, "com.apple.WebKit.GPU") ||
++	    !strcmp(wifi_launch_name, "MobileSafari") ||
++	    !strcmp(wifi_launch_name, "Preferences") ||
++	    !strcmp(wifi_launch_name, "iconservicesagent"));
++	if (wifi_launch_trace) {
++		mount_t wifi_mount = vnode_mount(imgp->ip_vp);
++		struct vfsstatfs *wifi_stat = wifi_mount ? vfs_statfs(wifi_mount) : NULL;
++		unsigned char wifi_hash[SHA1_RESULTLEN] = {0};
++		char wifi_hash_hex[2 * SHA1_RESULTLEN + 1] = {0};
++		int wifi_hash_error = ubc_cs_getcdhash(imgp->ip_vp, imgp->ip_arch_offset, wifi_hash, NULL);
++		for (unsigned i = 0; i < SHA1_RESULTLEN; i++) {
++			snprintf(wifi_hash_hex + 2 * i, 3, "%02x", wifi_hash[i]);
++		}
++		printf("UKE WIFI LAUNCH: name=%s pid=%d cs=%x mount=%llx fs=%s on=%s from=%s hasherr=%d cdhash=%s\n",
++		    wifi_launch_name, proc_getpid(p), (unsigned)imgp->ip_csflags,
++		    wifi_mount ? (unsigned long long)vfs_flags(wifi_mount) : 0ULL,
++		    wifi_stat ? wifi_stat->f_fstypename : "?", wifi_stat ? wifi_stat->f_mntonname : "?",
++		    wifi_stat ? wifi_stat->f_mntfromname : "?", wifi_hash_error, wifi_hash_hex);
++		printf("UKE WIFI LAUNCH: v494 pid=%d rootfs=%d readonly=%d parent=%d\n",
++		    proc_getpid(p), wifi_mount ? !!(vfs_flags(wifi_mount) & MNT_ROOTFS) : 0,
++		    wifi_mount ? !!(vfs_flags(wifi_mount) & MNT_RDONLY) : 0, proc_ppid(p));
++	}
++	if (wifi_launch_name) {
++		vnode_putname(wifi_launch_name);
++	}
+ 	if ((error = mac_proc_check_launch_constraints(p, imgp, &launch_constraint_reason)) != 0) {
++		if (wifi_launch_trace) {
++			printf("UKE WIFI LAUNCH: pid=%d constraint_error=%d\n", proc_getpid(p), error);
++		}
+ 		signature_failure_reason = launch_constraint_reason;
+ 		goto done;
+ 	}
++	if (wifi_launch_trace) {
++		printf("UKE WIFI LAUNCH: pid=%d constraint_error=0\n", proc_getpid(p));
++	}
+ 
+ 	/*

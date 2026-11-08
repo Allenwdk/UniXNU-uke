@@ -1,0 +1,92 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8010,6 +8010,56 @@
+ volatile dev_t native_owner_cache_selected_device = NODEV;
+ volatile dev_t native_owner_cache_mounted_device = NODEV;
+ char native_owner_cache_device_path[64];
++#if defined(XNU_OWNER_UNION_SYSTEMOS) && XNU_OWNER_UNION_SYSTEMOS
++volatile int native_owner_cache_rootfs_status = -1;
++volatile uint64_t native_owner_cache_rootfs_before = 0;
++volatile uint64_t native_owner_cache_rootfs_after = 0;
++
++/* The readonly SystemOS union has become rootvnode, but mount() does not give
++ * a union above '/' MNT_ROOTFS. Publish the real root mount's identity only
++ * after both original volume policies and the boot manifest have succeeded.
++ * Never apply this to a bindfs view, Data, or an unrelated APFS mount. */
++static int
++native_owner_cache_publish_rootfs(vnode_t original_root, vnode_t mounted_root,
++    dev_t expected_root, dev_t expected_cache, const char *volume)
++{
++	if (!original_root || !mounted_root || original_root == mounted_root ||
++	    mounted_root != rootvnode || !vnode_isvroot(original_root) || !vnode_isvroot(mounted_root)) {
++		return EAUTH;
++	}
++	mount_t lower = vnode_mount(original_root), upper = vnode_mount(mounted_root);
++	if (!lower || !upper || lower == upper || vnode_mountedhere(original_root) != upper ||
++	    strcmp(vfs_statfs(lower)->f_fstypename, "apfs") || strcmp(vfs_statfs(upper)->f_fstypename, "apfs") ||
++	    (vfs_flags(lower) & (MNT_RDONLY | MNT_ROOTFS)) != (MNT_RDONLY | MNT_ROOTFS) ||
++	    (vfs_flags(upper) & (MNT_RDONLY | MNT_UNION)) != (MNT_RDONLY | MNT_UNION)) {
++		return EAUTH;
++	}
++	dev_t root_device = NODEV, cache_device = NODEV, selected = NODEV;
++	char device_path[64];
++	vnode_t device = vfs_devvp(lower);
++	if (device) {
++		root_device = vnode_specrdev(device);
++		vnode_put(device);
++	}
++	device = vfs_devvp(upper);
++	if (device) {
++		cache_device = vnode_specrdev(device);
++		vnode_put(device);
++	}
++	if (expected_root == NODEV || expected_cache == NODEV || expected_root == expected_cache ||
++	    root_device != expected_root || cache_device != expected_cache ||
++	    !native_verified_block_volume_device(volume, &selected, device_path, sizeof(device_path)) ||
++	    selected != cache_device || !native_verified_block_root_authorized(root_device) ||
++	    !native_verified_block_root_authorized(cache_device)) {
++		return EAUTH;
++	}
++	native_owner_cache_rootfs_before = vfs_flags(upper);
++	vfs_setflags(upper, MNT_ROOTFS);
++	native_owner_cache_rootfs_after = vfs_flags(upper);
++	return native_owner_cache_rootfs_after == (native_owner_cache_rootfs_before | MNT_ROOTFS) ? 0 : EAUTH;
++}
++#endif
++
+ void native_owner_cache_checkpoint(int, int);
+ __attribute__((noinline)) void
+ native_owner_cache_checkpoint(int status, int authorized)
+@@ -8122,7 +8172,6 @@
+ #endif
+ 	native_owner_cache_stage = 6;
+ done:
+-	if (mounted_root) vnode_put(mounted_root);
+ 	int root_recheck = root_authorized && native_verified_block_root_authorized(root_device);
+ 	native_owner_cache_root_recheck = root_recheck;
+ 	if (!root_recheck) error = EAUTH;
+@@ -8131,6 +8180,16 @@
+ 	    !native_owner_publish_boot_manifest(root_device, XNU_OWNER_ROOT_VOLUME_UUID,
+ 	        selected, volume)) error = EAUTH;
+ #endif
++#if defined(XNU_OWNER_UNION_SYSTEMOS) && XNU_OWNER_UNION_SYSTEMOS
++	if (!error && cache_authorized && root_recheck) {
++		native_owner_cache_rootfs_status = native_owner_cache_publish_rootfs(original_os_root, mounted_root,
++		    root_device, selected, volume);
++		printf("UKE SYSTEMOS ROOTFS: v495 status=%d before=%llx after=%llx\n",
++		    native_owner_cache_rootfs_status, (unsigned long long)native_owner_cache_rootfs_before,
++		    (unsigned long long)native_owner_cache_rootfs_after);
++		if (native_owner_cache_rootfs_status) error = native_owner_cache_rootfs_status;
++	}
++#endif
+ #if defined(XNU_OWNER_CACHE_STARTUP) && XNU_OWNER_CACHE_STARTUP
+ 	if (!error && cache_authorized && root_recheck) {
+ 		/* Original dyld bit 3 selects no ignition; the owner chain and actual
+@@ -8143,6 +8202,7 @@
+ 	native_owner_cache_authorized = cache_authorized;
+ 	native_owner_cache_status = error;
+ 	native_owner_cache_checkpoint(error, cache_authorized);
++	if (mounted_root) vnode_put(mounted_root);
+ 	return error;
+ }
+ #endif

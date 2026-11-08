@@ -75,3 +75,20 @@ uke-kext-registration-lock-order.patch
 
 # Original launchd consumes the signed owner cache with the icon-service policy.
 uke-icon-services-cache.patch
+
+# Wi-Fi join results: the 24A446 association event is 540 bytes, which does not
+# fit MLEN. Let the Apple IEEE80211 class carry MCLBYTES and build it with a
+# cluster mbuf; every other class keeps the old limit. Verbatim from sheng
+# (patches/xnu-12377/sheng-wifi-association-event.patch), applies with -390 lines.
+uke-wifi-association-event.patch
+
+# The native supplicant lives in the Data addon; xpcproxy needs a system path.
+# Union-mounts /private/var/ngpu/wifi-bin over /usr/libexec (launchd_cache_loader
+# stays visible, unixnu-wpa_supplicant comes from the addon).
+uke-wifi-launchd-cache.patch
+
+# Read-only service/cache-loader launch facts; original AMFI return is preserved.
+uke-wifi-launch-facts.patch
+
+# Actual authenticated SystemOS root union identity; keep original AMFI decisions.
+uke-systemos-root-identity.patch
