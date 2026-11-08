@@ -376,6 +376,7 @@ sleep-disabled = 1
 
 [adt.product.string]
 model = "xiaomi,uke"
+artwork-display-gamut = "sRGB"
 
 [adt.product.u32]
 thin-bezel = 1
