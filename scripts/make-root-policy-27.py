@@ -29,7 +29,7 @@ parser.add_argument('--profile', type=Path, required=True, help='profiles/os/<pr
 parser.add_argument('--verified-root', type=Path, required=True, help='kits/VerifiedRoot checkout')
 parser.add_argument('--output', type=Path, required=True, help='policy directory (manifest.bin, trusted-key.bin, ...)')
 parser.add_argument('--host', type=Path, help='keys/ and the verification library (default: output/host)')
-parser.add_argument('--core', type=Path, default=Path(__file__).resolve().parents[2] / 'UniXNU-build',
+parser.add_argument('--core', type=Path, default=Path(__file__).resolve().parents[2] / 'UniXNU',
                     help='UniXNU core checkout; Linux imports scripts/unixnu/udif.py from it')
 parser.add_argument('--ipsw-tool', default=None, help='blacktop ipsw binary for AEA decryption (default: ipsw on PATH)')
 args = parser.parse_args()

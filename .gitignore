@@ -46,3 +46,6 @@ local.toml
 
 # Local build inputs (unixnu.local.toml lives in the UniXNU checkout).
 local.toml
+
+# Original signed root-policy inputs; assembled scripts are disposable copies.
+/scripts/policies/*/
