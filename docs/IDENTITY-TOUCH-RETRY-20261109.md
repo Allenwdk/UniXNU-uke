@@ -19,3 +19,14 @@ PC `0xfffffff00b404ef4` 实际为 `OSMetaClass::~OSMetaClass()+0x34`，从 `this
 这是已证实的析构绑定错误；触发对象清理的上层初始化失败条件仍未得到完整运行日志。本轮构建、打包及实机结果分开记录，不因静态修正就宣称 Dock 或启动已修复。
 
 打包使用原板级 `pack-uke-vendor-boot.py`，保持紧凑 vendor_boot 布局；不直接使用通用 packer 的完整分区输出。主机证据在工作区 `uke-port/fixes/2026-11-09-identity-touch-retry/`，镜像归档在 `uke-port/releases/2026-11-09-identity-touch-retry/`。无设备操作、无 userdata 写入。
+
+## 正式构建与最终镜像
+
+`./unixnu build kernel`、带实际 TianoCompress PATH 的 `./unixnu build payload` 均退出 0，13 区通过。49 项记录的编译输入与正常基线相比仅 `scripts/legacy-display-24A446.json` 哈希变化；最终 payload 中已确认 D2 调用链到原 IOServiceD2，而非 OSMetaClassD2，认证 import 保持。ADT 差异仅为上述 8 项 product 字段及 random-seed；chosen display-scale 不变、5 条 CA 修正不变。
+
+- CRC：`6C93A149891869B1`。
+- kernel-final SHA256：`ce558022d19b8a9e0979da4b1e333fb94330ffe8718fc355081ebbb2dbd7b7f4`。
+- vendor_boot SHA256：`5762b098cc91677c98550460001ced4eb7133112633b15f95938514131cab0b6`。
+- vendor_boot 大小：47,083,520 B。
+
+本轮没有刷机或操作设备；是否进入桌面、Dock 悬停、台前调度及清理路径效果仍需用户授权后实机验证。rollback 为 `2026-11-09-wifi-v497-noscale-rebuild`，两仓 main 指针保持。
