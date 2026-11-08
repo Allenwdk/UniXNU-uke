@@ -1546,7 +1546,7 @@
  ],
  "bindings": {
   "__ZN25IOMobileFramebufferLegacyC2EPK11OSMetaClass": "0xfffffe000a288c74",
-  "__ZN25IOMobileFramebufferLegacyD2Ev": "0xfffffe000a288c6c",
+  "__ZN25IOMobileFramebufferLegacyD2Ev": "0xfffffe000a288cac",
   "__ZN25IOMobileFramebufferLegacy10gMetaClassE": "0xfffffe000bb494d0",
   "__ZTV25IOMobileFramebufferLegacy": "0xfffffe0008368e48",
   "_native_legacy_surface_descriptor": "0xfffffe000a4330a4",

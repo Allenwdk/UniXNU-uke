@@ -10,7 +10,7 @@ commit = "e31e90a24c27ad6cbe981650d12a1a4124065b03"
 commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 
 [source."ShengHidInput"]
-commit = "24f1f3fbed6feff42e1ca02e2ce386a5c3c36da8"
+commit = "71a40e76daeae1bb4127546f96ffa7339c7a06ff"
 
 [source."ShengUfs"]
 commit = "78c93b0941896e0515c6abaad3ff0d88b50a78ca"

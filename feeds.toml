@@ -49,8 +49,8 @@ commit = "78c93b0941896e0515c6abaad3ff0d88b50a78ca"
 name = "ShengHidInput"
 kind = "driver"
 git = "https://github.com/UniXNU/ShengHidInput.git"
-# Upstream feat/ipados27-gpu-parity: the 24A446 vtable discriminators.
-commit = "24f1f3fbed6feff42e1ca02e2ce386a5c3c36da8"
+# Upstream main, rechecked 2026-11-09; tracked content matches the prior pin.
+commit = "71a40e76daeae1bb4127546f96ffa7339c7a06ff"
 
 [[source]]
 name = "ShengNovatekTouch"
