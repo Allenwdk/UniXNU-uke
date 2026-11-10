@@ -11,11 +11,16 @@
 static BOOL (*originalSyncBrightness)(id, SEL, id);
 
 static BOOL useSyncBrightness(id self, SEL command, id display) {
-    if ([display isKindOfClass:[NSNumber class]] &&
-        [(NSNumber *)display unsignedLongLongValue] == 0) {
-        return NO;
+    // BLControl validates its display object and selects frame-synchronous
+    // transactions for the integrated display. Keep that classification in
+    // the original method; its argument is not an NSNumber.
+    const BOOL synchronous = originalSyncBrightness(self, command, display);
+    if (synchronous) {
+        static unsigned reported;
+        if (__atomic_fetch_add(&reported, 1u, __ATOMIC_RELAXED) < 4)
+            NSLog(@"[Uke backlight] selected direct brightness for %@", display);
     }
-    return originalSyncBrightness(self, command, display);
+    return NO;
 }
 
 __attribute__((constructor)) static void selectBrightnessTransactions(void) {
@@ -36,6 +41,6 @@ __attribute__((constructor)) static void selectBrightnessTransactions(void) {
             return;
         }
         originalSyncBrightness = (void *)method_setImplementation(method, (IMP)useSyncBrightness);
-        NSLog(@"[Uke backlight] CoreBrightness direct transactions selected for integrated display");
+        NSLog(@"[Uke backlight] brightness transaction override installed");
     }
 }
