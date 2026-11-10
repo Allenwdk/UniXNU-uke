@@ -34,3 +34,23 @@
 本轮先完成正式kernel、arm64e Metal/runtime、payload、boot/vendor_boot和最终归档输入核查。现有34DE是用户确认启动/桌面通过的参照，D4EF仍为电池UI阶段回退。重载根因与性能收益待新候选实机证明。
 
 主机检查聚焦实际编译、translator pin+全补丁、prelink闭合、包内源/签名/ADT/bootargs/分区上限与13区记录。未追加可选模型/压力套件。构建错误和中间状态均存于本轮fixes目录，后续在本报告追加最终候选身份。刷写仍逐候选取得当次授权，当前设备保持TWRP。
+
+## 最终候选与验证边界
+
+候选 `6D31A137E8F25F63` 已归档至 `uke-port/releases/2026-11-11-ipados27-upstream-batch/`，未刷。boot SHA-256 `e8cbc39f13b40300d930915b7da3b9ab3ec2c5b63af03292c7ae88215cf9b289`，vendor_boot SHA-256 `3b18aecefc024409635da2714afdc1678c4d5abd16c51ce61797a6df30354875`，47,525,888B，小于96MiB。最终内核SHA-256 `5145915df7c3db2cc03ca9b0b68ef1afdf6733fb7daefa92565f50a21f274522`。配对使用此包boot/vendor_boot。
+
+core源码 `b3b1a0d1a7af707a284f4ade4635ac3374978b60`，设备归档源码 `132b81b7d7cf105fa572cec7249d393922a888d1`。Adreno740936c138、AdrenoMetalf984b08、GOPf0c18e0、ArmDTPlatform638c39a、Prelink6442513、Ath12kWifie6abc94，完整SHA在source-revisions.json。11仓的已选远端main均为最终本地HEAD祖先，source-merged记录逐项核验。原Uke差异和main基点保留，未推送。
+
+正式kernel、用户态Metal/runtime、payload、bootimg、vendor_boot通过。translator仍用UniXNU配方963f0e64固定pin，加32个记录补丁，checker逐字树核对通过。它相对译码器自己development分支落后1805提交，本轮没有把未经UniXNU适配的新译码器代码混进配方。arm64e runtime已从更新后的Rust与Objective-C实现重新生成。
+
+插件CDHash a39a0dcfbab9571f6035dd12d6690fe5d2dee70c，Turnip CDHash035dc50f53ab10a3886aa7e041822ab2fd1c8162。其基础Turnip源码/固件pin保持原Uke；重链接/flat-import处理和签名后的实际库随新插件成套封入。15个addon文件只替换图形插件、Turnip库和gpu-build.json。6个owner trust模块中只在既有图形模块替换对应两个CDHash条目，原系统/外设签名与其余addon字节保留。两个二进制均为arm64e，CodeDirectory按4096B代码页逐页复算通过。
+
+83项平台/显示源与14项存储源和实际archive哈希通过。prelink缺失仍2处，桩从24减为19，现有回归policy通过，未增加白名单。最终链接代码确认device-pager通知、lazy-auth、loader释放、Edge计数、UFS完成IRQ、GPUjob/kick/pool视图和原pset取证符号。原WC范围授权与secure_memset、16个outside ADT槽、721B启动参数及18项输入/显示ADT保留。ADT除random-seed以外相同。FD/DarwinBoot沿用已核验E8AF固件，SHA匹配，正式bootimg产物与34DE boot相同。
+
+归档SHA覆盖70文件，13区结构化检查通过。本轮只运行必要构建、译码器pin/实际补丁树和产物/签名门禁，未追加可选宿主压力套件。失败记录保留，包含iPadOS补丁context、AHB函数声明/不支持的HTT请求门控及用户态链接工具环境修正。
+
+本轮主要处理的是已证实存在的锁内pool回退、viewed grant无法回收和通用缓存/内存生命周期问题。34DE的462秒停顿是否由这些路径触发，以及新候选的性能与稳定性收益，仍待实机。新启用cs-lazy、Edge和loader回收扩大了本轮变更面，硬件需同时回归启动、二次冷启动、超过8分钟台前调度切换、GPU工作退休、pool tracked/closed/returned计数、长job/CPkick与电池/Wi-Fi/触摸/背光。
+
+温度限频和热压力策略继续按既有用户范围排除。macOS机器身份、签名framebuffer地址、跨UID系统缓存挂载和5/4时基修正保留其OS/目标条件。24A446仍用19.2MHz原时基、Uke频率/LUT与L3一次最高档。电池field22超时后的重新建立链路与文件节点TNode/WebKit异常保留独立待办，本候选没有将它们标为修复。
+
+当前设备保持原厂四分区/A槽/TWRP。本轮没有设备写入。取得本候选当次授权后按四分区/A槽部署。34DE配套包作为启动/桌面参照，D4EF配套包作为电池UI阶段回退。
