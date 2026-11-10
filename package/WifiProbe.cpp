@@ -36,7 +36,6 @@ int uke_wifi_ath11k_start(void);
 int lx_pump(void);
 void uke_wifi_msi_stats(unsigned *counts, unsigned *vectors);
 void uke_wifi_station_step(void);
-void uke_wifi_scan_selftest(void);
 struct net_device *nw_cfg80211_primary(void);
 /* Only the fields the progress line reports; the layout follows nw_abi.h. */
 struct nw_wifi_stats { uint32_t stage, scans, frames, beacons, bss_seen; int last_err; };
@@ -913,7 +912,7 @@ void wpssThread(void *, wait_result_t) {
         // whenever nw_wifi_step() reported busy; that regressed the control TX
         // path (zero controlSend calls, all INFO sessions timing out) and let
         // WMI dev_close/dev_open flood the HTC credit=1 channel. Reverted.
-        for (;;) {uke_wifi_station_step(); uke_wifi_scan_selftest(); debugStats(); service(waitEvents(10));}
+        for (;;) {uke_wifi_station_step(); debugStats(); service(waitEvents(10));}
     }
     const char *smmuError = smmuRouteWlan();
     if (smmuError) printf("UKE WIFI: SMMU route failed: %s\n", smmuError);

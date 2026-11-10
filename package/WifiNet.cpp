@@ -31,7 +31,6 @@ extern "C" {
 #include <sys/kpi_mbuf.h>
 #include <kern/locks.h>
 #include <kern/thread.h>
-#include <kern/thread_call.h>
 #include <sys/systm.h>
 #include <stdarg.h>
 #include "nw_abi.h"
@@ -65,6 +64,7 @@ enum {
   kCardCaps = 12, kState = 13, kPhyMode = 14, kOpMode = 15, kRssi = 16, kNoise = 17, kPower = 19, kAssociate = 20, kAssociateResult = 21,
   kDisassociate = 22, kSupportedChannels = 27, kLocale = 28, kDeauth = 29, kDriverVersion = 43, kHardwareVersion = 44, kCountryCode = 51,
   kRadioInfo = 54, kScanReqMultiple = 86, kScanCacheClear = 90, kCurrentNetwork = 103, kChannelsInfo = 207, kHwSupportedChannels = 254,
+  kBeaconScanCache = 390,
 };
 // events
 enum { kEvPowerChanged = 1, kEvSsidChanged = 2, kEvBssidChanged = 3, kEvLinkChanged = 4, kEvAssocDone = 9, kEvScanDone = 10 };
@@ -87,6 +87,12 @@ struct scan_result {                                                            
   uint8_t rate_count, unused0; uint32_t rates[15]; uint8_t ssid_length, ssid[32], unused1[3]; uint32_t age_ms; uint8_t flags, unused2;
   uint16_t elements_length; uint8_t elements[1024];
 };
+// 24A446 IO80211 requests a zeroed 2280-byte beacon result and reads the
+// same age (0x84) and IE length (0x8a) fields as a normal scan result.
+constexpr unsigned kBeaconResultSize = 0x8e8;
+constexpr unsigned kScanResultMaxAgeMs = 30000; // cfg80211's BSS expiry interval
+static_assert(__builtin_offsetof(scan_result, age_ms) == 0x84 &&
+              __builtin_offsetof(scan_result, elements_length) == 0x8a, "24A446 scan result prefix");
 struct assoc_parameters {
   uint32_t ssid_length; uint8_t ssid[32]; uint8_t bssid[6], unused[2];
   uint32_t key_version, key_length, key_cipher; uint16_t key_flags, key_index; uint8_t key[64];
@@ -129,7 +135,8 @@ struct { unsigned count, kicks, cleared, longest; bool kicked; } gStall;   // in
 int gAssocResult = kAssocPending;
 bool gAssocModern;
 bool gJoinPending;
-unsigned gScanCursor, gScanning;
+unsigned gScanCursor, gBeaconScanCursor, gScanning;
+uint64_t gCacheRefreshAfter;
 bool gUserJoin;   // the wireless daemon joined, left or switched the radio itself: the unattended test join steps aside
 uint32_t gLogged[256 / 32];
 
@@ -207,10 +214,7 @@ void visible_status(nw_wifi_status &st) {
 }
 
 // ---- what the module tells us ----
-void on_scan_done() { __atomic_store_n(&gScanning, 0u, __ATOMIC_RELEASE); gScanCursor = 0; post_event(kEvScanDone, nullptr, 0); }
-// A scan answered from the cache finishes after the time a short scan takes: answered at once, the daemon asks again straight away.
-thread_call_t gCachedScan;
-void cached_scan_done(thread_call_param_t, thread_call_param_t) { on_scan_done(); }
+void on_scan_done() { gScanCursor = 0; __atomic_store_n(&gScanning, 0u, __ATOMIC_RELEASE); post_event(kEvScanDone, nullptr, 0); }
 void on_connect_done(int result) {
   if (!gPower || gLinkSuppressed) {
     log(6, "wifi-net: ignore join completion after explicit disconnect: %d", result);
@@ -443,6 +447,28 @@ void country(char cc[3]) {
 }
 int map_state(unsigned s) { switch (s) { case NW_STA_SCANNING: return 1; case NW_STA_AUTH: return 2; case NW_STA_ASSOC: case NW_STA_KEYS: return 3; case NW_STA_UP: return 4; default: return 0; } }
 
+int request_scan(const nw_wifi_status &st, const uint8_t *ssid, unsigned length, bool refresh_cache) {
+  if (!gPower) return ENETDOWN;
+  if (gLinkSuppressed) {
+    nw_wifi_status current; nw_wifi_status_get(&current);
+    if (current.state >= NW_STA_AUTH) return EBUSY; // preserve pending teardown
+  }
+  // Preserve the handshake and rejoin path. An authorized station scans
+  // through the regular supplicant/mac80211 route using firmware scheduling.
+  if (__atomic_load_n(&gJoinPending, __ATOMIC_ACQUIRE) ||
+      (st.state >= NW_STA_AUTH && st.state < NW_STA_UP)) return EBUSY;
+  if (refresh_cache && mach_absolute_time() < __atomic_load_n(&gCacheRefreshAfter, __ATOMIC_ACQUIRE)) return 0;
+  if (__atomic_exchange_n(&gScanning, 1u, __ATOMIC_ACQ_REL)) return 0;
+  gScanCursor = 0; gResultsShown = 0;
+  int result = nw_wifi_scan(length ? ssid : nullptr, length);
+  if (result) { __atomic_store_n(&gScanning, 0u, __ATOMIC_RELEASE); return result == -EBUSY ? EBUSY : ENETDOWN; }
+  uint64_t after; clock_interval_to_deadline(15000, kMillisecondScale, &after);
+  __atomic_store_n(&gCacheRefreshAfter, after, __ATOMIC_RELEASE);
+  log(6, "wifi-net: scan queued source %s state %u", refresh_cache ? "beacon-cache" : "scan-request", st.state);
+  sheng_wifi_wake();
+  return 0;
+}
+
 int apple80211(bool set, apple80211req &rq) {
   nw_wifi_status st; visible_status(st);
   const int type = rq.req_type;
@@ -458,23 +484,9 @@ int apple80211(bool set, apple80211req &rq) {
     switch (type) {
     case kPower: { uint32_t in[6]; if (copy_in(rq, in, sizeof in)) return EFAULT; gUserJoin = true; gPower = in[2] != 0; log(6, "wifi-net: power set %u", in[2]); if (!gPower) disconnect_user(); nw_wifi_power(gPower); sheng_wifi_wake(); post_event(kEvPowerChanged, nullptr, 0); return 0; }
     case kScanReq: case kScanReqMultiple: {
-      if (!gPower) return ENETDOWN;
-      if (gLinkSuppressed) {
-        nw_wifi_status current; nw_wifi_status_get(&current);
-        if (current.state >= NW_STA_AUTH) return EBUSY; // preserve pending teardown
-      }
       uint8_t buf[0x80]; if (copy_in(rq, buf, sizeof buf)) return EFAULT;
       uint32_t ssidLength; memcpy(&ssidLength, buf + 16, 4); const uint8_t *ssid = buf + 20;
-      // joining or joined: a scan takes the radio off channel for seconds and the access point's beacons and handshake frames are missed, so
-      // the daemon gets the last results instead
-      if (st.state >= NW_STA_AUTH && nw_wifi_bss_count() > 0) {
-        if (!gCachedScan) gCachedScan = thread_call_allocate(cached_scan_done, nullptr);
-        static unsigned answered; if (++answered <= 8 || answered % 64 == 0) log(6, "wifi-net: scan %u while joined: answered from the cache", answered);
-        gScanning = 1; gScanCursor = 0; gResultsShown = 24; uint64_t at; clock_interval_to_deadline(2000, kMillisecondScale, &at); thread_call_enter_delayed(gCachedScan, at); return 0; }
-      gScanning = 1; gScanCursor = 0; gResultsShown = 0;
-      int result = nw_wifi_scan(ssidLength && ssidLength <= 32 ? ssid : nullptr, ssidLength <= 32 ? ssidLength : 0);
-      if (result) { __atomic_store_n(&gScanning, 0u, __ATOMIC_RELEASE); return ENETDOWN; }
-      sheng_wifi_wake(); return 0; }
+      return request_scan(st, ssid, ssidLength <= 32 ? ssidLength : 0, false); }
     case kAssociate: {
       assoc_parameters a{};
       struct Clear { assoc_parameters &p; ~Clear() { memset(&p, 0, sizeof p); } } clear{a};
@@ -543,12 +555,26 @@ int apple80211(bool set, apple80211req &rq) {
     static const uint16_t known[] = { 2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825 };
     for (uint16_t f : known) { fill_channel(*reinterpret_cast<channel *>(&out.chans.list[n]), f); out.chans.list[n].flags |= 0x80; n++; }
     out.chans.count = n; return copy_out(rq, &out.chans, sizeof out.chans); }
-  case kScanResult: {
-    nw_bss_info b; const int count = nw_wifi_bss_count();
-    if (gScanCursor >= static_cast<unsigned>(count) || nw_wifi_bss_get(static_cast<int>(gScanCursor), &b)) { gScanCursor = 0; return EIO; }   // after the last record
-    gScanCursor++; fill_result(out.res, b);
-    if (gResultsShown < 24) { ++gResultsShown; log(6, "wifi-net: scan result %u: %u MHz, %d dBm, %.*s", gScanCursor, b.freq_mhz, b.signal_dbm, b.ssid_len, reinterpret_cast<const char *>(b.ssid)); }
-    return copy_out(rq, &out.res, sizeof out.res); }
+  case kScanResult: case kBeaconScanCache: {
+    const bool beacon = type == kBeaconScanCache;
+    if (beacon && (rq.req_len != kBeaconResultSize || !rq.req_data)) return EINVAL;
+    if (!gPower) return ENETDOWN;
+    unsigned &cursor = beacon ? gBeaconScanCursor : gScanCursor;
+    // Settings may query only the beacon cache on later visits. Serve the
+    // current snapshot and queue at most one background refresh per 15 s.
+    if (beacon && !cursor) request_scan(st, nullptr, 0, true);
+    nw_bss_info b; const unsigned count = nw_wifi_bss_count();
+    while (cursor < count) {
+      if (nw_wifi_bss_get(static_cast<int>(cursor++), &b)) break;
+      if (b.age_ms > kScanResultMaxAgeMs) continue;
+      fill_result(out.res, b);
+      if (!beacon && gResultsShown < 24) {
+        ++gResultsShown; log(6, "wifi-net: scan result %u: %u MHz, %d dBm", cursor, b.freq_mhz, b.signal_dbm);
+      }
+      return copy_out(rq, out.raw, beacon ? kBeaconResultSize : sizeof out.res);
+    }
+    cursor = 0;
+    return EIO; } // end of this result walk
   case kCurrentNetwork: {
     if (st.state < NW_STA_ASSOC) return ENOENT;
     nw_bss_info b; const int count = nw_wifi_bss_count();

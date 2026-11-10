@@ -47,7 +47,6 @@ void _disable_preemption(void);
 void _enable_preemption(void);
 // Station layer (nw_mainline.c): the default interface and the self-test scan.
 struct net_device *nw_cfg80211_primary(void);
-int nw_cfg80211_selftest_scan(void);
 // ShengUfs builds this window at UFS init: a context bank whose stage 1 maps
 // native_ufs_extra_iova onto one contiguous buffer, so the endpoint reaches
 // every DMA allocation with a 32-bit IOVA (its stream must select that bank).
@@ -779,18 +778,4 @@ extern "C" void uke_wifi_station_step(void) {
                gCtlTxOp[0], gCtlTxOp[1], gCtlTxOp[2], gCtlTxOp[3], gCtlTxOp[4], gCtlTxOp[5],
                gCtlTxOp[6], gCtlTxOp[7], gCtlTxOp[8], gCtlTxOp[9], gCtlTxOp[10], gCtlTxOp[11], gCtlTxOp[12]);
     }
-}
-
-// Bring-up verification: once the default interface exists, ask cfg80211 for one
-// full scan. This is the same path a userspace request takes (cfg80211_scan ->
-// rdev_scan -> ath11k_mac_op_hw_scan -> WMI), so a failure here is a real one.
-static bool gScanRequested;
-extern "C" void uke_wifi_scan_selftest(void) {
-    if (gScanRequested || !nw_cfg80211_primary()) return;
-    gScanRequested = true;
-    char rings[256];
-    nw_wifi_ring_state(rings, sizeof rings);
-    printf("UKE WIFI AHB: rings before scan %s\n", rings);
-    const int result = nw_cfg80211_selftest_scan();
-    printf("UKE WIFI AHB: selftest scan %d\n", result);
 }
