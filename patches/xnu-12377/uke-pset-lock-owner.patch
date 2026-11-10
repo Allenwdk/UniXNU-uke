@@ -1,0 +1,151 @@
+--- a/osfmk/kern/lock_ticket.c
++++ b/osfmk/kern/lock_ticket.c
+@@ -29,6 +29,7 @@
+ #define LOCK_PRIVATE 1
+ #include <stdint.h>
+ #include <kern/thread.h>
++#include <kern/processor.h>
+ #include <kern/locks_internal.h>
+ #include <kern/locks.h>
+ #include <kern/lock_stat.h>
+@@ -371,6 +372,77 @@
+ 	    HW_SPIN_TIMEOUT_DETAILS_ARG(to, st));
+ }
+ 
++/*
++ * The Uke timeout photo identifies pset 0 but contains only the waiter stack.
++ * Keep its acquisition site while the existing lock serializes writers.
++ * Readers use the sequence, advisory owner and ticket to reject handoffs.
++ * No allocation, output, scheduler entry or foreign stack access occurs here.
++ */
++struct uke_pset_lock_owner {
++	uint64_t sequence;
++	uint64_t acquired;
++	uintptr_t owner;
++	uintptr_t caller[3];
++	uint32_t ticket;
++};
++static struct uke_pset_lock_owner uke_pset_owner;
++extern struct processor_set pset_array_actual[MAX_PSETS];
++
++static void __attribute__((noinline))
++uke_pset_lock_acquired(lck_ticket_t *lock, thread_t thread, uintptr_t caller, uintptr_t frame)
++{
++	if (lock != &pset_array_actual[0].sched_lock) {
++		return;
++	}
++
++	uint64_t sequence = os_atomic_load(&uke_pset_owner.sequence, relaxed);
++	os_atomic_store(&uke_pset_owner.sequence, sequence + 1, seq_cst);
++	os_atomic_store(&uke_pset_owner.acquired, mach_absolute_time(), relaxed);
++	os_atomic_store(&uke_pset_owner.owner, (uintptr_t)thread, relaxed);
++	os_atomic_store(&uke_pset_owner.ticket, lock->tu.cticket, relaxed);
++	os_atomic_store(&uke_pset_owner.caller[0], caller, relaxed);
++	os_atomic_store(&uke_pset_owner.caller[1], 0, relaxed);
++	os_atomic_store(&uke_pset_owner.caller[2], 0, relaxed);
++
++	/* Walk only this thread's own bounded kernel stack. Early boot and
++	 * interrupt-stack frames retain the direct caller without a walk. */
++	uintptr_t low = thread->kernel_stack;
++	uintptr_t size = kernel_stack_size;
++	for (unsigned int i = 1; i < 3 && low && size >= 16 &&
++	    frame >= low && frame - low <= size - 16 && !(frame & 15); i++) {
++		uintptr_t next = ((const uintptr_t *)frame)[0];
++		if (next <= frame || next < low || next - low > size - 16 || (next & 15)) {
++			break;
++		}
++		frame = next;
++		os_atomic_store(&uke_pset_owner.caller[i], ((const uintptr_t *)frame)[1], relaxed);
++	}
++	os_atomic_store(&uke_pset_owner.sequence, sequence + 2, release);
++}
++
++static struct uke_pset_lock_owner
++uke_pset_lock_snapshot(lck_ticket_t *lock, uintptr_t owner, uint32_t ticket)
++{
++	struct uke_pset_lock_owner copy = {};
++	uint64_t sequence = os_atomic_load(&uke_pset_owner.sequence, acquire);
++	if (lock != &pset_array_actual[0].sched_lock || (sequence & 1)) {
++		return copy;
++	}
++	copy.acquired = os_atomic_load(&uke_pset_owner.acquired, relaxed);
++	copy.owner = os_atomic_load(&uke_pset_owner.owner, relaxed);
++	copy.ticket = os_atomic_load(&uke_pset_owner.ticket, relaxed);
++	for (unsigned int i = 0; i < 3; i++) {
++		copy.caller[i] = os_atomic_load(&uke_pset_owner.caller[i], relaxed);
++	}
++	os_atomic_thread_fence(acquire);
++	if (sequence != os_atomic_load(&uke_pset_owner.sequence, relaxed) ||
++	    copy.owner != owner || copy.ticket != ticket) {
++		return (struct uke_pset_lock_owner){};
++	}
++	copy.sequence = sequence;
++	return copy;
++}
++
+ __abortlike
+ static hw_spin_timeout_status_t
+ lck_ticket_timeout_panic(void *_lock, hw_spin_timeout_t to, hw_spin_state_t st)
+@@ -381,6 +453,18 @@
+ 
+ 	lsti = lck_spinlock_timeout_hit(&lck->tu, lck->lck_ticket_owner);
+ 	tmp.tcurnext = os_atomic_load(&lck->tu.tcurnext, relaxed);
++
++	if (lck == &pset_array_actual[0].sched_lock) {
++		struct uke_pset_lock_owner owner = uke_pset_lock_snapshot(lck,
++		    lsti->owner_thread_cur, tmp.cticket);
++		uint64_t held = owner.sequence ? mach_absolute_time() - owner.acquired : 0;
++		panic("pset0 ticket timeout owner %p CPU %u valid %u held %llu ticks; "
++		    "acquire BT %p %p %p; "
++		    "cticket %x nticket %x waiting %x; " HW_SPIN_TIMEOUT_DETAILS_FMT,
++		    (void *)lsti->owner_thread_cur, lsti->owner_cpu, owner.sequence != 0,
++		    held, (void *)owner.caller[0], (void *)owner.caller[1], (void *)owner.caller[2],
++		    tmp.cticket, tmp.nticket, lsti->extra, HW_SPIN_TIMEOUT_DETAILS_ARG(to, st));
++	}
+ 
+ 	panic("Ticket spinlock[%p] " HW_SPIN_TIMEOUT_FMT "; "
+ 	    "cticket: 0x%x, nticket: 0x%x, waiting for 0x%x, "
+@@ -712,6 +796,8 @@
+ 
+ 	lock_disable_preemption_for_thread(cthread);
+ 	lck_ticket_lock_internal(tlock, cthread, grp);
++	uke_pset_lock_acquired(tlock, cthread, (uintptr_t)__builtin_return_address(0),
++	    (uintptr_t)__builtin_frame_address(0));
+ }
+ 
+ void
+@@ -720,6 +806,8 @@
+ 	thread_t cthread = current_thread();
+ 
+ 	lck_ticket_lock_internal(tlock, cthread, grp);
++	uke_pset_lock_acquired(tlock, cthread, (uintptr_t)__builtin_return_address(0),
++	    (uintptr_t)__builtin_frame_address(0));
+ }
+ 
+ __header_always_inline bool
+@@ -796,13 +884,23 @@
+ bool
+ lck_ticket_lock_try(lck_ticket_t *tlock, __unused lck_grp_t *grp)
+ {
+-	return lck_ticket_lock_try_internal(tlock, grp, false);
++	bool acquired = lck_ticket_lock_try_internal(tlock, grp, false);
++	if (acquired) {
++		uke_pset_lock_acquired(tlock, current_thread(), (uintptr_t)__builtin_return_address(0),
++		    (uintptr_t)__builtin_frame_address(0));
++	}
++	return acquired;
+ }
+ 
+ bool
+ lck_ticket_lock_try_nopreempt(lck_ticket_t *tlock, __unused lck_grp_t *grp)
+ {
+-	return lck_ticket_lock_try_internal(tlock, grp, true);
++	bool acquired = lck_ticket_lock_try_internal(tlock, grp, true);
++	if (acquired) {
++		uke_pset_lock_acquired(tlock, current_thread(), (uintptr_t)__builtin_return_address(0),
++		    (uintptr_t)__builtin_frame_address(0));
++	}
++	return acquired;
+ }
+ 
+ /*

@@ -104,3 +104,6 @@ uke-upstream-boot-arg-aliases.patch
 
 # Keep loader-approved outside-window DRAM Normal for GPU WC mappings.
 uke-outside-dram-wc.patch
+
+# Record pset0's successful acquisition caller for the next timeout photo.
+uke-pset-lock-owner.patch
