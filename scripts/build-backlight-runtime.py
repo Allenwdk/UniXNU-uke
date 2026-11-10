@@ -97,6 +97,8 @@ def service_trust(base, service_hash, library_hash):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--direct-brightness', action='store_true',
+                   help='Use the 24A446 CoreBrightness direct transaction path for Uke')
     p.add_argument('--os-root', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--addon', type=Path, required=True)
@@ -120,9 +122,12 @@ def main():
     for directory in ('lib', 'libexec'):
         (out / directory).mkdir(exist_ok=True)
     source = core / 'scripts/appsync/BacklightMode.m'
+    sources = [source]
+    if args.direct_brightness:
+        sources.append(ROOT / 'package/UkeBrightnessTransactions.m')
     library, binary = out / 'lib/UniXNUBacklight.dylib', out / 'libexec/backboardd'
     subprocess.run([args.compiler, '--ld-path=' + str(args.linker), '-target', 'arm64e-apple-ios27.0', '-isysroot', str(args.sdk),
-                    '-fobjc-arc', '-fblocks', '-O2', '-Wall', '-Wextra', '-Werror', '-dynamiclib', str(source),
+                    '-fobjc-arc', '-fblocks', '-O2', '-Wall', '-Wextra', '-Werror', '-dynamiclib', *map(str, sources),
                     '-framework', 'Foundation', '-install_name', DYLIB,
                     '-Wl,-compatibility_version,1', '-Wl,-current_version,1', '-o', str(library)], check=True)
     subprocess.run([args.ldid, '-Hsha256', '-P12', '-Cadhoc', '-S', '-Iorg.unixnu.backlight', str(library)], check=True)
@@ -147,7 +152,9 @@ def main():
     subprocess.run(['python3', str(core / 'scripts/addon-add-dir.py'), str(out / 'gpuaddon.bin'),
                     str(out / 'gpuaddon.bin'), 'backlight/lib', str(out / 'lib')], check=True)
     report = dict(build='24A446', original_sha256=PIN, source_sha256=sha(source.read_bytes()),
-                  scope='backboardd brightness mode only', hardware_verified=False, signatures=signatures,
+                  scope='backboardd physical mode and direct brightness transactions' if args.direct_brightness else 'backboardd brightness mode only',
+                  sources={str(path): sha(path.read_bytes()) for path in sources},
+                  hardware_verified=False, signatures=signatures,
                   dependency_mode='append-in-zero-header-padding', original_dependencies_preserved=True,
                   service_constraint_category=5, library_constraint_category=0, amfi_decisions_unchanged=True,
                   files={str(path.relative_to(out)): sha(path.read_bytes()) for path in
