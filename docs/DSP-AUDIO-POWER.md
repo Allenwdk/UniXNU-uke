@@ -307,3 +307,18 @@ Wi-Fi/显示/背光和调频回归。此前主机通过不代表这些硬件行�
 ## 2026-11-11 本轮授权部署
 
 用户“刷吧”授权候选 `D4EFA944BD2B2081`。四个boot/vendor_boot分区写入成功，A槽回读及重启命令成功。vendor_boot SHA-256 `a0780fb7be038b74520e0174e507b7694f44134a2c334831f1986b4c904e0860`，回执 `uke-port/releases/2026-11-11-battery-active-inbox/flash-result-20261111-020725.json`。45项原始归档校验及13区预检通过，未写擦userdata。此项仅记录刷写传输；启动、事件处理、首次电池快照、电量/充电图标和其它功能待用户反馈及同次日志。
+
+
+## 2026-11-11 电量与充电显示基础验收通过
+
+用户原话：“ok了 电池电量和充电显示都没问题了”。对应当次授权刷入的 `D4EFA944BD2B2081`，
+vendor_boot SHA256 `a0780fb7be038b74520e0174e507b7694f44134a2c334831f1986b4c904e0860`，47,415,296B，
+kernel-final SHA256 `b6437f8190829f4c88908a96700b8777200e765796efad3c33a7d16dabe4e128`。
+刷写回执 `uke-port/releases/2026-11-11-battery-active-inbox/flash-result-20261111-020725.json`，用户验收记录 `uke-port/releases/2026-11-11-battery-active-inbox/user-battery-acceptance.json`。
+本轮仅记录用户实机反馈和文档，不操作设备，不改运行时代码，不重建或
+刷机。保留该release作电池UI已通过的阶段回退包；构建时SHA及元数据不改。
+
+本次确认电池电量与充电显示基本可用。尚未回收D4EF同次协议/服务日志，
+不补造events/drain/快照数值，也不宣称读数精度、插拔通知、长期刷新、
+冷启动/唤醒或超时恢复均已通过。充电控制仍由固件负责。四扬声器PCM、
+四路麦克风采集、HAL和DSP自动恢复继续待完成。

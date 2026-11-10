@@ -1,5 +1,15 @@
 # UniXNU on Xiaomi Pad 7 (uke) — 进度文档
 
+## 2026-11-11：电池电量与充电显示用户验收通过
+
+用户确认“ok了 电池电量和充电显示都没问题了”，对应CRC `D4EFA944BD2B2081`、vendor_boot SHA256
+`a0780fb7be038b74520e0174e507b7694f44134a2c334831f1986b4c904e0860`。归档`../uke-port/releases/2026-11-11-battery-active-inbox/`，
+验收记录`user-battery-acceptance.json`，运行时代码0bc1f97、归档源码4eb1665。
+复用sheng电池与XNU事件源，通过XNU已有kActive适配现代arm64e调用桩分类。
+本次仅验收电量/充电显示基本功能；同次计数、插拔、精度、长期/恢复及
+音频PCM/四路采集/HAL仍待验。本轮未操作设备或修改驱动，详见docs/DSP-AUDIO-POWER.md。
+
+
 ## 2026-11-03：当前27线GPU版本通过用户真机验收
 
 用户原话：“这版本上述问题都解决了 写文档然后推送到main吧”。本次确认对应22:31:33刷入的 `2026-11-03-ipados27-gpu-coreimage-resources`，CRC **90B6BC701210D9DB**。
