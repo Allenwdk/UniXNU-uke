@@ -41,7 +41,6 @@ extern "C" {extern volatile int32_t native_backlight_stats[16];}
 // The last brightness asked for: [0] level, [1] fade in milliseconds; [2] request timer runs, [3] fades begun from a request; [4] interrupts
 // with no status bit set, [5] the last status an interrupt saw.
 extern "C" {volatile int32_t native_backlight_request[6];}
-extern "C" {uint32_t native_backlight_power_result;}
 // Per origin: calls, status a/b, captured a/b, direct a/b, expired steps.
 // Origin 0 initial, 1 IRQ callout on the work-loop gate, 2 deadline timer, 3 attach.
 extern "C" {volatile uint32_t native_backlight_flow[4][8];}
@@ -75,7 +74,6 @@ constexpr uint8_t kAddress = 0x11, kBrtLsb = 0x04, kBrtMsb = 0x05, kBlEnable = 0
 // scale, not an absolute brightness. kMidNits is CoreBrightness's own default.
 constexpr uint32_t kMinNits = 2, kMidNits = 140, kMaxNits = 500;
 constexpr uint32_t kMaxLevel = 2047, kStepMs = 16, kPollMs = 1, kStepDeadlineMs = 25, kAttachMs = 250, kAttachTries = 240;
-constexpr uint32_t kWakeFrameWaitMs = 200;
 
 struct Window {IOMemoryMap *map; volatile uint32_t *va;};
 Window gGcc, gSe[2], gPins[4];
@@ -88,13 +86,8 @@ struct EngineIo {
 };
 EngineIo gIo[2];
 thread_call_t gIrqCall;
-thread_call_t gPowerCall;
 // The newest brightness asked for: goal << 16 | fade milliseconds, with bit 63 set while the work loop has not taken it.
 volatile uint64_t gRequest;
-// Request time in bits 2+, validity in bit 1, requested state in bit 0.
-volatile uint64_t gPower = 3; // The boot splash starts lit.
-uint64_t gWakeAfter, gLastSurface, gLastBlank;
-IOTimerEventSource *volatile gRequestTimer;
 bool gRuntimeReady;
 // Per engine: written, read back, errors, retry count; no successful write is inferred from a failed transfer.
 extern "C" {volatile int32_t native_backlight_engine[2][4];}
@@ -240,13 +233,12 @@ class ShengBacklight : public IOService {
     struct Engine {GeniI2c bus; Step step; bool started, usable, combinedRead; uint8_t lsb, enableSending; int32_t written, effective, enable; uint32_t sending; uint64_t deadline; uint32_t retries, failedGoal;};
     Engine engine[2] = {};
     IOWorkLoop *loop = nullptr;
-    IOTimerEventSource *fade = nullptr, *tick = nullptr, *attachTimer = nullptr, *request = nullptr, *wakeTimer = nullptr;
+    IOTimerEventSource *fade = nullptr, *tick = nullptr, *attachTimer = nullptr, *request = nullptr;
     uint32_t level = 0, from = 0, to = 0, target = 0, attachTries = 0;
     uint64_t start = 0, period = 0;
-    uint64_t wakeUntil = 0;
     bool irqMode = false, published = false;
     bool attached[2] = {};
-    UkeBacklightState power = {kMaxLevel / 2, true};
+    uint32_t reportedLevel = 0;
     unsigned traceBudget=0, traceArmed=0;
 
     void traceFlow(const char *where) {
@@ -262,12 +254,6 @@ class ShengBacklight : public IOService {
 
     static uint64_t now() {return mach_absolute_time();}
     static uint64_t after(uint32_t ms) {uint64_t delta = 0; nanoseconds_to_absolutetime((uint64_t)ms * NSEC_PER_MSEC, &delta); return now() + delta;}
-    static unsigned elapsedUs(uint64_t start, uint64_t end) {
-        uint64_t ns = 0;
-        if (start && end >= start) absolutetime_to_nanoseconds(end - start, &ns);
-        return (unsigned)(ns / NSEC_PER_USEC);
-    }
-
     int readRegister(Engine &e, uint8_t reg) {
         return e.combinedRead ? geni_i2c_start_read_combined(&e.bus, reg) : geni_i2c_start_read(&e.bus, reg);
     }
@@ -516,33 +502,6 @@ class ShengBacklight : public IOService {
             return kIOReturnSuccess;
         },self);
     }
-    static void deliverPower(thread_call_param_t owner, thread_call_param_t) {
-        auto *self = static_cast<ShengBacklight *>(owner);
-        self->loop->runAction([](OSObject *owner, void *, void *, void *, void *) -> IOReturn {
-            requestFired(owner, nullptr);
-            return kIOReturnSuccess;
-        }, self);
-    }
-    void cancelWake() {
-        __atomic_store_n(&gWakeAfter, 0, __ATOMIC_RELEASE);
-        wakeTimer->cancelTimeout();
-    }
-    void finishWake() {
-        const uint64_t requested = __atomic_load_n(&gWakeAfter, __ATOMIC_ACQUIRE);
-        if (!requested) return;
-        // A newer explicit power request will be handled by its own callout.
-        if (__atomic_load_n(&gPower, __ATOMIC_ACQUIRE) & 2u) return;
-        const uint64_t surface = __atomic_load_n(&gLastSurface, __ATOMIC_ACQUIRE);
-        const uint64_t blank = __atomic_load_n(&gLastBlank, __ATOMIC_ACQUIRE);
-        const uint64_t current = now();
-        const bool ready = surface > requested && surface > blank;
-        if (!ready && current < wakeUntil) return;
-        cancelWake();
-        power.on = true;
-        printf("UKE BL sync: wake=%s elapsed_us=%u surface_us=%u\n",
-               ready ? "surface" : "timeout", elapsedUs(requested, current), elapsedUs(requested, surface));
-        beginFade(power.requested, 0);
-    }
     // A brightness request on the work loop (setProperties arms this timer at once): the newest one asked for, if not yet taken.
     static void requestFired(OSObject *owner, IOTimerEventSource *) {
         ShengBacklight *self = static_cast<ShengBacklight *>(owner);
@@ -553,52 +512,26 @@ class ShengBacklight : public IOService {
         }
         native_backlight_request[2] = native_backlight_request[2] + 1;
         const uint64_t request = __atomic_exchange_n(&gRequest, 0ull, __ATOMIC_ACQUIRE);
-        const uint64_t power = __atomic_exchange_n(&gPower, 0ull, __ATOMIC_ACQUIRE);
-        const bool explicitPower = power & 2u, on = power & 1u;
-        const bool transitioning = explicitPower && self->power.on != on;
-        if(transitioning && self->traceArmed<4) {++self->traceArmed;self->traceBudget=48;}
-        if (explicitPower && !on) {
-            self->cancelWake();
-            self->power.on = false;
-            // Start the disable immediately under this gate, ahead of logging.
-            self->beginFade(0, 0);
-        } else if (transitioning && !__atomic_load_n(&gWakeAfter, __ATOMIC_ACQUIRE)) {
-            self->wakeUntil = after(kWakeFrameWaitMs);
-            __atomic_store_n(&gWakeAfter, power >> 2, __ATOMIC_RELEASE);
-            self->wakeTimer->wakeAtTime((AbsoluteTime)self->wakeUntil);
+        if (!(request >> 63)) return;
+        const unsigned received = (unsigned)native_backlight_request[3] + 1;
+        native_backlight_request[3] = (int32_t)received;
+        const uint32_t goal = (uint32_t)(request >> 16) & 0xffff;
+        const bool outputChanges = (goal == 0) != (self->target == 0);
+        if (outputChanges && self->traceArmed < 4) {
+            ++self->traceArmed;
+            self->traceBudget = 48;
         }
-        if (explicitPower) {
-            const uint64_t current = now();
-            printf("UKE BL sync: request=%u mailbox_us=%u last_blank_age_us=%u\n", (unsigned)on,
-                   elapsedUs(power >> 2, current), elapsedUs(__atomic_load_n(&gLastBlank, __ATOMIC_ACQUIRE), current));
-            printf("UKE BL: power=%u result=%x st=%d req=%d saved=%u write=%d/%d read=%d/%d err=%d/%d tmo=%d\n",
-                   (unsigned)on, __atomic_load_n(&native_backlight_power_result, __ATOMIC_RELAXED), native_backlight_stats[0], native_backlight_stats[1],
-                   self->power.requested, native_backlight_engine[0][0], native_backlight_engine[1][0],
-                   native_backlight_engine[0][1], native_backlight_engine[1][1],
-                   native_backlight_engine[0][2], native_backlight_engine[1][2], native_backlight_stats[13]);
-            self->traceFlow("power");
+        if (outputChanges || received <= 12 || !(received % 64))
+            printf("UKE BL: apply request=%u goal=%u mode=%s\n",
+                   received, goal, self->irqMode ? "irq" : "poll");
+
+        // CoreBrightness owns the fade and the wake level. A zero target
+        // disables the outputs while keeping the hardware brightness code.
+        self->beginFade(goal, (uint32_t)request & 0xffff);
+        if (goal && goal != self->reportedLevel) {
+            self->reportedLevel = goal;
+            self->publish(goal);
         }
-        if (request >> 63) {
-            const unsigned received = (unsigned)native_backlight_request[3] + 1;
-            native_backlight_request[3] = (int32_t)received;
-            const uint32_t goal = (uint32_t)(request >> 16) & 0xffff;
-            // The same mailbox batch may contain the system's nonzero dark floor.
-            // An explicit power transition retains the last lit user request.
-            const uint32_t previous = self->power.requested;
-            if (!transitioning) ukeBacklightRequest(self->power, goal);
-            if (received <= 12 || !(received % 64))
-                printf("UKE BL: apply request=%u goal=%u display_on=%u mode=%s\n",
-                       received, goal, (unsigned)self->power.on, self->irqMode ? "irq" : "poll");
-            // An explicit wake wins over a queued screen-off brightness floor.
-            if (!explicitPower || self->power.on) {
-                const uint32_t effective = explicitPower ? ukeBacklightEffective(self->power) : (self->power.on ? goal : 0);
-                self->beginFade(effective, self->power.on ? (uint32_t)request & 0xffff : 0);
-            }
-            // Report the accepted brightness to CoreBrightness. The temporary
-            // output level during screen-off must not replace it in the registry.
-            if (self->power.requested != previous) self->publish(self->power.requested);
-        } else if (explicitPower && self->power.on) self->beginFade(ukeBacklightEffective(self->power), 0);
-        self->finishWake();
     }
     static void tickFired(OSObject *owner, IOTimerEventSource *) {
         if (ShengBacklight *self = static_cast<ShengBacklight *>(owner)) self->service(2);
@@ -751,7 +684,6 @@ class ShengBacklight : public IOService {
         published = true;
         const int32_t read = native_backlight_stats[3] >= 0 ? native_backlight_stats[3] : native_backlight_stats[4];
         level = to = target = read >= 0 ? (uint32_t)read : kMaxLevel / 2;
-        power.requested = level ? level : kMaxLevel / 2;
         // CoreBrightness finds the backlight by backlight-control = true and takes it for the built-in display's only when
         // IOObjectConformsTo(service, "AppleARMBacklight") holds (CBDisplayContaineriOS findBacklight). Only for the built-in display
         // does CoreBrightness start the libEDR server (com.apple.libEDR.Notification) that QuartzCore's IOMFBServer sends to
@@ -766,7 +698,8 @@ class ShengBacklight : public IOService {
         const bool impersonated = control == 1 && impersonate() &&
             setProperty("NativeSandboxGrantProcess", "backboardd") && setProperty("backlight-control", true);
         publishCalibration();
-        publish(level);
+        reportedLevel = level;
+        publish(reportedLevel);
         registerService();
         native_backlight_stats[0] = impersonated ? 4 : 3;
         if (impersonated) __atomic_store_n(&gRuntimeReady, true, __ATOMIC_RELEASE);
@@ -784,10 +717,9 @@ public:
         tick = IOTimerEventSource::timerEventSource(this, &ShengBacklight::tickFired);
         attachTimer = IOTimerEventSource::timerEventSource(this, &ShengBacklight::attachFired);
         request = IOTimerEventSource::timerEventSource(this, &ShengBacklight::requestFired);
-        wakeTimer = IOTimerEventSource::timerEventSource(this, &ShengBacklight::requestFired);
-        if (!loop || !fade || !tick || !attachTimer || !request || !wakeTimer) return false;
+        if (!loop || !fade || !tick || !attachTimer || !request) return false;
         if (loop->addEventSource(fade) || loop->addEventSource(tick) || loop->addEventSource(attachTimer) ||
-            loop->addEventSource(request) || loop->addEventSource(wakeTimer)) return false;
+            loop->addEventSource(request)) return false;
         for (unsigned i = 0; i < 2; ++i) {
             gIo[i].va = gSe[i].va;
             gIo[i].lock = IOSimpleLockAlloc();
@@ -811,16 +743,11 @@ public:
         thread_call_t irqCall = thread_call_allocate_with_options(&ShengBacklight::deliverIrq, this,
             THREAD_CALL_PRIORITY_KERNEL_HIGH,THREAD_CALL_OPTIONS_ONCE);
         if (!irqCall) return false;
-        thread_call_t powerCall = thread_call_allocate_with_options(&ShengBacklight::deliverPower, this,
-            THREAD_CALL_PRIORITY_KERNEL_HIGH, THREAD_CALL_OPTIONS_ONCE);
-        if (!powerCall) {thread_call_free(irqCall); return false;}
         // This board service and its IRQ bindings live for the boot. Pin the
         // owner before publishing a callout that the primary IRQ can queue.
         retain();
         __atomic_store_n(&gIrqCall,irqCall,__ATOMIC_RELEASE);
-        __atomic_store_n(&gPowerCall, powerCall, __ATOMIC_RELEASE);
         printf("UKE BL flow: sources loop=%p irqCall=%p deadline=%p\n",loop,irqCall,tick);
-        __atomic_store_n(&gRequestTimer, request, __ATOMIC_RELEASE);
         native_backlight_stats[0] = 2;
         loop->runAction(&ShengBacklight::begin, this);
         return true;
@@ -912,27 +839,4 @@ extern "C" void sheng_backlight_start(void) {
 
 extern "C" bool native_backlight_runtime_ready(void) {
     return __atomic_load_n(&gRuntimeReady, __ATOMIC_ACQUIRE);
-}
-
-// Validated display power requests only. This mailbox never waits on an I2C transaction.
-extern "C" void native_backlight_set_display_power(bool on) {
-    __atomic_store_n(&gPower, (mach_absolute_time() << 2) | 2u | (on ? 1u : 0u), __ATOMIC_RELEASE);
-    thread_call_t call = __atomic_load_n(&gPowerCall, __ATOMIC_ACQUIRE);
-    if (call) thread_call_enter(call);
-}
-
-// GOP publishes after a successful latch/store/copy. The display gate never
-// takes the backlight gate, and a synthetic blank cannot enable the LEDs.
-extern "C" void native_backlight_scanout_committed(bool blank) {
-    const uint64_t time = mach_absolute_time();
-    if (blank) {
-        __atomic_store_n(&gLastBlank, time, __ATOMIC_RELEASE);
-        return;
-    }
-    __atomic_store_n(&gLastSurface, time, __ATOMIC_RELEASE);
-    const uint64_t after = __atomic_load_n(&gWakeAfter, __ATOMIC_ACQUIRE);
-    if (after && time > after) {
-        thread_call_t call = __atomic_load_n(&gPowerCall, __ATOMIC_ACQUIRE);
-        if (call) thread_call_enter(call);
-    }
 }

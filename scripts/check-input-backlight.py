@@ -162,22 +162,6 @@ int main() {
     CHECK(ukeBacklightLevelForNits(INT32_MAX) == 2047);
     uint32_t previous = 0;
     for (int n = 0; n <= 500; ++n) {const auto level = ukeBacklightLevelForNits(n << 16); CHECK(level >= previous); previous = level;}
-    UkeBacklightState state = {700, true};
-    for (unsigned i = 0; i < 20; ++i) {
-        CHECK(ukeBacklightPower(state, false) == 0);
-        ukeBacklightRequest(state, 0); CHECK(state.requested == 700 + i);
-        ukeBacklightRequest(state, 701 + i); CHECK(ukeBacklightEffective(state) == 0);
-        CHECK(ukeBacklightPower(state, true) == 700 + i);
-        ukeBacklightRequest(state, 701 + i);
-    }
-    bool on = false; uint64_t scalar = 1;
-    CHECK(ukeBacklightDecodePower(&scalar, 1, 0, on) && on);
-    scalar = 0; CHECK(ukeBacklightDecodePower(&scalar, 1, 0, on) && !on);
-    scalar = 2; CHECK(!ukeBacklightDecodePower(&scalar, 1, 0, on));
-    scalar = 0x100000001ull; CHECK(!ukeBacklightDecodePower(&scalar, 1, 0, on));
-    CHECK(!ukeBacklightDecodePower(nullptr, 1, 0, on));
-    CHECK(!ukeBacklightDecodePower(&scalar, 2, 0, on));
-    CHECK(!ukeBacklightDecodePower(&scalar, 1, 8, on));
     Driver d; Engine models[2]; setup(d, models);
     d.kick(0); d.kick(1); drain(d, models);
     CHECK(d.published && models[0].slave[5] == 64 && models[1].slave[5] == 64);

@@ -6,15 +6,11 @@
 #include <pexpert/pexpert.h>
 #include <sys/proc.h>
 #include "LegacyDisplayOffsets27.h"
-#include "UkeBacklightState.h"
 
 extern volatile uintptr_t native_legacy_object;
 extern volatile uint32_t native_legacy_swap_validation_calls;
 extern volatile uint32_t native_legacy_transfer_calls;
 extern "C" unsigned native_legacy_vsync_report(char *, unsigned);
-extern "C" void native_backlight_set_display_power(bool);
-extern "C" bool native_legacy_is_display_power_client(IOUserClient *);
-extern "C" uint32_t native_backlight_power_result;
 
 extern "C" void
 native_legacy_display_sample27(const char *reason)
@@ -41,22 +37,6 @@ native_legacy_display_sample27(const char *reason)
 }
 
 namespace {
-void bridgeDisplayPower(IOUserClient *client, uint32_t selector,
-    const IOExternalMethodArguments *args, uint32_t result, unsigned phase)
-{
-    // The source caller invokes phase 1 after the original dispatch and IPC
-    // unlock. The generic 24A446 display has no platform panel-power backend:
-    // its request may return Unsupported while the OS still stops submitting
-    // frames. Handle this board's independent LED output without changing that
-    // original return or accepting any other error/client/selector.
-    if (selector != 12 || phase != 1 || (result != kIOReturnSuccess && result != (uint32_t)kIOReturnUnsupported) || !client || !args ||
-        args->structureInputDescriptor || !native_legacy_is_display_power_client(client)) return;
-    bool on = false;
-    if (!ukeBacklightDecodePower(args->scalarInput, args->scalarInputCount, args->structureInputSize, on)) return;
-    __atomic_store_n(&native_backlight_power_result, result, __ATOMIC_RELAXED);
-    native_backlight_set_display_power(on);
-}
-
 constexpr unsigned kClients = 16, kSelectors = 101, kBudget = 160;
 struct ClientCounts {
     uintptr_t object;
@@ -76,7 +56,6 @@ extern "C" void
 native_legacy_method_trace(IOUserClient *client, uint32_t selector,
     const IOExternalMethodArguments *args, uint32_t result, unsigned phase)
 {
-    bridgeDisplayPower(client, selector, args, result, phase);
     if (selector >= kSelectors || phase > 1 || !enabled() || !client ||
         !client->metaCast("IOMobileFramebufferUserClient")) return;
     ClientCounts *counts = nullptr;
