@@ -245,8 +245,8 @@
         "name": "ACV",
         "buswidth": 0,
         "fixed": 1,
-        "perfmode": 4,
-        "perfmode_kbps": 0
+        "perfmode": 8,
+        "perfmode_kbps": 16500000
       }
     ],
     "ubwc": {

@@ -1,0 +1,42 @@
+From: Uke integration <uke@local>
+Subject: [PATCH] Mount the owner-signed brightness adapter after its library
+
+Reuses UniXNU-sheng a68ee4ee's sheng-appsync-runtime.patch mount order and
+the existing addon writer/union helper. Only BacklightMode and backboardd
+are packaged; no application installation or dynamic user trust hooks.
+
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8715,6 +8715,32 @@
+ 	    wifi_bin_point, sizeof(wifi_bin_point), "/usr/libexec/launchd_cache_loader",
+ 	    "/usr/libexec/unixnu-wpa_supplicant", &wifi_bin_stage, &wifi_bin_status);
+ 	printf("UKE WIFI BIN: stage=%d status=%d\n", wifi_bin_stage, wifi_bin_status);
++	uint32_t backlight_enabled = 0;
++	PE_parse_boot_argn("sheng-backlight", &backlight_enabled, sizeof(backlight_enabled));
++	uint32_t backlight_runtime = 1;
++	PE_parse_boot_argn("uke-backlight-runtime", &backlight_runtime, sizeof(backlight_runtime));
++	extern bool native_backlight_runtime_ready(void);
++	if (backlight_enabled == 1 && backlight_runtime != 0 && native_backlight_runtime_ready()) {
++		static const char bl_lib_source[] = "/private/var/ngpu/backlight/lib", bl_lib_point[] = "/usr/lib";
++		static const char bl_exec_source[] = "/private/var/ngpu/backlight/libexec", bl_exec_point[] = "/usr/libexec";
++		static volatile int bl_lib_stage, bl_lib_status, bl_exec_stage, bl_exec_status;
++		native_gpu_addon_mount(p, scratch, 0xc00, bl_lib_source, sizeof(bl_lib_source),
++		    bl_lib_point, sizeof(bl_lib_point), "/usr/lib/dyld", "/usr/lib/UniXNUBacklight.dylib",
++		    &bl_lib_stage, &bl_lib_status);
++		/* Leave the stock executable visible unless its dependency mounted.
++		 * The /usr/libexec lower union includes the existing Wi-Fi tool. */
++		if (bl_lib_stage == 5 && !bl_lib_status) {
++			native_gpu_addon_mount(p, scratch, 0xc00, bl_exec_source, sizeof(bl_exec_source),
++			    bl_exec_point, sizeof(bl_exec_point), "/usr/libexec/unixnu-wpa_supplicant",
++			    "/usr/libexec/backboardd", &bl_exec_stage, &bl_exec_status);
++		}
++		printf("UKE BL RUNTIME: lib=%d/%d executable=%d/%d\n", bl_lib_stage, bl_lib_status,
++		    bl_exec_stage, bl_exec_status);
++	} else if (backlight_enabled == 1 && backlight_runtime == 0) {
++		printf("UKE BL RUNTIME: disabled by uke-backlight-runtime=0\n");
++	} else if (backlight_enabled == 1) {
++		printf("UKE BL RUNTIME: backlight service not ready; using stock backboardd\n");
++	}
+ 	native_cryptex_os_view(p, scratch);
+ 	native_gestalt_cache_drop(p, scratch);
+ 	native_ls_store_drop(p, scratch);

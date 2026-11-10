@@ -1,0 +1,113 @@
+--- a/pexpert/gen/bootargs.c
++++ b/pexpert/gen/bootargs.c
+@@ -195,6 +195,8 @@
+  * board sets is turned off with name=0 on the command line). A board that defines none gets this
+  * empty one.
+  */
++#include "uke_adt_driver_args.h"
++
+ __attribute__((weak)) char PE_builtin_boot_args[] = "";
+ 
+ boolean_t
+@@ -204,6 +206,7 @@
+ 	int                     max_len)
+ {
+ 	return PE_parse_boot_argn_internal(PE_boot_args(), arg_string, arg_ptr, max_len, FALSE) ||
++	       uke_parse_adt_driver_arg(arg_string, arg_ptr, max_len, FALSE) ||
+ 	       PE_parse_boot_argn_internal(PE_builtin_boot_args, arg_string, arg_ptr, max_len, FALSE);
+ }
+ 
+@@ -225,6 +228,7 @@
+ 	int                     strlen)
+ {
+ 	return PE_parse_boot_argn_internal(PE_boot_args(), arg_string, arg_ptr, strlen, TRUE) ||
++	       uke_parse_adt_driver_arg(arg_string, arg_ptr, strlen, TRUE) ||
+ 	       PE_parse_boot_argn_internal(PE_builtin_boot_args, arg_string, arg_ptr, strlen, TRUE);
+ }
+ 
+--- /dev/null
++++ b/pexpert/gen/uke_adt_driver_args.h
+@@ -0,0 +1,83 @@
++/* SPDX-License-Identifier: BSD-2-Clause-Patent */
++/* Uke iPadOS27 migration policy. Keep allowlist matched by the host regression. */
++#ifndef UKE_ADT_DRIVER_ARGS_H
++#define UKE_ADT_DRIVER_ARGS_H
++#define UKE_ADT_DRIVER_ARGS_MAX 4096u
++__attribute__((used)) const char PE_adt_driver_args_abi[] = "unixnu-driver-args-v1";
++static const char *const uke_adt_driver_keys[] = {
++    "sheng-touch",
++    "sheng-touch-hid",
++    "sheng-buttons",
++    "sheng-backlight",
++    "sheng-touch-split",
++    "sheng-touch-poll",
++    "offline-legacy-register",
++    "offline-legacy-gop",
++    "offline-legacy-unit-scale",
++    "offline-legacy-pm",
++    "offline-legacy-validate",
++    "offline-legacy-transfer",
++    "offline-legacy-cpu-present",
++    "offline-legacy-phase",
++    "offline-legacy-noconsole",
++    "sheng-dpu-scanout",
++    "sheng-vsync",
++    "sheng-vsync-fixed",
++};
++static int
++uke_adt_driver_key(const char *key, unsigned length)
++{
++    for (unsigned i = 0; i < sizeof(uke_adt_driver_keys) / sizeof(uke_adt_driver_keys[0]); ++i)
++        if (strlen(uke_adt_driver_keys[i]) == length && !strncmp(key, uke_adt_driver_keys[i], length)) return (int)i;
++    return -1;
++}
++/* Validate every token before using any default. Original CLI grammar is unchanged. */
++static boolean_t
++uke_adt_driver_valid(const char *text, unsigned size)
++{
++    if (!text || !size || size > UKE_ADT_DRIVER_ARGS_MAX || text[size - 1] != 0) return FALSE;
++    for (unsigned i = 0; i + 1 < size; ++i) if (!text[i]) return FALSE;
++    uint32_t seen = 0;
++    const char *p = text;
++    while (*p) {
++        while (*p == ' ' || *p == '\t') ++p;
++        if (!*p) break;
++        const char *start = p;
++        while (*p && *p != '=' && *p != ' ' && *p != '\t') ++p;
++        int index = uke_adt_driver_key(start, (unsigned)(p - start));
++        if (index < 0 || *p != '=' || (seen & (1u << index))) return FALSE;
++        seen |= 1u << index;
++        ++p;
++        unsigned radix = 10;
++        if (*p == '0' && p[1] == 'x') {radix = 16; p += 2;}
++        else if (*p == '0' && p[1] >= '0' && p[1] <= '9') return FALSE;
++        uint64_t value = 0;
++        unsigned digits = 0;
++        while (*p && *p != ' ' && *p != '\t') {
++            unsigned digit;
++            if (*p >= '0' && *p <= '9') digit = (unsigned)(*p - '0');
++            else if (radix == 16 && *p >= 'a' && *p <= 'f') digit = (unsigned)(*p - 'a') + 10;
++            else if (radix == 16 && *p >= 'A' && *p <= 'F') digit = (unsigned)(*p - 'A') + 10;
++            else return FALSE;
++            if (digit >= radix || value > (0xffffffffull - digit) / radix) return FALSE;
++            value = value * radix + digit; ++digits; ++p;
++        }
++        if (!digits) return FALSE;
++    }
++    return TRUE;
++}
++static boolean_t
++uke_parse_adt_driver_arg(const char *key, void *value, int size, boolean_t string)
++{
++    if (uke_adt_driver_key(key, (unsigned)strlen(key)) < 0) return FALSE;
++    DTEntry chosen;
++    const void *data = NULL;
++    unsigned length = 0;
++    /* Lookup before SecureDTInit returns kError. Never cache absence or a pointer
++     * across PE_slide_devicetree; these drivers consume config after tree setup. */
++    if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
++        SecureDTGetProperty(chosen, "unixnu-driver-args", &data, &length) != kSuccess ||
++        !uke_adt_driver_valid((const char *)data, length)) return FALSE;
++    return PE_parse_boot_argn_internal((char *)data, key, value, size, string);
++}
++#endif

@@ -514,10 +514,18 @@ for stem, extra in [('CpuFreqProbe', ()),
                     ('WifiAth11k', ('-I', str(ROOT / 'drivers/Ath12kWifi/include'))),
                     ('WifiProbe', ('-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'), '-I', str(ROOT / 'kits/ArmSmmu4K'))),
                     ('TouchProbe', ('-I', str(ROOT / 'drivers/QcomGeniSpi'), '-I', str(ROOT / 'drivers/ShengNovatekTouch'))),
-                    ('DpuProbe', ()),
+                    ('DpuProbe', ()), ('ButtonProbe', ()), ('BacklightProbe', ()),
                     ('GpuPowerProbe', tuple(x for d in ('drivers/Adreno740', 'kits/ArmSmmu4K', 'kits/AdrenoFirmware', 'kits/AdrenoPM4', 'kits/Sm7675Platform', 'build/sheng-gmu', 'build/sheng-gpu-smmu') for x in ('-I', str(ROOT / d))))]:
     compile_cpp(KITS / (stem + '.cpp'), board_dir / (stem + '.o'), extra)
     board_objects.append(board_dir / (stem + '.o'))
+# Reuse sheng's late-registered brightness service and its event-driven GENI core.
+compile_cpp(KITS / 'AppleARMBacklight.cpp', board_dir / 'AppleARMBacklight.o')
+run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func',
+     '--globalize-symbol=__GLOBAL__sub_I_AppleARMBacklight.cpp',
+     board_dir / 'AppleARMBacklight.o', board_dir / 'AppleARMBacklight.late.o'])
+board_objects.append(board_dir / 'AppleARMBacklight.late.o')
+compile_c(KITS / 'GeniI2c.c', board_dir / 'GeniI2c.o')
+board_objects.append(board_dir / 'GeniI2c.o')
 # WifiNet.cpp (the OS network side: en0 + Apple80211). Its IO80211/IONetwork*
 # classes register late, so the board runs __GLOBAL__sub_I_WifiNet.cpp inside a
 # preModLoad/postModLoad window: globalise that constructor and drop the
@@ -582,7 +590,13 @@ sources = [ROOT / 'drivers/GopFramebuffer/NativeLegacyDisplay.cpp', ROOT / 'driv
            ROOT / 'drivers/GopFramebuffer/NativeHalfCodes.h', source,
            ROOT / 'scripts' / ABI_PATH.name, keystore_source, ROOT / 'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',
            ROOT / 'scripts/hid-device-24A446.json', hid_probe]
+if HID_SOURCE:
+    sources.append(ROOT / 'drivers/ShengHidInput/NativeHidInput.cpp')
 sources += [ROOT / 'kits/uke/DisplayCallTrace27.cpp', ROOT / 'kits/uke/LegacyDisplayProbe.cpp']
+sources += [KITS / name for name in ('ButtonProbe.cpp', 'BacklightProbe.cpp', 'AppleARMBacklight.cpp',
+                                    'GeniI2c.c', 'GeniI2c.h', 'UkeButtonState.h', 'UkeBacklightState.h',
+                                    'TouchProbe.cpp')]
+sources += [Path(__file__).resolve()]
 sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiAth11k', '.cpp'), ('WifiNet', '.cpp'), ('WifiQrtr', '.c'), ('WifiQmiSupport', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h'), ('UkeWpssMemory', '.h'), ('UkeClassRegistration', '.h')]]
 sources += [qmi_module / 'include/nw_wcn6750_qmi.h', ROOT / 'scripts/build-wcn6750-qmi.py']
 sources += [KITS / 'BootResetCore.h', ROOT / 'scripts/build-ath11k-wifi.py',

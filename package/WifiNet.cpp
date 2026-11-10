@@ -770,7 +770,7 @@ void trafficLog(void *, wait_result_t) {
           static_cast<unsigned long long>(control.flush_again));
     }
     if (st.state != NW_STA_UP) continue;
-    check_input(); if (second % 10 == 0) log_traffic();
+    check_input(); if (diagnostics && second % 10 == 0) log_traffic();
   }
 }
 

@@ -9,14 +9,11 @@ commit = "e31e90a24c27ad6cbe981650d12a1a4124065b03"
 [source."IOStorageFamily"]
 commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 
-[source."ShengHidInput"]
-commit = "71a40e76daeae1bb4127546f96ffa7339c7a06ff"
-
 [source."ShengUfs"]
 commit = "78c93b0941896e0515c6abaad3ff0d88b50a78ca"
 
 [source."Sm8550Platform"]
-commit = "23b2049fcd9e30356161def84231334fb55ecca9"
+commit = "a9f45dc60c035084b95463781538380f4c3606c9"
 
 [source."corecrypto-2023"]
 commit = "11fba65b12d8830630e248dfa8344caf8b065f26"

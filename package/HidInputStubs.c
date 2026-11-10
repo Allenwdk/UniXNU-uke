@@ -21,6 +21,7 @@ __attribute__((weak)) volatile uint64_t native_hid_input_object;
 
 __attribute__((weak)) void native_hid_static_init(void) {}
 __attribute__((weak)) IOService *native_hid_input_allocate(void) { return 0; }
+__attribute__((weak)) IOService *native_hid_buttons_allocate(void) { return 0; }
 __attribute__((weak)) IOService *native_hid_touch_allocate(void) { return 0; }
 
 /* HidInputProbe calls the source driver's static initializer through its asm label. */

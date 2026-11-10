@@ -28,7 +28,7 @@ name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
 # Display fence callout delivery and bounded polling fallback.
-commit = "b688eb27996f6bd5f4b075255046b25b0cec0fbd"
+commit = "99b0d7e8c3d31c4f6b9f669d9c291e95fa7f2fc8"
 
 [[source]]
 name = "AdrenoMetal"
@@ -48,9 +48,9 @@ commit = "78c93b0941896e0515c6abaad3ff0d88b50a78ca"
 [[source]]
 name = "ShengHidInput"
 kind = "driver"
-git = "https://github.com/UniXNU/ShengHidInput.git"
-# Upstream main, rechecked 2026-11-09; tracked content matches the prior pin.
-commit = "71a40e76daeae1bb4127546f96ffa7339c7a06ff"
+# Board-owned variant of upstream 71a40e76; preserve the class/report ABI.
+# Consumer-only physical buttons use the existing 24A446 generic HID personality.
+local = "drivers/ShengHidInput"
 
 [[source]]
 name = "ShengNovatekTouch"

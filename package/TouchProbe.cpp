@@ -478,10 +478,7 @@ extern volatile uint32_t native_touch_edge_stats[4];      // [0] edge hook insta
 // BootProgress's on-screen row, weak: the GPU defconfig builds without that archive and then this no-op wins.
 extern "C" __attribute__((weak)) void native_progress_touch_line(const char *) {}
 // Upstream NativeHidInput's button sink, weak no-op here: uke has no PMIC button source yet.
-// Uke has no button-event producer in this bring-up target. Define the optional
-// registration hook outright: authenticated weak imports otherwise survive the
-// native link as a dyld bind, which a self-contained boot kernel cannot resolve.
-extern "C" void native_buttons_set_sink(void (*)(void *, uint32_t), void *) {}
+// ButtonProbe now supplies the strong native_buttons_set_sink registration hook.
 extern "C" {
 extern volatile uint32_t native_hid_stage, native_hid_resource_found;   // HidInputProbe: where the HID gate stopped
 extern volatile int native_hid_load_status, native_hid_matching_load_status;

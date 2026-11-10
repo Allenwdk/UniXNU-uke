@@ -7,6 +7,9 @@
 #include <libkern/c++/OSMetaClass.h>
 #include <libkern/c++/OSSymbol.h>
 #include <libkern/c++/OSIterator.h>
+#include <libkern/c++/OSDictionary.h>
+#include <libkern/c++/OSNumber.h>
+#include <libkern/c++/OSArray.h>
 #include <libkern/c++/OSKext.h>
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
@@ -14,6 +17,7 @@ extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_hid_static_init(void) __asm__("__GLOBAL__sub_I_NativeHidInput.cpp");
 extern "C" IOService *native_hid_input_allocate(void);
 extern "C" IOService *native_hid_touch_allocate(void);
+extern "C" IOService *native_hid_buttons_allocate(void);
 extern "C" {
 extern kern_return_t OSKextLoadKextWithIdentifier(const char *);
 volatile uint32_t native_hid_stage,native_hid_resource_found;
@@ -77,6 +81,79 @@ static IORegistryEntry *findEventDriver(IORegistryEntry *parent,unsigned depth) 
     }
     it->release();return found;
 }
+// The internal Consumer Power key is carried by the upstream keyboard service.
+// Apple's iOS keyboard filter delays that key by 150 ms unless this per-service
+// parameter is zero. Do not change global keyboard preferences or report data.
+extern "C" {volatile int32_t native_button_policy_stats[6];}
+static uint64_t buttonPolicyService;
+static uint64_t buttonPolicyAttemptedService;
+static unsigned buttonPolicyAttempts;
+static bool publishButtonPolicy(IORegistryEntry *entry) {
+    OSObject *old=entry->copyProperty("HIDEventServiceProperties");
+    OSDictionary *existing=OSDynamicCast(OSDictionary,old);
+    OSDictionary *properties=existing?OSDictionary::withDictionary(existing):OSDictionary::withCapacity(1);
+    OSNumber *zero=OSNumber::withNumber((unsigned long long)0,32);
+    const bool ok=properties && zero && properties->setObject("LockKeyDelay",zero) &&
+        entry->setProperty("HIDEventServiceProperties",properties);
+    OSSafeReleaseNULL(zero);OSSafeReleaseNULL(properties);OSSafeReleaseNULL(old);
+    return ok;
+}
+static void applyButtonPolicy(IOService *device,IOService *service) {
+    if(!device || (uintptr_t)device!=native_hid_input_object || !service)return;
+    const uint64_t identity=service->getRegistryEntryID();
+    if(!identity || identity==buttonPolicyService)return;
+    if(identity!=buttonPolicyAttemptedService) {buttonPolicyAttemptedService=identity;buttonPolicyAttempts=0;}
+    if(buttonPolicyAttempts>=30)return;
+    ++buttonPolicyAttempts;
+    native_button_policy_stats[0]=1;
+    OSDictionary *parameters=OSDictionary::withCapacity(2);
+    OSNumber *zero=OSNumber::withNumber((unsigned long long)0,32);
+    IOReturn status=kIOReturnNoMemory;
+    if(parameters && zero && parameters->setObject("HIDDeviceParameters",kOSBooleanTrue) &&
+       parameters->setObject("LockKeyDelay",zero))status=service->setProperties(parameters);
+    OSObject *value=service->copyProperty("HIDEventServiceProperties");
+    OSDictionary *properties=OSDynamicCast(OSDictionary,value);
+    OSNumber *delay=properties?OSDynamicCast(OSNumber,properties->getObject("LockKeyDelay")):nullptr;
+    const bool verified=status==kIOReturnSuccess && delay && delay->unsigned32BitValue()==0;
+    native_button_policy_stats[1]=(int32_t)status;
+    native_button_policy_stats[2]=delay?(int32_t)delay->unsigned32BitValue():-1;
+    native_button_policy_stats[3]=(int32_t)buttonPolicyAttempts;
+    if(verified) {buttonPolicyService=identity;native_button_policy_stats[0]=2;}
+    if(verified || buttonPolicyAttempts<=3)
+        printf("UKE BTN policy: service=%llu status=%x LockKeyDelay=%d verified=%u attempt=%u\n",
+               (unsigned long long)identity,(unsigned)status,native_button_policy_stats[2],(unsigned)verified,buttonPolicyAttempts);
+    OSSafeReleaseNULL(value);OSSafeReleaseNULL(zero);OSSafeReleaseNULL(parameters);
+}
+static IOService *findButtonEventService(IORegistryEntry *parent,unsigned depth) {
+    if(!depth)return nullptr;
+    OSIterator *it=parent->getChildIterator(gIOServicePlane);if(!it)return nullptr;
+    IOService *found=nullptr;
+    while(OSObject *child=it->getNextObject()) {
+        IORegistryEntry *entry=OSDynamicCast(IORegistryEntry,child);if(!entry)continue;
+        if(entry->metaCast("IOHIDEventService")) {
+            // A composite HID device can have several interfaces. Match the
+            // keyboard usage which activates Apple's Consumer Power delay;
+            // never pick the adjacent digitizer service merely by tree order.
+            OSObject *value=entry->copyProperty("DeviceUsagePairs");
+            if(!value) {
+                if(IORegistryEntry *interface=entry->getParentEntry(gIOServicePlane))
+                    value=interface->copyProperty("DeviceUsagePairs");
+            }
+            OSArray *pairs=OSDynamicCast(OSArray,value);
+            bool keyboard=false;
+            for(unsigned i=0;pairs && i<pairs->getCount();++i) {
+                OSDictionary *pair=OSDynamicCast(OSDictionary,pairs->getObject(i));
+                OSNumber *page=pair?OSDynamicCast(OSNumber,pair->getObject("DeviceUsagePage")):nullptr;
+                OSNumber *usage=pair?OSDynamicCast(OSNumber,pair->getObject("DeviceUsage")):nullptr;
+                if(page && usage && page->unsigned32BitValue()==1 && usage->unsigned32BitValue()==6)keyboard=true;
+            }
+            OSSafeReleaseNULL(value);
+            if(keyboard) {found=OSDynamicCast(IOService,entry);if(found)found->retain();}
+        } else found=findButtonEventService(entry,depth-1);
+        if(found)break;
+    }
+    it->release();return found;
+}
 static void appendProperty(IORegistryEntry *driver,const char *key,const char *label,size_t &used) {
     OSObject *value=driver->copyProperty(key);
     int n=snprintf(native_hid_input_props+used,sizeof(native_hid_input_props)-used,"%s:",label);
@@ -109,6 +186,10 @@ static void appendProperty(IORegistryEntry *driver,const char *key,const char *l
 }
 __attribute__((noinline)) void native_hid_live_checkpoint(IOService *device) {
     size_t used=0;native_hid_input_registry[0]=0;describeInput(device,0,used);
+    if((uintptr_t)device==native_hid_input_object && !device->getProperty("UkePhysicalButtons")) {
+        IOService *service=findButtonEventService(device,4);
+        applyButtonPolicy(device,service);OSSafeReleaseNULL(service);
+    }
     if(IORegistryEntry *driver=findEventDriver(device,4)) {
         size_t props=0;native_hid_input_props[0]=0;
         // backboardd's digitizer service classification reads Built-In/DisplayIntegrated from the event service it
@@ -116,7 +197,7 @@ __attribute__((noinline)) void native_hid_live_checkpoint(IOService *device) {
         // Set once only: every setProperty on a service with attached user clients is a registry property-change
         // notification, and repeating it each second keeps backboardd/hidd busy re-evaluating the service.
         static IORegistryEntry *publishedFor;
-        if(device->getProperty("Built-In") && publishedFor!=driver) {
+        if(device->getProperty("Built-In") && !device->getProperty("UkePhysicalButtons") && publishedFor!=driver) {
             publishedFor=driver;
             driver->setProperty("Built-In",kOSBooleanTrue);driver->setProperty("DisplayIntegrated",kOSBooleanTrue);
             // backboardd (-[BKHIDDirectTouchEventProcessor processEvent:sender:dispatcher:], decoded from the target) drops a
@@ -179,21 +260,27 @@ void native_hid_input_probe(void) {
             if(handle) {
                 native_hid_static_init();native_hid_input_meta_status=ukeClassEnd(handle);
                 if(!native_hid_input_meta_status) {
-                    IOService *device=native_hid_input_allocate();
+                    unsigned split=0,buttons=0;
+                    PE_parse_boot_argn("sheng-touch-split",&split,sizeof(split));
+                    PE_parse_boot_argn("sheng-buttons",&buttons,sizeof(buttons));
+                    const bool physical=split==1 && buttons==1;
+                    IOService *device=physical?native_hid_buttons_allocate():native_hid_input_allocate();
                     native_hid_input_object=(uintptr_t)device;
                     bool valid=device && device->metaCast("IOHIDDevice") && device->init();
                     native_hid_input_observed(0,valid?0:kIOReturnError);
                     bool attached=valid && device->attach(resource);
                     native_hid_input_observed(1,attached?0:kIOReturnError);
+                    // Seed the property before matching; the live checkpoint
+                    // also verifies/merges it on the actual event service.
+                    native_button_policy_stats[4]=attached && !physical && publishButtonPolicy(device);
                     bool started=attached && device->start(resource);
+                    if(started && physical)printf("UKE BTN: Consumer Control device started report=2 usage=c/1 keyboard=0\n");
                     if(!started) {
                         native_hid_input_observed(7,kIOReturnError);
                         if(attached)device->detach(resource);
                         OSSafeReleaseNULL(device);native_hid_input_object=0;
                     }
                     unsigned touchHid=0;
-                    unsigned split=0;
-                    PE_parse_boot_argn("sheng-touch-split",&split,sizeof(split));
                     if(started && split==1 && PE_parse_boot_argn("sheng-touch-hid",&touchHid,sizeof(touchHid)) && touchHid==1) {
                         // Separate digitizer service (primary usage Digitizer/Touch Screen, Built-In).
                         IOService *touch=native_hid_touch_allocate();

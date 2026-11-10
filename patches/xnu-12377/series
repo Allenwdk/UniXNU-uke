@@ -92,3 +92,9 @@ uke-wifi-launch-facts.patch
 
 # Actual authenticated SystemOS root union identity; keep original AMFI decisions.
 uke-systemos-root-identity.patch
+
+# Owner-signed backboardd brightness mode, gated with the backlight driver.
+uke-backlight-runtime.patch
+
+# CLI > bounded ADT driver defaults > upstream built-in defaults, selected keys only.
+uke-adt-driver-args.patch

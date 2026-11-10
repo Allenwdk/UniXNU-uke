@@ -416,7 +416,9 @@ def derive(args):
                         preemption=False, ifpc=False),
             bcms=[dict(name='SH0', buswidth=16, fixed=0, perfmode=0, perfmode_kbps=0),
                   dict(name='MC0', buswidth=4, fixed=0, perfmode=0, perfmode_kbps=0),
-                  dict(name='ACV', buswidth=0, fixed=1, perfmode=4, perfmode_kbps=0)],
+                  # ACV perf mode as upstream a6xx_catalog.c gives A740 and the A732-sized
+                  # 0x43030c00 (BIT(3), 16500000 kBps); a zero threshold never sets it on A7xx.
+                  dict(name='ACV', buswidth=0, fixed=1, perfmode=8, perfmode_kbps=16500000)],
             ubwc=dict(enc_version=board['ubwc_version'], dec_version=board['ubwc_version'],
                       swizzle=board['ubwc_swizzle'], bank_spread=True,
                       highest_bank_bit=board['highest_bank_bit'], macrotile=True),

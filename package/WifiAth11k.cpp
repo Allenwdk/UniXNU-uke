@@ -749,6 +749,9 @@ extern "C" void uke_wifi_station_step(void) {
     // session, and the real supplicant needs it.
     networkStartStep();
     static uint64_t next, nextCtl;
+    static int periodic = -1;   // the five-second ring and control rows: log-wifi=1
+    if (periodic < 0) {uint32_t v = 0; PE_parse_boot_argn("log-wifi", &v, sizeof v); periodic = v != 0;}
+    if (!periodic) return;
     const uint64_t now = nowMs();
     if (nw_cfg80211_primary() && now >= next) {
         next = now + 5000;

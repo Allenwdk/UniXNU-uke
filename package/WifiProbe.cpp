@@ -856,6 +856,10 @@ extern "C" uint64_t uke_wpss_now_ms(void);
 // all remote intents busy, or none valid with intent_asked still set.
 extern "C" int native_ufs_extra_fault(uint32_t *out) __attribute__((weak_import));
 void debugStats() {
+    // The five-second WPSS rows are bring-up diagnostics: log-wifi=1 turns them on.
+    static int enabled = -1;
+    if (enabled < 0) {uint32_t v = 0; PE_parse_boot_argn("log-wifi", &v, sizeof v); enabled = v != 0;}
+    if (!enabled) return;
     static uint64_t last;
     const uint64_t now = uke_wpss_now_ms();
     if (now - last < 5000) return;

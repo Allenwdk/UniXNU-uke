@@ -416,19 +416,26 @@ static void dumpSwapQueue(const char *tag,unsigned nth,IOReturn status) {
         (unsigned long long)active,
         state[0],state[1],state[2],state[3],state[4],state[5],state[6],state[7],state[8],state[9]);
 }
+extern "C" void native_backlight_set_display_power(bool);
+#include "UkeBacklightState.h"
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
     ClientStat *stat=statFor(client);
     unsigned calls=(stat && selector<kSelectors)?stat->selector_calls[selector]:0;
     bool traced=stat && selector<kSelectors && calls<2;
     if(traced)printf("UKEMEM: sel %u enter calls=%u\n",(unsigned)selector,calls+1);
     // Selector 12 enters the original request_power_change transition, which
-    // has no platform driver behind it on this GOP-lit panel; acknowledge it.
+    // has no panel platform driver on GOP. Bridge validated state to the owned
+    // backlight worker, then acknowledge without entering the original transition.
     // Selector 6 (SwapWait) is forwarded: with the powered word set it may be
     // the call that submits the staged swap to the framebuffer queue.
     if(stat && selector==12) {
+        bool on = false;
+        if (!args || !ukeBacklightDecodePower(args->scalarInput, args->scalarInputCount, args->structureInputSize, on))
+            return kIOReturnBadArgument;
+        native_backlight_set_display_power(on);
         if(selector<kSelectors){++stat->selector_calls[selector];stat->selector_status[selector]=(uint32_t)kIOReturnSuccess;}
         ++stat->calls;
-        if(traced)printf("UKEMEM: sel %u exit 0 (suppressed)\n",(unsigned)selector);
+        if(traced)printf("UKEMEM: sel %u exit 0 (backlight bridge)\n",(unsigned)selector);
         return kIOReturnSuccess;
     }
     if(stat && selector==5 && stat->selector_calls[5]<2) {
@@ -549,7 +556,46 @@ extern "C" unsigned native_legacy_clients_dump(char *out,unsigned cap) {
     }
     return at;
 }
+namespace {
+struct DisplayPowerClient {uintptr_t object;uint64_t registryId;};
+DisplayPowerClient powerClients[kSeenClients];
+
+void rememberDisplayPowerClient(IOUserClient *client) {
+    // This observer is called only by the owned NativeLegacyDisplay factory.
+    // Qualify the original 24A446 target once, while the client is being opened.
+    uintptr_t display=0;
+    memcpy(&display,reinterpret_cast<const unsigned char *>(client)+0xd8,sizeof(display));
+    const uint64_t registryId=client->getRegistryEntryID();
+    if(!registryId || display!=native_legacy_object)return;
+    const uintptr_t object=reinterpret_cast<uintptr_t>(client);
+    for(auto &row:powerClients) {
+        uintptr_t seen=__atomic_load_n(&row.object,__ATOMIC_ACQUIRE);
+        if(seen==object) {__atomic_store_n(&row.registryId,registryId,__ATOMIC_RELEASE);return;}
+        if(seen || !__atomic_compare_exchange_n(&row.object,&seen,UINTPTR_MAX,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))continue;
+        __atomic_store_n(&row.registryId,registryId,__ATOMIC_RELAXED);
+        __atomic_store_n(&row.object,object,__ATOMIC_RELEASE);
+        printf("UKE BL: primary power client=%p registry=%llu\n",client,(unsigned long long)registryId);
+        return;
+    }
+    printf("UKE BL: primary power client table full\n");
+}
+}
+
+extern "C" bool native_legacy_is_display_power_client(IOUserClient *client) {
+    if(!client)return false;
+    const uintptr_t object=reinterpret_cast<uintptr_t>(client);
+    for(const auto &row:powerClients) {
+        if(__atomic_load_n(&row.object,__ATOMIC_ACQUIRE)!=object)continue;
+        if(__atomic_load_n(&row.registryId,__ATOMIC_ACQUIRE)!=client->getRegistryEntryID())return false;
+        uintptr_t display=0;
+        memcpy(&display,reinterpret_cast<const unsigned char *>(client)+0xd8,sizeof(display));
+        return display==native_legacy_object;
+    }
+    return false;
+}
+
 void native_legacy_client_observed(IOReturn status,IOUserClient *client) {
+    if(client && status==kIOReturnSuccess)rememberDisplayPowerClient(client);
 #if !__has_feature(ptrauth_calls)
     if(client && !status)interpose(client,native_legacy_client_pid);
 #endif
@@ -670,6 +716,8 @@ extern void native_qemu_metal_publish(void);
 extern void sheng_cpufreq_probe(void);
 extern void sheng_gpu_power_probe(void);
 extern void native_touch_probe(void);
+extern void sheng_buttons_probe(void);
+extern void sheng_backlight_probe(void);
 extern void uke_wpss_probe(void);
 // The DPU track's read-only snapshot and controlled-pipe test (package/DpuProbe.cpp):
 // a thread that waits for the firmware's scanout and then reads or (only with
@@ -761,6 +809,8 @@ void native_legacy_display_late_probe(void) {
     sheng_gpu_power_probe();
     native_dpu_probe();
     native_touch_probe();
+    sheng_buttons_probe();
+    sheng_backlight_probe();
     uke_wpss_probe();
     native_hid_input_probe();
     native_virtio_input_probe();
@@ -790,6 +840,17 @@ void native_legacy_display_late_probe(void) {
         OSArray *ranges=OSArray::withCapacity(1);
         if(nub && memory && ranges && parent && nub->init()) {
             ranges->setObject(memory);nub->setDeviceMemory(ranges);nub->setName("NativeGOPFramebuffer");
+            // The generic GOP provider has no Apple panel properties. Supply
+            // the board's physical DPI through NativeLegacyDisplay::getDotPitch;
+            // the original MobileGestalt/SpringBoard use it to convert gesture
+            // distances and velocities from millimetres to logical points.
+            IORegistryEntry *chosen=IORegistryEntry::fromPath("/chosen",gIODTPlane);
+            OSData *pitchData=chosen?OSDynamicCast(OSData,chosen->getProperty("display-dot-pitch")):nullptr;
+            uint32_t pitch=0;
+            if(pitchData && pitchData->getLength()==sizeof(pitch))memcpy(&pitch,pitchData->getBytesNoCopy(),sizeof(pitch));
+            if(pitch>=50 && pitch<=1000 && nub->setProperty("dot-pitch",pitchData))
+                IOLog("UKE: display physical pitch %u DPI from board ADT\n",pitch);
+            OSSafeReleaseNULL(chosen);
             nubAttached=nub->attach(parent);if(nubAttached)nubStarted=nub->start(parent);
             if(nubStarted) {
                 unsigned phase=0;PE_parse_boot_argn("offline-legacy-phase",&phase,sizeof(phase));
