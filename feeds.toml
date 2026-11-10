@@ -8,12 +8,12 @@ ref = "main"
 # (scripts/build-sheng-source-storage.py pins the same revision). 315 (e45fbe3) is the 17-line tree.
 commit = "7edb88fbae296fb7c8ce2f64e115e116e566d51c"
 
-# SM7675 LLCC operations for the current local GPU performance checkpoint.
+# SM7675 platform and shared ADSP/WPSS remote-processor resources.
 [[source]]
 name = "sm7675"
 kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
-commit = "3779414a40d6daf49b3828203fc385598c32e419"
+commit = "2f12b23b6792c0764651712edfe1d336b291c990"
 
 # Local upstream-main integration checkpoint, pending device qualification.
 [[source]]
