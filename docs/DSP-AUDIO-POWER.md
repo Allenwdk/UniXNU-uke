@@ -81,4 +81,4 @@ PAS ready、通道开闭、元数据哈希、APM 响应字节和电池快照。�
 721B 参数和18项 ADT 参数，正式 kernel/payload 与源码/链接/镜像检查通过。
 源码为 core cc87305、设备239e407、SM7675 2f12b23，均在本项新分支。
 完整记录见 `docs/releases/2026-11-10-adsp-battery-apm.json`。
-候选尚未刷入，ADSP、电池、APM 和 Wi-Fi 共存均待实机验收。
+2026-11-11 用户本轮授权后，四分区写入、A 槽回读和重启命令成功，回执 `uke-port/releases/2026-11-10-adsp-battery-apm-v3/flash-result-20261111-001649.json`。ADSP、电池、APM 和 Wi-Fi 共存待用户反馈及同次日志。
