@@ -104,5 +104,4 @@ A槽和TWRP。
 
 修复版正式候选为 `0847D1BCA4BBE9BD`，vendor_boot SHA-256
 `b8b691d06fb46155a8e53922e4cb7ab2d6d8b1e1b4eb500d572c998cc3c6caf2`，源码2c43669，721B参数和18项ADT。
-镜像记录见 docs/releases/2026-11-11-battery-publication.json。候选未刷，
-电池服务发布、读数和充电图标需实机验收。
+镜像记录见 docs/releases/2026-11-11-battery-publication.json。2026-11-11 用户本轮授权后，四分区写入、A 槽回读和重启命令成功，回执 `uke-port/releases/2026-11-11-battery-publication/flash-result-20261111-004514.json`。电池服务发布、读数和充电图标待用户反馈及同次日志。
