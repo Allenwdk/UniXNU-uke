@@ -14,3 +14,14 @@
 下一次验收：首次进设置扫描；不重启，开关另一台设备的热点，间隔至少 15 秒重进 Wi-Fi 页面，检查新网络出现、旧网络过期；连接后再重复并保持连续流量。分别用设置→显示与亮度和控制中心调整低、中、高档，记录面板变化及大致时刻。
 
 [尾环](../../reference/logs/ukelog/ukelog-20261111-055745-backlight-wifi-refresh.bin) · [同次启动日志](../../reference/logs/boot/boot-20261111-055745-backlight-wifi-refresh.log) · [取证清单](../../uke-port/fixes/2026-11-11-backlight-wifi-refresh/readback.json) · [镜像与构建验证](../../uke-port/releases/2026-11-11-backlight-wifi-refresh/build-result.json)
+
+
+## 熄屏后滑块归零
+
+用户补充，1994 熄屏后滑块降到了最低。同次回读显示系统用 0.185 秒的亮度因子渐变处理熄屏，亮屏时把因子设回 1。系统在熄屏时提交 0 nits，并记录一次 `brightness change:0`。245.606 秒两颗 KTZ8866 关闭 BL_EN，亮度寄存器保持 1366。245.636 秒驱动收到目标 0，工作循环仍保留 1366。247.207 秒重新打开 BL_EN，两颗芯片读回 1366。[内核尾环](../../uke-port/fixes/2026-11-11-backlight-wifi-refresh/current-ring-clean.log) · [同次系统事件](../../uke-port/fixes/2026-11-11-backlight-wifi-refresh/brightness-wifi-events.json)
+
+1994 的 `setProperties` 沿用 sheng 的 `publish(goal)`，在亮度请求经过电源状态检查前就更新了 `IODisplayParameters`。因此目标 0 可以把亮度和毫尼特属性都设为 0，即使硬件亮度码仍保留。修正后由背光工作循环在接受新亮度时发布保存值。系统决定渐暗，驱动执行关屏命令时只关两颗芯片的输出。CoreBrightness 自己的零亮度通知也出现在日志中。滑块是否仍会归零、调光请求是否恢复，需要实机确认。
+
+新候选 `DB5C89823294AB4A` 包含 Wi-Fi 列表刷新，vendor_boot SHA-256 `c6c17e7a0b14ec56cd420da853a46c4e4273f36434bfb3d8704afc08004558f9`，设备源码 `c881bbb8ee52ea5c0b432bdce578182853f1ef6c`。正式 kernel、payload、bootimg 和 vendor_boot 核验通过。实际封包确认发布调用位于背光工作循环，背光生产方法主机检查通过 132,782 项。候选待刷。[构建记录](../../uke-port/releases/2026-11-11-backlight-reported-level/build-result.json)
+
+实机先设中档，短按熄屏、亮屏后查看滑块位置和面板亮度，再分别通过设置和控制中心调节，记录大致时间。
