@@ -19,3 +19,8 @@ E8AF 同次日志记录 L3 第 10 档、请求 1,593,600 kHz、寄存器读回 1
 `CED0C67E2D0F3E7C` 已完成正式 kernel、payload、boot 和 vendor_boot 构建。vendor_boot SHA-256 为 `81a8fc1748820b7a5ebbaf5065bd3414ba8892963e0d571db82e436a0ad97446`，大小 47,435,776 B。归档 `uke-port/releases/2026-11-11-cpu-gpu-pool-wc/`，使用同目录配套镜像。boot 内嵌固件与 E8AF 归档相同，设备源码快照为 `12a442dd963fe5ac1582aabedece5af90c589fd2`，核心和 GPU 组件见 source-revisions.json。
 
 57 项归档 SHA 校验通过。最终内核确认池清零调用 secure_memset，pmap WC 分类与池注册均调用同一范围检查，修复补丁出现在实际 XNU 构建输入。L3 投票、GPU 围栏 IRQ 接线及 64 位路由指令继续纳入镜像核验。签名资产、721 B 启动参数、18 项 ADT 配置和基线预链接缺失/桩一致，ADT 差异仅 random-seed。13 区检查通过。修复候选未刷，设备留在 TWRP。
+
+
+## 2026-11-11 CED0 授权部署
+
+用户授权刷入 `CED0C67E2D0F3E7C`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。57 项归档 SHA 和 13 区预检通过。回执 `uke-port/releases/2026-11-11-cpu-gpu-pool-wc/flash-result-20261111-033231.json`。启动、GPU 池和外设回归待实机验证。
