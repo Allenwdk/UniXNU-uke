@@ -35,3 +35,8 @@ BacklightMode 本次已加载，系统报告内置屏 `UseSyncBrightnessTransact
 正式 kernel、payload、bootimg、vendor_boot 通过。实际 FAT 的 addon 只有 `backlight/lib/UniXNUBacklight.dylib` 与 A6F6 不同，backboardd、supplicant、图形运行时逐文件相同。信任缓存只替换原亮度库的哈希，backboardd 的 category5 及其他条目保持原值。arm64e、4 KiB 代码签名与签名页摘要通过，83 个平台输入、14 个存储输入相同，启动参数 721 B，2 missing / 19 stubbed 未增加。
 
 候选未刷。设备留在 TWRP。下一次验收先调到中档，第一次熄屏后按键唤醒，检查渐暗、渐亮、滑块位置及后续调光。至少保留第二次按键后 30 秒的日志，再回收。期望看到 direct transactions 的加载记录、唤醒后的非零背光目标及双片 enable 回到 0x7f。[候选构建](../../uke-port/releases/2026-11-11-backlight-direct-transactions/build-result.json)
+
+
+## 2026-11-11 CoreBrightness 普通亮度事务候选授权部署
+
+用户授权刷入 `A6F640C2738F39FE`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。77 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-backlight-direct-transactions/flash-result-20261111-074925.json`。Wi-Fi 首次扫描、列表反复刷新、连接中的扫描与亮度对照待实机验证。
