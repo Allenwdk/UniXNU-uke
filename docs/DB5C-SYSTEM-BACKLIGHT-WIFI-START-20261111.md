@@ -16,3 +16,10 @@ Wi-Fi 旧版关闭接口时的 `cancel_work_sync` 断言这次未再出现，关
 ## 2026-11-11 系统控制背光与 Wi-Fi 启动修正版授权部署
 
 用户授权刷入 `A6F640C2738F39FE`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。75 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-system-backlight-wifi-start/flash-result-20261111-071321.json`。Wi-Fi 首次扫描、列表反复刷新、连接中的扫描与亮度对照待实机验证。
+
+
+## A6F6 实机反馈与 BacklightMode 核对
+
+用户确认 `A6F640C2738F39FE` 的 Wi-Fi 已恢复，熄屏后背光仍不能恢复。用户反馈未细分连接后的重复扫描和长时流量。
+
+[虚拟平台章节](https://unixnu.com/zh/porting/display#ipados-27-上的虚拟平台) 的 BacklightMode 已接入。Uke 通过亮度运行时覆盖给 backboardd 加载 `UniXNUBacklight.dylib`，将 `initBLControl:` 的虚拟模式 3 映射到真机模式 1。实包启动参数为 `uke-backlight-runtime=1`，从 FAT 提取的 addon 与 DB5C 的 SHA-256 相同，均为 `42aed4228abfaa609d4ce46dabd3c58534996f4cbd10c30c0d325eb33644bdb8`。DB5C 同次 backboardd 日志有 `physical brightness control selected`，首次熄屏前调光也已确认。A6F6 的同次运行日志待回收，唤醒后的亮度事务仍待定位。
