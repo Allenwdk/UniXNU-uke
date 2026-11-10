@@ -107,3 +107,23 @@ uke-outside-dram-wc.patch
 
 # Record pset0's successful acquisition caller for the next timeout photo.
 uke-pset-lock-owner.patch
+
+# Common xnu-12377 fixes reviewed from the latest upstream macOS work.
+upstream/xnuconfig-work-interval-counters.patch
+upstream/xnuconfig-timebase-trap-count.patch
+upstream/vmwait-vnode-pager-peek-name.patch
+upstream/kperf-static-if-builtin-args.patch
+upstream/cshash-native4k-stats.patch
+upstream/payload-boot-memory-report.patch
+upstream/payload-addon-release.patch
+upstream/cshash-native4k-parallel.patch
+upstream/cshash-native4k-lazy.patch
+upstream/payload-radix-root-at-startup.patch
+upstream/cssha-digest-time.patch
+upstream/gpupool-device-pager-close.patch
+upstream/memwired-kc-segment-release.patch
+upstream/memwired-booter-size-accounting.patch
+upstream/memwired-cs-lazy-page-chunks.patch
+upstream/vfs-union-below-walk.patch
+upstream/vmwait-dyld-pager-source-release.patch
+upstream/zzzzzzzzzzz-sheng-edge-matrix.patch

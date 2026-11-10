@@ -1,0 +1,82 @@
+Shared machine-layer part of upstream payload-addon-release. The iPadOS addon call site is in uke-addon-memory-release.patch.
+
+diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+index 48e9ae6..1cacea2 100644
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -1955,6 +1955,32 @@ ml_static_unslide(
+ 
+ extern tt_entry_t *arm_kva_to_tte(vm_offset_t va);
+ 
++/*
++ * The image tail: what the loader placed behind the kernel collection, up to
++ * boot_args.topOfKernelData (the boot arguments, the device tree and the
++ * ranges of /chosen/memory-map). Without a monitor and without
++ * ARM_LARGE_MEMORY the physical aperture has no alias of it: phystokv() of a
++ * tail page is its address in the static region, which
++ * arm_vm_physmap_init() maps read-write and never executable, as it maps the
++ * aperture. ml_static_protect() and ml_static_mfree() take a range of the
++ * tail by that address, so a page given to the VM keeps it as its kernel
++ * address. This is what ml_static_mfree() does with memory of the loaded
++ * image on a kernel whose aperture lies below the static region
++ * (ARM_LARGE_MEMORY without a monitor).
++ */
++static bool
++ml_static_in_image_tail(vm_offset_t vaddr, vm_size_t size)
++{
++#if !XNU_MONITOR && !defined(CONFIG_SPTM) && !defined(ARM_LARGE_MEMORY)
++	const vm_offset_t tail_end = (vm_offset_t)(first_avail_phys - gPhysBase) + gVirtBase;
++
++	return vaddr >= end_kern && vaddr < tail_end && size <= tail_end - vaddr;
++#else
++#pragma unused(vaddr, size)
++	return false;
++#endif
++}
++
+ kern_return_t
+ ml_static_protect(
+ 	vm_offset_t vaddr, /* kernel virtual address */
+@@ -1983,7 +2009,7 @@ ml_static_protect(
+ 	ppnum_t       ppn;
+ 	kern_return_t result = KERN_SUCCESS;
+ 
+-	if (vaddr < physmap_base) {
++	if (vaddr < physmap_base && !ml_static_in_image_tail(vaddr, size)) {
+ 		panic("ml_static_protect(): %p < %p", (void *) vaddr, (void *) physmap_base);
+ 		return KERN_FAILURE;
+ 	}
+@@ -2166,6 +2192,24 @@ uint64_t ml_static_mfree_pages;
+ uint64_t ml_static_mfree_dropped_calls;
+ uint64_t ml_static_mfree_dropped_bytes;
+ 
++/*
++ * Whether ml_static_mfree() will give [vaddr, vaddr + size) to the VM without
++ * a panic: the address is one it takes, and every mapped page of the range
++ * accepts the protections of free memory, which this call applies. A caller
++ * that knows a range only from the loader asks first.
++ */
++bool ml_static_mfree_prepare(vm_offset_t vaddr, vm_size_t size);
++
++bool
++ml_static_mfree_prepare(vm_offset_t vaddr, vm_size_t size)
++{
++	if ((vaddr & PAGE_MASK) != 0 || size < PAGE_SIZE ||
++	    (vaddr < physmap_base && !ml_static_in_image_tail(vaddr, size))) {
++		return false;
++	}
++	return ml_static_protect(vaddr, trunc_page(size), VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS;
++}
++
+ /*
+  *	Routine:        ml_static_mfree
+  *	Function:
+@@ -2183,7 +2227,7 @@ ml_static_mfree(
+ 
+ 
+ 	/* It is acceptable (if bad) to fail to free. */
+-	if (vaddr < physmap_base) {
++	if (vaddr < physmap_base && !ml_static_in_image_tail(vaddr, size)) {
+ 		os_atomic_inc(&ml_static_mfree_dropped_calls, relaxed);
+ 		os_atomic_add(&ml_static_mfree_dropped_bytes, (uint64_t)size, relaxed);
+ 		return;

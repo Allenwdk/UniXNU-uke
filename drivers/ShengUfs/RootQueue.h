@@ -40,12 +40,16 @@ static bool hostStopQueue (const char **why)
   return true;
 }
 
+// The request list's physical address: its own page when the port gave it one (RootTransportLayout.h), else region A's offset 0.
+static uint64_t gUtrlPhys = 0;
+
 static bool hostStartQueue (const char **why)
 {
-  hostWrite (0x50, static_cast<uint32_t> (gHost.phys));
-  hostWrite (0x54, static_cast<uint32_t> (gHost.phys >> 32));
-  if (read32 (gHost.hc, 0x50) != uint32_t (gHost.phys) ||
-      read32 (gHost.hc, 0x54) != uint32_t (gHost.phys >> 32)) {
+  const uint64_t list = gUtrlPhys ? gUtrlPhys : gHost.phys;
+  hostWrite (0x50, static_cast<uint32_t> (list));
+  hostWrite (0x54, static_cast<uint32_t> (list >> 32));
+  if (read32 (gHost.hc, 0x50) != uint32_t (list) ||
+      read32 (gHost.hc, 0x54) != uint32_t (list >> 32)) {
     recordTransport (kIOReturnIOError, 15);
     *why = "request list address";
     return false;
