@@ -11,3 +11,8 @@ Wi-Fi 旧版关闭接口时的 `cancel_work_sync` 断言这次未再出现，关
 新候选 `A6F640C2738F39FE`，vendor_boot SHA-256 `ec4a33f684698cb0dd27d1c190160e8d25ce3527814a78cdb258bad02e4c6452`。设备 `2db4656529384c562117794f85e955367609faef`，Ath12kWifi `2ddd4639f56958b13d3af9edf494f548b4beee84`，GopFramebuffer `eadd64adce942f0521a5f6f1985959d902092e4a`。正式 kernel、payload、bootimg 和 vendor_boot 验证通过。最终内核确认桥接符号已去除，扫描准备调用已链接。背光生产方法主机检查 132,695 项通过。签名资产比对通过，启动参数 721 B。未刷，设备留在 TWRP。[构建记录](../../uke-port/releases/2026-11-11-system-backlight-wifi-start/build-result.json)
 
 实机先检查中档调光和一次熄屏亮屏。若面板仍亮，检查滑块位置和非零亮度请求。Wi-Fi 先验证首次扫描确实取得网络，再用附近热点开关验证重复刷新。
+
+
+## 2026-11-11 系统控制背光与 Wi-Fi 启动修正版授权部署
+
+用户授权刷入 `A6F640C2738F39FE`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。75 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-system-backlight-wifi-start/flash-result-20261111-071321.json`。Wi-Fi 首次扫描、列表反复刷新、连接中的扫描与亮度对照待实机验证。
