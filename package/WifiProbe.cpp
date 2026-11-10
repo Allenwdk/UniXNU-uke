@@ -16,10 +16,10 @@
 #include "ArmSmmu4K.h"
 #include "ArmSmmu4KContext.h"
 #include "SmmuBypass.h"
+#include "Sm7675RemoteProc.h"
 extern "C" {
 #include "QcomGlink.h"
 #include "QcomMdt.h"
-#include "QcomQmp.h"
 #include "QcomRpmh.h"
 #include "QcomScm.h"
 #include "QcomSmem.h"
@@ -46,7 +46,6 @@ int sheng_fw_read(void *handle, uint64_t offset, void *to, size_t length);
 void sheng_fw_close(void *handle);
 }
 
-extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
 // [0] stage (see Stage; negative: the step that failed), [1] last error, [2] IPCC interrupts, [3] the DSP's slave-kernel bits (-1 no
 // item), [4] items (bit 0 SMP2P in 443, 1 out 429, 2 GLINK 478, 3 479, 4 480, 8 our partition, 9 global partition), [5] QMP state | AOSS
 // link bits << 8, [6] RSC DRV id, [7] adsp.mbn KiB, [8] ms from the start call to "ready", [9] GLINK messages in, [10] out, [11] channels
@@ -59,14 +58,13 @@ enum Stage {
     StMapped = 1, StSurveyed = 2, StFirmware = 3, StSmp2p = 4, StDoorbells = 5, StLoadState = 6, StRails = 7, StDtb = 8, StLoaded = 9,
     StStarted = 10, StReady = 11, StGlink = 12, StChannel = 13, StSleepClock = 15,
 };
-constexpr uint64_t kSmem = 0x81d00000, kSmemSize = 0x200000, kMutex = 0x1f40000 + 3 * 0x1000, kIpcc = 0x406000, kAoss = 0xc300000;
-constexpr uint64_t kRscDrv = 0x17a20000, kRscTcs = 0xd00, kCmdDb = 0x81c60000, kCmdDbSize = 0x20000;
+constexpr uint64_t kSmem = 0x81d00000, kSmemSize = 0x200000, kMutex = 0x1f40000 + 3 * 0x1000, kAoss = 0xc300000;
+constexpr uint64_t kRscDrv = 0x17a20000, kCmdDb = 0x81c60000, kCmdDbSize = 0x20000;
 constexpr uint64_t kWpssBase = 0x9bb00000, kWpssSize = 0x1900000;
 constexpr uint32_t kPasWpss = 6, kRemotePid = 13, kItemIn = 617, kItemOut = 616, kItemCrash = 626;
 constexpr uint32_t kItemGlinkDesc = 478, kItemGlinkTx = 479, kItemGlinkRx = 480, kGlinkFifo = 0x4000;
-constexpr uint32_t kSpiIpcc = 229, kSpiRsc = 5, kClientWpss = 24;
 constexpr uint32_t kFatal = 1u << 0, kReady = 1u << 1, kHandover = 1u << 2;
-constexpr uint32_t kEvSmp2p = 1, kEvGlink = 2, kEvAop = 4, kEvRsc = 8, kEvSend = 16;
+constexpr uint32_t kEvSmp2p = 1, kEvGlink = 2, kEvSend = 16;
 constexpr unsigned kClients = 4, kQueue = 8;
 
 struct Window {IOMemoryMap *map; volatile uint8_t *va;};
@@ -284,17 +282,14 @@ constexpr uint32_t kCe0DstControl = 2 * kWlanWindow + (0x01b81000 + 0xb0 - 0x01b
 static_assert(kReo1Misc == 0xb81fc && kCe0DstControl == 0x1010b0);
 static_assert(kReo1Misc < kWlanBarBytes && kCe0DstControl < kWlanBarBytes);
 
-Window gSmemW, gMutex, gIpcc, gAoss, gRsc;
+Window gSmemW, gMutex, gAoss, gRsc;
 QcomSmem gSmem;
 QcomSmemPartition gPart;
 QcomSmp2p gP2p;
 int gStopEntry = -1;
-QcomQmp gQmp;
 QcomGlink gGlink;
 bool gGlinkStarted;
-QcomRscLayout gLayout;
-uint32_t gRscIrqBits;
-volatile uint32_t gPending, gRscDone;
+volatile uint32_t gPending;
 
 // ---- clients ----
 struct Message {uint32_t length; uint8_t data[UKE_WPSS_MAX_MESSAGE];};
@@ -322,26 +317,9 @@ void wake(uint32_t bits) {
 }
 
 // ---- interrupts: acknowledge, record, wake ----
-void ipccIrq(void *) {
-    uint32_t bits = 0;
-    for (unsigned n = 0; n < 32; ++n) {
-        const uint32_t id = rd(gIpcc, QCOM_IPCC_RECV_ID);
-        if (id == QCOM_IPCC_NONE) break;
-        wr(gIpcc, QCOM_IPCC_RECV_CLEAR, id);
-        if (id == qcom_ipcc_id(kClientWpss, QCOM_IPCC_SIGNAL_SMP2P)) bits |= kEvSmp2p;
-        else if (id == qcom_ipcc_id(kClientWpss, QCOM_IPCC_SIGNAL_GLINK_QMP)) bits |= kEvGlink;
-        else if (id == qcom_ipcc_id(QCOM_IPCC_CLIENT_AOP, QCOM_IPCC_SIGNAL_GLINK_QMP)) bits |= kEvAop;
-    }
+void ipccDoorbell(uint32_t signal) {
     native_wifi_wpss_stats[2] = native_wifi_wpss_stats[2] + 1;
-    if (bits) wake(bits);
-}
-void rscIrq(void *) {
-    const uint32_t status = rd(gRsc, kRscTcs + gLayout.irq_status) & gRscIrqBits;
-    if (!status) return;
-    wr(gRsc, kRscTcs + gLayout.irq_clear, status);
-    __atomic_fetch_or(&gRscDone, status, __ATOMIC_RELEASE);
-    native_wifi_wpss_stats[15] = native_wifi_wpss_stats[15] + (1 << 16);
-    wake(kEvRsc);
+    wake(signal == QCOM_IPCC_SIGNAL_SMP2P ? kEvSmp2p : kEvGlink);
 }
 
 // Waits for an event up to ms milliseconds; returns the event bits (0: the deadline passed).
@@ -355,26 +333,13 @@ uint32_t waitEvents(uint32_t ms) {
     return __atomic_exchange_n(&gPending, 0, __ATOMIC_ACQ_REL);
 }
 
-void ring(uint32_t client, uint32_t signal) {wr(gIpcc, QCOM_IPCC_SEND, qcom_ipcc_id(client, signal));}
-void kickAop(void *) {ring(QCOM_IPCC_CLIENT_AOP, QCOM_IPCC_SIGNAL_GLINK_QMP);}
-void kickGlink(void *) {ring(kClientWpss, QCOM_IPCC_SIGNAL_GLINK_QMP);}
-void kickSmp2p() {ring(kClientWpss, QCOM_IPCC_SIGNAL_SMP2P);}
+constexpr auto kRemote = Sm7675Remote::Wpss;
+void kickGlink(void *) {sm7675_remote_ring(kRemote, QCOM_IPCC_SIGNAL_GLINK_QMP);}
+void kickSmp2p() {sm7675_remote_ring(kRemote, QCOM_IPCC_SIGNAL_SMP2P);}
 
 // ---- SMEM helpers (allocation under the TCSR hardware mutex) ----
-bool lockSmem() {
-    // The mutex is held only for the few writes of one allocation by whichever processor has it; it is tried a bounded number of times.
-    for (unsigned i = 0; i < 1000; ++i) {
-        wr(gMutex, 0, 1);
-        if (rd(gMutex, 0) == 1) return true;
-        IODelay(10);
-    }
-    return false;
-}
-void unlockSmem() {wr(gMutex, 0, 0);}
 int allocItem(uint16_t item, uint32_t size) {
-    if (!lockSmem()) return -16;
-    const int rc = qcom_smem_alloc(&gSmem, &gPart, item, size);
-    unlockSmem();
+    const int rc = sm7675_remote_smem_alloc(gMutex.va, &gSmem, &gPart, item, size);
     return rc == QcomSmemExists ? 0 : rc;
 }
 volatile uint8_t *item(uint16_t id, uint32_t *size) {
@@ -434,37 +399,11 @@ bool readCmdDb(uint8_t *copy) {
     return true;
 }
 QcomRpmhResource gCx, gMx, gXo;
-int gTcs = -1;
-
-// DT channel0 reserves active TCS0..2. This port has no other AP-RSC
-// consumer; GMU uses its separate GPU RSC. Refuse a live TCS1 rather than
-// overwrite it. CX/MX are shared with the running GPU/UFS. Until a shared
-// vote owner exists, this diagnostic holds their maximum cmd-db levels
-// through handover instead of clearing the AP's shared resource votes.
 int vote(uint32_t cx, uint32_t mx, uint32_t xo) {
-    if (gTcs < 0) {
-        gTcs = 1;
-        const uint32_t control = kRscTcs + gLayout.tcs_stride * gTcs + gLayout.control;
-        if (rd(gRsc, control) & (1u << 24)) return -16;
-        gRscIrqBits = 1u << gTcs;
-        wr(gRsc, kRscTcs, rd(gRsc, kRscTcs) | gRscIrqBits);
-    }
-    const uint32_t addresses[3] = {gCx.address, gMx.address, gXo.address}, values[3] = {cx, mx, xo};
-    QcomRpmhWrite writes[20];
-    const unsigned n = qcom_rpmh_active_request(&gLayout, (unsigned)gTcs, addresses, values, 3, writes, 20);
-    if (!n) return -22;
-    __atomic_store_n(&gRscDone, 0, __ATOMIC_RELEASE);
-    for (unsigned i = 0; i < n; ++i) wr(gRsc, kRscTcs + writes[i].offset, writes[i].value);
-    uint64_t deadline;
-    clock_interval_to_deadline(100, kMillisecondScale, &deadline);
-    while (!(__atomic_load_n(&gRscDone, __ATOMIC_ACQUIRE) & gRscIrqBits) && mach_absolute_time() < deadline) service(waitEvents(5));
-    const bool done = (__atomic_load_n(&gRscDone, __ATOMIC_ACQUIRE) & gRscIrqBits) ||
-                      (rd(gRsc, kRscTcs + gLayout.irq_status) & gRscIrqBits);
-    native_wifi_wpss_stats[15] = (native_wifi_wpss_stats[15] & ~0xffff) | (int32_t)(cx | mx << 8 | (done ? 0 : 1u << 15));
-    if (!done) return -60;
-    const unsigned m = qcom_rpmh_finish(&gLayout, (unsigned)gTcs, writes, 20);
-    for (unsigned i = 0; i < m; ++i) wr(gRsc, kRscTcs + writes[i].offset, writes[i].value);
-    return 0;
+    const Sm7675RpmhVote votes[] = {{gCx.address, cx}, {gMx.address, mx}, {gXo.address, xo}};
+    const int rc = sm7675_remote_vote(kRemote, votes, 3);
+    native_wifi_wpss_stats[15] = (int32_t)(cx | mx << 8 | (rc ? 1u << 15 : 0));
+    return rc;
 }
 
 // ---- secure world calls ----
@@ -608,7 +547,6 @@ void serviceGlink() {
     if (up && native_wifi_wpss_stats[0] == StGlink) stage(StChannel);
 }
 void service(uint32_t bits) {
-    if (bits & kEvAop) qcom_qmp_step(&gQmp);
     if (bits & (kEvSmp2p | kEvGlink)) serviceSmp2p();
     if (bits & (kEvGlink | kEvSend)) {applyClients(); serviceGlink();}
 }
@@ -682,24 +620,15 @@ void pumpSends() {
 }
 
 // ---- the bring-up ----
-bool gIrq;
 bool attachIrqs() {
-    if (!armcpu_spi_attach) return false;
-    int rc = 0;
-    for (unsigned tries = 0;; ++tries) {  // the GIC driver may not have started yet (as ButtonProbe found)
-        rc = armcpu_spi_attach(32 + kSpiIpcc, false, ipccIrq, nullptr, nullptr, nullptr);
+    int rc;
+    for (unsigned tries = 0;; ++tries) {
+        rc = sm7675_remote_attach(kRemote, ipccDoorbell);
         if (rc != kIOReturnNotReady || tries == 240) break;
         IOSleep(250);
     }
-    if (rc) {fail(StDoorbells, rc); return false;}
-    rc = armcpu_spi_attach(32 + kSpiRsc, false, rscIrq, nullptr, nullptr, nullptr);
-    if (rc) {fail(StDoorbells, rc); return false;}
-    const uint32_t enable[3] = {qcom_ipcc_id(kClientWpss, QCOM_IPCC_SIGNAL_SMP2P),
-                                qcom_ipcc_id(kClientWpss, QCOM_IPCC_SIGNAL_GLINK_QMP),
-                                qcom_ipcc_id(QCOM_IPCC_CLIENT_AOP, QCOM_IPCC_SIGNAL_GLINK_QMP)};
-    for (uint32_t id : enable) wr(gIpcc, QCOM_IPCC_RECV_ENABLE, id);
-    gIrq = true;
-    return true;
+    if (rc) fail(StDoorbells, rc);
+    return rc == 0;
 }
 
 // Read signed split firmware from the stock FAT partition through the
@@ -748,14 +677,9 @@ bool start() {
     if (!attachIrqs()) {release(image); return false;}
     kickSmp2p();
     stage(StDoorbells);
-    qcom_qmp_init(&gQmp, reinterpret_cast<volatile uint32_t *>(gAoss.va), 0x400, kickAop, nullptr);
-    if (!waitUntil(4000, [] {return qcom_qmp_step(&gQmp) == QcomQmpOpen || gQmp.state < 0;}) || gQmp.state != QcomQmpOpen) {
-        fail(StLoadState, gQmp.state); release(image); return false;
-    }
-    qcom_qmp_send(&gQmp, "{class: image, res: load_state, name: wpss, val: on}");
-    if (!waitUntil(1000, [] {return qcom_qmp_step(&gQmp) == QcomQmpOpen;})) {
-        qcom_qmp_abandon(&gQmp); fail(StLoadState, -60); release(image); return false;
-    }
+    rc = sm7675_remote_qmp("{class: image, res: load_state, name: wpss, val: on}");
+    native_wifi_wpss_stats[5] = (native_wifi_wpss_stats[5] & ~0xff) | (rc ? 0 : 4);
+    if (rc) {fail(StLoadState, rc); release(image); return false;}
     stage(StLoadState);
     // Temporary command database storage must not consume the fileset's
     // limited native DATA/BSS window beside retained Apple kexts.
@@ -933,13 +857,12 @@ void wpssThread(void *, wait_result_t) {
     thread_set_thread_name(current_thread(), "uke-wifi");
     unsigned mode = 3;
     PE_parse_boot_argn("uke-wifi", &mode, sizeof mode);
-    if (!mapWindow(gSmemW, kSmem, kSmemSize) || !mapWindow(gMutex, kMutex, 0x1000) || !mapWindow(gIpcc, kIpcc, 0x1000) ||
+    if (!mapWindow(gSmemW, kSmem, kSmemSize) || !mapWindow(gMutex, kMutex, 0x1000) ||
         !mapWindow(gAoss, kAoss, 0x1000) || !mapWindow(gRsc, kRscDrv, 0x10000)) {
         fail(StMapped, -12);
         return;
     }
     gSmem = {gSmemW.va, (uint32_t)kSmemSize};
-    gLayout = qcom_rsc_layout(rd(gRsc, 0));
     stage(StMapped);
     smmuReport("boot");
     wlanMsaPlan();

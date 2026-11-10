@@ -1,0 +1,51 @@
+{
+  "upstream": {
+    "repository": "https://github.com/UniXNU/UniXNU-sheng",
+    "revision": "6bc0ce1e8c3a3733110a80dd80ddfb2a1ca46555",
+    "files": {
+      "AdspProbe.cpp": "eace137cc122c83551c971a0d6335d5c72fa7f1acc754d45221059be263f4e67",
+      "ShengAdsp.h": "d877fc12d123ab99c08f00a6e043daf46270da01a0b093673af1910ba08e0b7f",
+      "ShengQrtr.c": "d3cac365aa20c5a6dc02ab3f2635ccec2c332cfd1862ec805512935124d440cc",
+      "ShengGpr.c": "c4f498f07e2cb601b593e64a8d32474a21d6a87375618e1a67b99d52c5d3160e",
+      "ShengGpr.h": "a274dded1f4d1e2709b9f966759bcb1f57d12747ee0f57743dea1fa97d95d23e",
+      "ShengAudioReach.c": "9b198e58272d325bad48e68633f59c8cc5bdc97033d2a485abb6691a402b6a8d",
+      "ShengAudioReach.h": "b135177a5feb3e24e0d8a6aabb301600e2c37078b970a09ada6e8eb7bb6a5b98",
+      "ShengBattmgr.c": "b1d2868033bc357b89f6d252c218ddfb42e1f576d812d5efc3ef2f64dea09174",
+      "ShengBattmgr.h": "fece7fe150f98fa9a51ffbba7c8e76eed7ace50b1c00c5c9b5a64202283706a0",
+      "ShengBattery.cpp": "a2c5c6334c73066026aa95867cdae17ee00e5d9c9fa408be0966a80cac792f1e",
+      "BatteryProbe.cpp": "2f8c74cdfc63b0290054a6a7d4f3bbe0aca0b08920b1671c6a699d1eec5f1e02"
+    }
+  },
+  "hardware_reference": {
+    "oem_dts": "reference/dts-reference/uke-cliffs7p.dts",
+    "linux_board_repository": "https://github.com/MCC45TR/senemos-uke-kernel-mainline",
+    "linux_board_revision": "fd33b9174872395fc215bfad5127e525eb423467"
+  },
+  "firmware": [
+    {
+      "name": "adsp",
+      "runtime_source": "modem:adsp",
+      "pas_id": 1,
+      "base": "0x9d400000",
+      "bytes": "0x4500000"
+    },
+    {
+      "name": "adsp_dtb",
+      "runtime_source": "modem:adsp_dtb",
+      "pas_id": 36,
+      "base": "0xa1900000",
+      "bytes": "0x80000"
+    }
+  ],
+  "acquisition": {
+    "method": "read-only stock modem_a, with modem_b fallback in the existing FAT reader",
+    "firmware_version": "pending device readback",
+    "firmware_sha256": null,
+    "authenticated_metadata": "SHA-256 logged before PAS init_image; full firmware image hashes remain pending"
+  },
+  "speaker_preset": {
+    "name": "fs19xx.fsm",
+    "acquisition": "pending owner stock preset extraction; not bundled"
+  },
+  "license": "BSD-2-Clause-Patent for imported sheng sources. No firmware binary is included."
+}

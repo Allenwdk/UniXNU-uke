@@ -714,6 +714,9 @@ extern void native_qemu_metal_publish(void);
 // The GPU branch's board probes: sheng_gpu_power_probe is strong only with
 // CONFIG_XNU_NATIVE_ADRENO; the stub archive supplies a weak no-op otherwise.
 extern void sheng_cpufreq_probe(void);
+extern void sheng_adsp_probe(void);
+extern void sheng_battery_probe(void);
+extern void uke_audio_probe(void);
 extern void sheng_gpu_power_probe(void);
 extern void native_touch_probe(void);
 extern void sheng_buttons_probe(void);
@@ -812,6 +815,9 @@ void native_legacy_display_late_probe(void) {
     sheng_buttons_probe();
     sheng_backlight_probe();
     uke_wpss_probe();
+    sheng_adsp_probe();
+    sheng_battery_probe();
+    uke_audio_probe();
     native_hid_input_probe();
     native_virtio_input_probe();
     native_shared_window_probe();

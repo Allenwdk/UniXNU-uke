@@ -511,6 +511,9 @@ board_dir.mkdir(exist_ok=True)
 KITS = ROOT / 'kits/uke'
 board_objects = []
 for stem, extra in [('CpuFreqProbe', ()),
+                    ('AdspProbe', ('-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'))),
+                    ('BatteryProbe', ()),
+                    ('UkeAudioProbe', ()),
                     ('WifiAth11k', ('-I', str(ROOT / 'drivers/Ath12kWifi/include'))),
                     ('WifiProbe', ('-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'), '-I', str(ROOT / 'kits/ArmSmmu4K'))),
                     ('TouchProbe', ('-I', str(ROOT / 'drivers/QcomGeniSpi'), '-I', str(ROOT / 'drivers/ShengNovatekTouch'))),
@@ -538,6 +541,16 @@ board_objects.append(wifi_net_late)
 # WCN6750 WPSS: the upstream protocol cores live in the SoC kit; board
 # firmware access uses the actual BSD ABI and reads modem_a/modem_b only.
 remoteproc = ROOT / 'kits/Sm7675Platform/remoteproc'
+compile_cpp(remoteproc / 'Sm7675RemoteProc.cpp', board_dir / 'Sm7675RemoteProc.o')
+board_objects.append(board_dir / 'Sm7675RemoteProc.o')
+compile_cpp(KITS / 'ShengBattery.cpp', board_dir / 'ShengBattery.o')
+battery_late = board_dir / 'ShengBattery.late.o'
+run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func',
+     '--globalize-symbol=__GLOBAL__sub_I_ShengBattery.cpp', board_dir / 'ShengBattery.o', battery_late])
+board_objects.append(battery_late)
+for stem in ('ShengGpr', 'ShengAudioReach', 'ShengBattmgr', 'ShengQrtr'):
+    compile_c(KITS / (stem + '.c'), board_dir / (stem + '.o'))
+    board_objects.append(board_dir / (stem + '.o'))
 for stem in ('QcomMdt', 'QcomSmem', 'QcomSmp2p', 'QcomGlink', 'QcomQmp', 'QcomRpmh', 'QcomQrtr', 'FatVolume'):
     compile_c(remoteproc / (stem + '.c'), board_dir / (stem + '.o'))
     board_objects.append(board_dir / (stem + '.o'))
@@ -603,7 +616,11 @@ sources += [KITS / 'BootResetCore.h', ROOT / 'scripts/build-ath11k-wifi.py',
            qmi_module / 'src/nw_wifi.c', qmi_module / 'src/nw_diag_ahb.c',
            qmi_module / 'src/nw_ahb.c', qmi_module / 'src/nw_control.c',
            qmi_module / 'include/nw_control_endpoint.h', qmi_module / 'tools/sources.txt']
-sources += list(remoteproc.glob('*.c')) + list(remoteproc.glob('*.h'))
+sources += [KITS / name for name in (
+    'AdspProbe.cpp', 'ShengAdsp.h', 'ShengGpr.c', 'ShengGpr.h',
+    'ShengAudioReach.c', 'ShengAudioReach.h', 'UkeAudioProbe.cpp',
+    'ShengBattmgr.c', 'ShengBattmgr.h', 'ShengBattery.cpp', 'BatteryProbe.cpp', 'ShengQrtr.c')]
+sources += list(remoteproc.glob('*.c')) + list(remoteproc.glob('*.h')) + list(remoteproc.glob('*.cpp'))
 (OUT / 'build-report.json').write_text(json.dumps(dict(
     source_sha256={str(p.relative_to(ROOT)): sha(p) for p in sources}, generated_abi_sha256=sha(OUT / 'OriginalLegacyFramebufferABI.h'),
     kernelcache_sha256=abi['kernelcache_sha256'], compiled_object_sha256=sha(obj), archive_sha256=sha(archive),

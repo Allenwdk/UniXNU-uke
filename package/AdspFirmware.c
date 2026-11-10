@@ -4,8 +4,7 @@
 //   FAT volume read in place through the UFS driver (read only; nothing is installed and the boot image does not grow);
 // - any other path: a file on a mounted volume (such as adsp.mbn installed by the owner below /private/var/firmware), read through VFS.
 // Imported from UniXNU-sheng 460179565a018c741b93e0b1efa07c55d4de497a.
-// Uke's WPSS worker uses "modem:qca6750/wpss". One worker owns this reader;
-// no partition or VFS writes are provided. Allocation state is explicit.
+// The stock partition cache is shared by WPSS and ADSP. The reader is read-only.
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/proc.h>
@@ -14,6 +13,7 @@
 #include <sys/fcntl.h>
 #include <sys/kauth.h>
 #include <IOKit/IOLib.h>
+#include <kern/locks.h>
 #include <libkern/crypto/sha2.h>
 #include "FatVolume.h"
 #include "QcomMdt.h"
@@ -33,8 +33,9 @@ struct partition {
     uint64_t cached;  // block in block (UINT64_MAX: none)
     uint8_t block[4096];
 };
-static struct partition *gPart;
 static FatVolume *gVolume;
+LCK_GRP_DECLARE(gFirmwareGroup, "uke-firmware-fat");
+LCK_MTX_DECLARE(gFirmwareLock, &gFirmwareGroup);
 
 // Bytes of the partition: whole blocks straight into to, the ends of a range through the one-block cache.
 static int partitionRead(void *context, uint64_t offset, void *to, size_t length)
@@ -85,14 +86,13 @@ static int mountPartition(void)
         rc = fat_mount(v, blocks * 4096, partitionRead, p) ? EFTYPE : 0;
     }
     if (rc) {IOFreeType(p, struct partition); IOFreeType(v, FatVolume); return rc;}
-    gPart = p;
     gVolume = v;
     return 0;
 }
 
 /* OEM icnss2 selects these files for the measured CN O82 board.
  * Keep the original modem partition and the exact manifest identities. */
-int uke_wlfw_load_stock_data(unsigned type, uint8_t **data, uint32_t *length)
+static int loadStockData(unsigned type, uint8_t **data, uint32_t *length)
 {
     static const struct {
         unsigned type;
@@ -135,6 +135,14 @@ int uke_wlfw_load_stock_data(unsigned type, uint8_t **data, uint32_t *length)
     *length = file.size;
     printf("UKE WIFI: verified stock %s bytes=%u\n", files[index].path, *length);
     return 0;
+}
+
+int uke_wlfw_load_stock_data(unsigned type, uint8_t **data, uint32_t *length)
+{
+    lck_mtx_lock(&gFirmwareLock);
+    const int rc = loadStockData(type, data, length);
+    lck_mtx_unlock(&gFirmwareLock);
+    return rc;
 }
 
 void uke_wlfw_release_stock_data(uint8_t *data, uint32_t length)
@@ -197,7 +205,9 @@ int sheng_fw_open(const char *path, void **handle, uint64_t *size)
     bzero(fw, sizeof *fw);
     int error;
     if (!strncmp(path, "modem:", 6)) {
+        lck_mtx_lock(&gFirmwareLock);
         error = openModem(path + 6, &fw->modem, size);
+        lck_mtx_unlock(&gFirmwareLock);
     } else {
         vfs_context_t ctx = vfs_context_kernel();
         struct vnode_attr va;
@@ -222,7 +232,12 @@ int sheng_fw_open(const char *path, void **handle, uint64_t *size)
 int sheng_fw_read(void *handle, uint64_t offset, void *to, size_t length)
 {
     struct sheng_fw *fw = handle;
-    if (fw->modem) return qcom_mdt_split_read(&fw->modem->split, pieceRead, fw->modem, offset, to, length) ? EIO : 0;
+    if (fw->modem) {
+        lck_mtx_lock(&gFirmwareLock);
+        const int rc = qcom_mdt_split_read(&fw->modem->split, pieceRead, fw->modem, offset, to, length);
+        lck_mtx_unlock(&gFirmwareLock);
+        return rc ? EIO : 0;
+    }
     vfs_context_t ctx = vfs_context_kernel();
     uint8_t *out = (uint8_t *)to;
     while (length) {
