@@ -543,6 +543,8 @@ board_objects.append(wifi_net_late)
 remoteproc = ROOT / 'kits/Sm7675Platform/remoteproc'
 compile_cpp(remoteproc / 'Sm7675RemoteProc.cpp', board_dir / 'Sm7675RemoteProc.o')
 board_objects.append(board_dir / 'Sm7675RemoteProc.o')
+compile_cpp(remoteproc / 'Sm7675Scm.cpp', board_dir / 'Sm7675Scm.o')
+board_objects.append(board_dir / 'Sm7675Scm.o')
 compile_cpp(KITS / 'ShengBattery.cpp', board_dir / 'ShengBattery.o')
 battery_late = board_dir / 'ShengBattery.late.o'
 run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func',

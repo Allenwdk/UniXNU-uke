@@ -10,6 +10,7 @@
 #include <pexpert/pexpert.h>
 #include <libkern/crypto/sha2.h>
 #include "Sm7675RemoteProc.h"
+#include "Sm7675Scm.h"
 extern "C" {
 #include "QcomGlink.h"
 #include "QcomMdt.h"
@@ -206,23 +207,8 @@ int vote(uint32_t lcx, uint32_t lmx) {
 // ---- secure world calls ----
 struct ScmResult {int64_t x0; uint64_t x1;};
 ScmResult scm(uint32_t command, uint32_t arginfo, uint64_t a, uint64_t b, uint64_t c) {
-    ScmResult result = {-1, 0};
-    for (unsigned busy = 0; busy < 20; ++busy) {
-        uint64_t function = qcom_scm_fn(QCOM_SCM_SVC_PIL, command), session = 0;
-        unsigned resumes = 0;
-        for (;;) {
-            register uint64_t x0 __asm__("x0") = function, x1 __asm__("x1") = arginfo, x2 __asm__("x2") = a, x3 __asm__("x3") = b,
-                              x4 __asm__("x4") = c, x5 __asm__("x5") = 0, x6 __asm__("x6") = session, x7 __asm__("x7") = 0;
-            __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7)
-                             :: "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
-            result = {(int64_t)x0, x1};
-            if ((int64_t)x0 != QCOM_SCM_INTERRUPTED || ++resumes > 100000) break;
-            function = QCOM_SCM_INTERRUPTED;  // resume the interrupted call in its session
-            session = x6;
-        }
-        if (result.x0 != QCOM_SCM_V2_EBUSY) break;
-        IOSleep(30);
-    }
+    const auto reply = sm7675_scm_call(QCOM_SCM_SVC_PIL, command, arginfo, a, b, c);
+    const ScmResult result = {reply.x0, reply.x1};
     native_adsp_stats[13] = (int32_t)result.x0;
     native_adsp_stats[14] = (int32_t)result.x1;
     return result;

@@ -79,3 +79,10 @@ with tempfile.TemporaryDirectory(prefix='uke-dsp-host-') as directory:
                     remote / 'tests/remoteproc_host.cpp', *objects, '-o', exe], check=True)
     subprocess.run([exe], check=True)
     subprocess.run([exe, 'v3'], check=True)
+
+    exe = scratch / 'scm'
+    subprocess.run([os.environ.get('CXX', 'clang++'), '-std=c++17', *flags,
+                    '-Wno-ignored-attributes', '-Wno-pointer-bool-conversion',
+                    '-DSM7675_SCM_HOST', '-I', scratch, '-pthread',
+                    remote / 'tests/scm_host.cpp', '-o', exe], check=True)
+    subprocess.run([exe], check=True)

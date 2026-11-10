@@ -17,6 +17,7 @@
 #include "ArmSmmu4KContext.h"
 #include "SmmuBypass.h"
 #include "Sm7675RemoteProc.h"
+#include "Sm7675Scm.h"
 extern "C" {
 #include "QcomGlink.h"
 #include "QcomMdt.h"
@@ -409,37 +410,13 @@ int vote(uint32_t cx, uint32_t mx, uint32_t xo) {
 // ---- secure world calls ----
 struct ScmResult {int64_t x0; uint64_t x1;};
 ScmResult scm(uint32_t command, uint32_t arginfo, uint64_t a, uint64_t b, uint64_t c) {
-    ScmResult result = {-1, 0};
-    for (unsigned busy = 0; busy < 20; ++busy) {
-        uint64_t function = qcom_scm_fn(QCOM_SCM_SVC_PIL, command), session = 0;
-        unsigned resumes = 0;
-        for (;;) {
-            register uint64_t x0 __asm__("x0") = function, x1 __asm__("x1") = arginfo, x2 __asm__("x2") = a, x3 __asm__("x3") = b,
-                              x4 __asm__("x4") = c, x5 __asm__("x5") = 0, x6 __asm__("x6") = session, x7 __asm__("x7") = 0;
-            __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7)
-                             :: "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
-            result = {(int64_t)x0, x1};
-            if ((int64_t)x0 != QCOM_SCM_INTERRUPTED || ++resumes > 100000) break;
-            function = QCOM_SCM_INTERRUPTED;  // resume the interrupted call in its session
-            session = x6;
-        }
-        if (result.x0 != QCOM_SCM_V2_EBUSY) break;
-        IOSleep(30);
-    }
+    const auto reply = sm7675_scm_call(QCOM_SCM_SVC_PIL, command, arginfo, a, b, c);
+    const ScmResult result = {reply.x0, reply.x1};
     native_wifi_wpss_stats[13] = (int32_t)result.x0;
     native_wifi_wpss_stats[14] = (int32_t)result.x1;
     return result;
 }
 bool scmOk(const ScmResult &r) {return r.x0 == 0 && r.x1 == 0;}
-
-void cleanToPoc(const void *start, size_t length) {
-    uint64_t ctr;
-    __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
-    const uintptr_t line = static_cast<uintptr_t>(4) << ((ctr >> 16) & 15);
-    for (uintptr_t a = reinterpret_cast<uintptr_t>(start) & ~(line - 1); a < reinterpret_cast<uintptr_t>(start) + length; a += line)
-        __asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
-    __asm__ volatile("dsb sy" ::: "memory");
-}
 
 // ---- a firmware image: parsed from its file, metadata handed over, segments written into the carveout ----
 struct Image {  // plain data, zero at start: the two live in static storage (a few KiB of header table each, kept off the stack)
@@ -447,12 +424,25 @@ struct Image {  // plain data, zero at start: the two live in static storage (a 
     uint64_t size;
     QcomMdtImage mdt;
     IOBufferMemoryDescriptor *meta;
+    bool prepared;
+    bool secureMetadata;
+    uint32_t pas;
+    bool pasActive;
 };
 Image gWpssImage;
 int fileRead(void *context, uint64_t offset, void *to, size_t length) {return sheng_fw_read(context, offset, to, length);}
 void release(Image &image) {
     if (image.file) sheng_fw_close(image.file);
-    if (image.meta) image.meta->release();
+    image.file = nullptr;
+    if (image.meta && image.secureMetadata) {
+        printf("UKE WIFI: retain metadata pas=%u until shutdown is confirmed\n", image.pas);
+        return;
+    }
+    if (image.meta) {
+        if (image.prepared) image.meta->complete();
+        image.meta->release();
+    }
+    image.prepared = false;
     image.file = nullptr; image.meta = nullptr;
 }
 int openImage(Image &image, const char *path) {
@@ -464,13 +454,29 @@ int openImage(Image &image, const char *path) {
 // init_image with the metadata in physically contiguous memory, then the memory setup of a relocatable image.
 int authenticateHeader(Image &image, uint32_t pas, uint64_t base) {
     const uint64_t bytes = qcom_mdt_metadata_size(&image.mdt);
-    image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, (IOOptionBits)kIODirectionInOut | (IOOptionBits)kIOMemoryPhysicallyContiguous, bytes,
-                                                                 0xfffffffffffff000ull);
+    if (!bytes || bytes > UINT64_MAX - 0xfff) return -7;
+    const uint64_t allocation = (bytes + 0xfff) & ~0xfffull;
+    // Uke OEM mdt_loader uses a page-aligned, non-cacheable coherent buffer:
+    // secure authentication can protect its entire physical pages (XPU).
+    // Write-combine selects normal uncached memory, retaining bulk-copy support.
+    image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+        (IOOptionBits)kIODirectionInOut | (IOOptionBits)kIOMemoryPhysicallyContiguous |
+        (IOOptionBits)kIOMapWriteCombineCache, allocation, 0xfffffffffffff000ull);
     if (!image.meta || image.meta->prepare() != kIOReturnSuccess) return -12;
+    image.prepared = true;
     uint8_t *va = static_cast<uint8_t *>(image.meta->getBytesNoCopy());
     if (qcom_mdt_metadata(&image.mdt, fileRead, image.file, va, bytes)) return -5;
-    cleanToPoc(va, bytes);
-    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+    __asm__ volatile("dsb sy" ::: "memory");
+    IOByteCount segment = 0;
+    const uint64_t phys = image.meta->getPhysicalSegment(0, &segment, kIOMemoryMapperNone);
+    if (!phys || (phys & 0xfff) || segment < allocation) return -12;
+    printf("UKE WIFI: metadata pas=%u pa=%llx span=%llu allocation=%llu cache=normal-uncached\n",
+        pas, (unsigned long long)phys, (unsigned long long)segment, (unsigned long long)allocation);
+    // Even a failed INIT_IMAGE may have enabled memory protection. Keep the
+    // buffer owned until a successful shutdown on every failure path.
+    image.pas = pas;
+    image.secureMetadata = true;
+    image.pasActive = true;
     if (!scmOk(scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0))) return -1;
     if (image.mdt.relocatable &&
         !scmOk(scm(QCOM_SCM_PAS_MEM_SETUP, qcom_scm_args(3, 0, 0, 0), pas, base, qcom_mdt_span(&image.mdt))))
@@ -649,6 +655,26 @@ int openFirmware(Image &image) {
     }
 }
 
+bool stopImage(Image &image) {
+    if (!image.secureMetadata && !image.pasActive) return true;
+    const ScmResult result = scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), image.pas, 0, 0);
+    if (!scmOk(result)) {
+        printf("UKE WIFI: quarantine pas=%u owned resources and power scm=%lld/%llu\n", image.pas,
+            (long long)result.x0, (unsigned long long)result.x1);
+        return false;
+    }
+    image.secureMetadata = false;
+    image.pasActive = false;
+    printf("UKE WIFI: shutdown confirmed pas=%u before metadata release\n", image.pas);
+    return true;
+}
+
+void unwindStart() {
+    // WPSS retains its existing shared CX/MX/XO policy. Never free metadata
+    // while the target secure world may still own its pages.
+    if (stopImage(gWpssImage)) release(gWpssImage);
+}
+
 bool start() {
     Image &image = gWpssImage;
     if (native_wifi_wpss_stats[3] > 0) {fail(StFirmware, -114); return false;}
@@ -695,25 +721,25 @@ bool start() {
     if ((rc = vote(cx, mx, 3))) {fail(StRails, rc); release(image); return false;}
     stage(StRails);
     if ((rc = authenticateHeader(image, kPasWpss, kWpssBase)) || (rc = loadSegments(image, kWpssBase, kWpssSize))) {
-        fail(StLoaded, rc); scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), kPasWpss, 0, 0);
+        fail(StLoaded, rc);
         release(image); return false;
     }
     stage(StLoaded);
     const uint64_t began = mach_absolute_time();
     if (!scmOk(scm(QCOM_SCM_PAS_AUTH_AND_RESET, qcom_scm_args(1, 0, 0, 0), kPasWpss, 0, 0))) {
-        fail(StStarted, -3); scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), kPasWpss, 0, 0);
+        fail(StStarted, -3);
         release(image); return false;
     }
     stage(StStarted);
     const bool ready = waitUntil(5000, [] {return (gSlave & (kReady | kFatal)) != 0;});
     uint64_t ns = 0; absolutetime_to_nanoseconds(mach_absolute_time() - began, &ns);
     native_wifi_wpss_stats[8] = (int32_t)(ns / 1000000);
-    release(image);
     if (!ready || (gSlave & kFatal)) {
         readCrashReason(); fail(StReady, ready ? -5 : -60);
-        scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), kPasWpss, 0, 0);
         return false;
     }
+    image.secureMetadata = false;
+    release(image);
     stage(StReady); return true;
 }
 
@@ -870,7 +896,7 @@ void wpssThread(void *, wait_result_t) {
     stage(StSurveyed);
     if (mode < 2) return;
     if (mode == 3) {
-        if (!start() || !startGlink()) return;
+        if (!start() || !startGlink()) {unwindStart(); return;}
         static const UkeWpssClient ahbClient = {ahbState, ahbReceive};
         gAhbGlChannel = uke_wpss_channel("IPCRTR", 0x4400, 10, 0, &ahbClient, nullptr);
         if (!gAhbGlChannel) {fail(StChannel, -7); return;}
@@ -891,7 +917,7 @@ void wpssThread(void *, wait_result_t) {
     }
     const char *smmuError = smmuRouteWlan();
     if (smmuError) printf("UKE WIFI: SMMU route failed: %s\n", smmuError);
-    if (!start() || !startGlink()) return;
+    if (!start() || !startGlink()) {unwindStart(); return;}
     // From here on the thread only answers doorbells and client sends; with nothing pending it sleeps without a deadline, except while
     // a send waits for an intent or FIFO room (then it looks again every second).
     for (;;) {
