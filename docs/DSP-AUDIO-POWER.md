@@ -162,3 +162,23 @@ shutdown拒绝、双PAS次序、认证前失败、成功后释放及GLINK失败�
 照片中的拷贝panic相符，但缺少目标PA，完整硬件因果尚未证明。只读取证
 和原始照片在uke-port/fixes/2026-11-11-battery-dispatch-panic，根报告
 docs/status/adsp-metadata-panic-2026-11-11.md。设备为原厂四分区/A/TWRP。
+
+## SCM WAITQ：同次返回值的直接协议差异
+
+进一步对照 uke OEM `drivers/firmware/qcom_scm-smc.c` 及 `qcom_scm.c`：
+本次 ADSP x0=2 是 WAITQ_SLEEP，WPSS x0=3 是 WAITQ_WAKE，x1=1 是等待队列
+上下文，均不是认证终结失败。本地与通用sheng旧胶水仅处理 interrupted1 和
+busy-12，漏掉 WAITQ，且两个 PAS 路径没有共用普通调用锁。它们会在安全世界
+尚未结束调用时进入加载失败及清理路径，这是已证实的协议缺陷。
+
+原厂恢复系统实际 `/proc/interrupts` 和 dmesg 报告 contexts=2、GIC intid962、
+Edge qcom-scm，已保存 recovery-scm-waitq.txt。新共享 Sm7675Scm.cpp 按目标
+OEM 的普通调用 mutex、QCOM_A6、IRQ worker 原子 GET_WQ_CTX、标准
+RESUME/ACK 和 EBUSY 后恢复原始请求实现，保留原版权及 GPL-2.0-only。
+ADSP/WPSS 均使用该入口；WPSS 同样补齐4KiB非缓存元数据及shutdown-before-free。
+XNU等待有10秒上限，超时或协议异常后隔离后续调用，保留安全世界可能持有的
+元数据和电源，直到干净重启。这里与OEM无限等待的差异已明确记录。
+
+真实共享SCM代码268项ASan/UBSan检查通过，包括睡眠→IRQ→GET→RESUME、
+WAKE→ACK、连续WAITQ、wake_one/wake_all、A6保持、ACK返回busy后重发原请求、
+超时隔离、畸形回复与双调用者串行。主机通过不能证明实机IRQ及PAS已经成功。
