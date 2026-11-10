@@ -17,7 +17,8 @@ feat/uke-ipados27-dsp-audio-power；每个仓另有backup/before-uke-cpu-gpu-syn
 - CPU：复用最新sheng CpufreqProbe的ramp统计与16ms CPF1记录，保留3/4/1
   SM7675 EPSS分域与硬件LUT；原厂已有L3 base17d90000、LUT+100、vote+90。
   mode4按sheng启用后只投一次最高有效档（可受显式cap限制），增加级别/频率/读回日志，
-  不是MEMLAT governor，不宣称实际L3频率已测量。
+  不是MEMLAT governor，不宣称实际L3频率已测量。新增L3页按工作区既有规则走
+  ml_io_map_unmappable，投票算法不改；原sheng poll接入现有日志轮询，在enable延后时重试，成功仍只投一次。
 - GPU governor：同步80ms真实空闲才触发wake boost、多窗口gpu-dcvs-span、窗口及原因统计。
   保留uke GMU启动表的九档255/353/500/633/684/736/835/900/950MHz、默认floor500、
   第九档独立占比数组及原BR/低开销追踪，未拿sheng A740频点替换。
@@ -50,4 +51,4 @@ NATIVE_ACCELERATOR_BASE宏与旧已验收Metal ABI头文件的接口差异；构
 bootimg与镜像输入/结构核验为本轮门禁。构建中，不把已编译或静态接线当作硬件验收。
 设备仍以最后用户反馈的D4EF/A槽为准，本轮没有ADB/fastboot操作。
 
-正式kernel/firmware/payload已通过；最终候选归档与实机状态另记，未刷。
+最终L3接线补齐：新页使用现有native MMIO API，sheng原有poll由既有日志轮询每2秒调用；固件延后enable时重试，成功仍只投最高档一次。A75为未刷中间包，已标DO_NOT_FLASH，由v2替代。
