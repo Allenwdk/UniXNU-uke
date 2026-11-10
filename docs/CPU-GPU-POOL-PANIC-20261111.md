@@ -13,3 +13,9 @@ Adreno740 upstream `9d99240` 的池清零沿用 bzero，默认其 WC 映射具�
 修正将 DarwinBoot 最终内存图提供的 conventional DRAM 范围复制进 XNU 的启动只读表。表受页对齐、溢出、排序重叠和 XNU 窗口重叠检查约束，GPU 池注册需要完整范围命中。仅对应物理页的 WC 映射选 Normal，VM 不接管这些页。CPU 的池描述符与用户池视图均显式请求 WC，池清零复用 XNU 的 secure_memset 并保留 DSB。其余 GPU 池分配、释放、视图生命周期继续用上游实现。修正适用范围是 24A446 的 Uke XNU 补丁和 Adreno740 池入口。
 
 E8AF 同次日志记录 L3 第 10 档、请求 1,593,600 kHz、寄存器读回 10。GPU 围栏中断已到达完成处理。电池有 42 次快照和外接状态变化，ADSP ready 371 ms，APM 返回 ready。池录入 8 个范围共 741,696 KiB，另一个高位范围报 NoMemory。L3 读回是投票索引，实际频率需独立测量。此 boot 因 panic 终止，修复后的 GPU 池和整机回归待新候选验证。
+
+## 修复候选
+
+`CED0C67E2D0F3E7C` 已完成正式 kernel、payload、boot 和 vendor_boot 构建。vendor_boot SHA-256 为 `81a8fc1748820b7a5ebbaf5065bd3414ba8892963e0d571db82e436a0ad97446`，大小 47,435,776 B。归档 `uke-port/releases/2026-11-11-cpu-gpu-pool-wc/`，使用同目录配套镜像。boot 内嵌固件与 E8AF 归档相同，设备源码快照为 `12a442dd963fe5ac1582aabedece5af90c589fd2`，核心和 GPU 组件见 source-revisions.json。
+
+57 项归档 SHA 校验通过。最终内核确认池清零调用 secure_memset，pmap WC 分类与池注册均调用同一范围检查，修复补丁出现在实际 XNU 构建输入。L3 投票、GPU 围栏 IRQ 接线及 64 位路由指令继续纳入镜像核验。签名资产、721 B 启动参数、18 项 ADT 配置和基线预链接缺失/桩一致，ADT 差异仅 random-seed。13 区检查通过。修复候选未刷，设备留在 TWRP。
