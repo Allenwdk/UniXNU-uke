@@ -28,7 +28,7 @@ name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
 # Display fence callout delivery and bounded polling fallback.
-commit = "f0c18e0e8f7b0a16d669b7e800e63fae70fc6b01"
+commit = "eadd64adce942f0521a5f6f1985959d902092e4a"
 
 [[source]]
 name = "AdrenoMetal"
