@@ -72,3 +72,13 @@ QMP 超时保持未确认邮箱，后续请求先等原消息确认。RPMh 超�
 PAS ready、通道开闭、元数据哈希、APM 响应字节和电池快照。插拔电源，
 核对原始值与 OS 更新，同时回归 Wi-Fi、触摸、显示、调光及 CPU/GPU
 调频。每个候选取得当次授权后部署，按 tag 配对日志。
+
+## 第一阶段构建记录
+
+候选 `259E2019012F832B` 已归档到
+`uke-port/releases/2026-11-10-adsp-battery-apm-v3/`，vendor_boot SHA-256
+`806135761adb615d3bdfc327ed8961035c0f257572b733b90bf3597e02bf36c7`，47,411,200B。
+721B 参数和18项 ADT 参数，正式 kernel/payload 与源码/链接/镜像检查通过。
+源码为 core cc87305、设备239e407、SM7675 2f12b23，均在本项新分支。
+完整记录见 `docs/releases/2026-11-10-adsp-battery-apm.json`。
+候选尚未刷入，ADSP、电池、APM 和 Wi-Fi 共存均待实机验收。
