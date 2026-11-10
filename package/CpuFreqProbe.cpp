@@ -68,6 +68,7 @@ volatile uint32_t native_cpufreq_count;
 extern volatile uint32_t native_adreno_method_stats[20][4] __attribute__((weak_import));
 extern volatile uint32_t native_hid_input_events[8] __attribute__((weak_import));
 uint64_t sheng_cpu_idle_mach(int cpu);
+vm_offset_t ml_io_map_unmappable(vm_offset_t, vm_size_t, unsigned int);
 }
 static_assert(sizeof(native_cpufreq_rec) == 32, "cpufreq record");
 enum {kCpuFreqRing = 32768};   // BootDiagExport.c CpuFreqRing
@@ -376,7 +377,12 @@ extern "C" void sheng_cpufreq_probe(void) {
     native_cpufreq_stage = 1;
     gCapKHz = capMHz * 1000;
     for (unsigned d = 0; d < 3; ++d) mapWindow(gDomain[d], kDomainBase[d]);
-    if (mode >= 3) mapWindow(gL3, kL3Base);
+    if (mode >= 3) {
+        // New Uke MMIO mappings use the same native physical-page API as the
+        // GPU/IRQ glue; keep sheng's enable/LUT/one-shot voting unchanged.
+        gL3.va = ml_io_map_unmappable(vm_offset_t(kL3Base), vm_size_t(kWindowSize), 0x7 /* VM_WIMG_IO */);
+        gL3.voted = -1;
+    }
     gMode = mode;
     sheng_cpufreq_poll();
     if (mode >= 4) {
