@@ -34,3 +34,13 @@ core新增82a8e54是macOS profile的page radix root启动初始化，sheng43f6f0
 
 该实现复用XNU原锁接口、原子操作和内核栈边界契约。锁阈值、排队、抢占及解锁算法保持原实现。候选的用途是补齐CPU0持锁现场，尚无根因修复或实机通过结论。正式kernel/payload及最终链接核验完成后在本报告追加身份。后续部署仍需该候选当次授权。
 
+
+## 最终诊断候选
+
+候选 `34DE79C17FE8A795` 已归档到 `uke-port/releases/2026-11-11-pset-lock-owner/`，尚未部署。正式kernel、payload、boot/vendor_boot通过。boot SHA-256 `e8cbc39f13b40300d930915b7da3b9ab3ec2c5b63af03292c7ae88215cf9b289`，vendor_boot SHA-256 `4e6564741832644ee3f2f4449b3df7d5bb62465c79122deaab6004a76e0e778a`，47,435,776B。最终内核SHA-256 `2c84518515c1dbd4d4e5ef4c26e7993efb58731812e74b2ee4f9ee1516262848`。
+
+运行源码为core `a5229620130cd414587142f393123d20504236b8`、设备 `822705e07d77985678a0412da278760eca679b6d`，ArmCpu/Adreno/DarwinBoot与A5E3相同。4982e71引入诊断，822705e补严记录失效标记与字段发布之间的内存顺序。最终指令已核对奇数sequence写入后的DMB ISH、末尾release发布、四个成功加锁入口、精确pset0地址和超时快照校验。原ticket-lock和interrupt-masked默认配置、启动参数和签名资产与A5E3一致。
+
+83项显示/平台源码、14项存储源码及实际archive哈希通过。721B启动参数、18项ADT和原签名addon/trust/Data保留，prelink缺失2/桩24与基线一致。正式打包检查通过，SHA256SUMS覆盖69个文件。结构化13区通过。新增记录会带来尚未量化的取证开销，可能影响超时复现时序，候选仍属于诊断阶段。
+
+取得本候选当次授权后刷四分区/A槽。若复现panic，照片应包含`pset0 ticket timeout`、`valid`、`held`及`acquire BT`三地址，用同包内核按LR-4还原CPU0获取锁的调用链。若启动成功，仍需桌面上划、再次启动与电池/Wi-Fi/显示/触摸回归。D4EF配对回退保留。根因与修复效果继续待实机证据。
