@@ -298,6 +298,7 @@ kernel_args = [
 [payload.adt]
 tool = "scripts/make-uke-adt.py"
 chip_id = "207"
+owned_memory_outside_ranges = 16   # Loader supplies only final-map conventional DRAM outside this window.
 owned_memory_size = "0x130000000"     # 4.75 GiB, sheng's proven value on the same 12 GB RAM class; fits the 9 GiB
                                       # high-bank run (0x8C0000000..0xB00000000) now mapped in uke's MemoryMapLib
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"

@@ -21,7 +21,7 @@ name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
 # GPU preflight lifecycle and scoped BR31-counter capture.
-commit = "176e0168e548846ae1fdb0f41e3eab9f2bcdaef3"
+commit = "c3cb6093c4ba466d7c25589df85f9b92440e528a"
 
 [[source]]
 name = "GopFramebuffer"
@@ -63,3 +63,17 @@ name = "Ath12kWifi"
 kind = "driver"
 git = "https://github.com/UniXNU/Ath12kWifi.git"
 commit = "de17340500b72bb4f33cf3973e0608c145cb5b67"
+
+# Upstream CPU/GPU synchronization, with Uke integration retained.
+[[source]]
+name = "ArmCpu"
+kind = "driver"
+git = "https://github.com/UniXNU/ArmCpu.git"
+commit = "795159ef145e1768b27e7fa9c1bf01dcc981e17c"
+
+# Upstream CPU/GPU synchronization, with Uke integration retained.
+[[source]]
+name = "DarwinBoot"
+kind = "driver"
+git = "https://github.com/UniXNU/DarwinBoot.git"
+commit = "a4e33b3af7574425da7cc52ba7356b466d084ad7"

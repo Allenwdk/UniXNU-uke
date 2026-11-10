@@ -1,0 +1,20 @@
+--- a/pexpert/gen/bootargs.c
++++ b/pexpert/gen/bootargs.c
+@@ -103,8 +103,15 @@
+ 		c = *cp;
+ 
+ 		i = cp - args;
+-		if (strncmp(args, arg_string, i) ||
+-		    (i != strlen(arg_string))) {
++		/* Uke retains old sheng-* entries while components use upstream names.
++		 * Match aliases inside each existing argument layer; do not let a built-in
++		 * canonical default override an explicit legacy command-line argument. */
++		const char *name = args, *wanted = arg_string;
++		size_t name_len = i;
++		if (name_len > 6 && !strncmp(name, "sheng-", 6)) { name += 6; name_len -= 6; }
++		if (!strncmp(wanted, "sheng-", 6)) { wanted += 6; }
++		if (strncmp(name, wanted, name_len) ||
++		    (name_len != strlen(wanted))) {
+ 			goto gotit;
+ 		}
+ 

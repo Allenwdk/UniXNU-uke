@@ -98,3 +98,6 @@ uke-backlight-runtime.patch
 
 # CLI > bounded ADT driver defaults > upstream built-in defaults, selected keys only.
 uke-adt-driver-args.patch
+
+# Legacy sheng-* and upstream argument names share the existing precedence.
+uke-upstream-boot-arg-aliases.patch

@@ -31,6 +31,14 @@ extern void uke_crash_log_start(void);
 extern volatile uint32_t boot_log_rounds;
 extern volatile int32_t native_battery_stats[16];
 extern volatile uint32_t native_battery_dispatch[6];
+extern unsigned armcpu_stats_row(unsigned, char *, unsigned);
+extern volatile uint32_t native_cpufreq_ramp[9], native_gpu_dcvs_reasons[9], native_gpu_dcvs_windows[8];
+extern volatile uint32_t native_gpu_pool_board[4], native_adreno_pool_state[12];
+extern volatile uint64_t native_adreno_fence_wake[8], native_adreno_submit_us[8];
+extern volatile uint64_t native_adreno_maint_walk[8];
+extern volatile uint32_t native_adreno_sync_audit[6], native_adreno_sync_skips[2];
+extern volatile uint32_t native_adreno_bo_owners[24][4], native_adreno_view_owners[24][4];
+
 #else
 extern void pe_print_last_panic_again(void);
 #endif
@@ -460,6 +468,42 @@ uke_last_log_writer(void *arg, wait_result_t result)
                 native_battery_stats[0], counts[0], counts[1], counts[2], counts[3], counts[4], counts[5],
                 native_battery_stats[7], native_battery_stats[8], native_battery_stats[14], native_battery_stats[15]);
         }
+        if ((tick % 40) == 0) {
+            char row[512];
+            for (unsigned i = 0; i < 17 && armcpu_stats_row(i, row, sizeof row); ++i)
+                IOLog("UKE %s\n", row);
+            IOLog("UKE CPU ramp: full=%u/%u/%u late=%u/%u/%u statePct=%u/%u/%u\n",
+                native_cpufreq_ramp[0], native_cpufreq_ramp[3], native_cpufreq_ramp[6],
+                native_cpufreq_ramp[1], native_cpufreq_ramp[4], native_cpufreq_ramp[7],
+                native_cpufreq_ramp[2], native_cpufreq_ramp[5], native_cpufreq_ramp[8]);
+            IOLog("UKE DCVS windows: span=%u windows=%u busy=%u faint=%u ringOnly=%u longest=%uus@%u rests=%u\n",
+                native_gpu_dcvs_windows[7], native_gpu_dcvs_windows[0], native_gpu_dcvs_windows[1],
+                native_gpu_dcvs_windows[2], native_gpu_dcvs_windows[3], native_gpu_dcvs_windows[4],
+                native_gpu_dcvs_windows[5], native_gpu_dcvs_windows[6]);
+            IOLog("UKE DCVS reasons: %u/%u/%u/%u/%u/%u/%u/%u\n",
+                native_gpu_dcvs_reasons[1], native_gpu_dcvs_reasons[2], native_gpu_dcvs_reasons[3], native_gpu_dcvs_reasons[4],
+                native_gpu_dcvs_reasons[5], native_gpu_dcvs_reasons[6], native_gpu_dcvs_reasons[7], native_gpu_dcvs_reasons[8]);
+            IOLog("UKE GPU fence wake: irq=%llu fence=%llu pass=%llu woken=%llu sleep=%llu timeout=%llu periodic=%llu switches=%llu\n",
+                native_adreno_fence_wake[0], native_adreno_fence_wake[1], native_adreno_fence_wake[2], native_adreno_fence_wake[3],
+                native_adreno_fence_wake[4], native_adreno_fence_wake[5], native_adreno_fence_wake[6], native_adreno_fence_wake[7]);
+            IOLog("UKE GPU pool: board=%u/%u KiB=%u rc=%x ranges=%u total=%u free=%u alive=%u grantsKiB=%u retired=%u\n",
+                native_gpu_pool_board[0], native_gpu_pool_board[1], native_gpu_pool_board[2], native_gpu_pool_board[3],
+                native_adreno_pool_state[0], native_adreno_pool_state[1], native_adreno_pool_state[2],
+                native_adreno_pool_state[4], native_adreno_pool_state[5], native_adreno_pool_state[8]);
+            IOLog("UKE GPU maintenance: walk=%llu/%llu/%llu/%llu/%llu skip=%u/%u audit=%u dirty=%u submit=%llu totalUs=%llu\n",
+                native_adreno_maint_walk[0], native_adreno_maint_walk[1], native_adreno_maint_walk[2],
+                native_adreno_maint_walk[3], native_adreno_maint_walk[4], native_adreno_sync_skips[0], native_adreno_sync_skips[1],
+                native_adreno_sync_audit[0], native_adreno_sync_audit[2], native_adreno_submit_us[0], native_adreno_submit_us[6]);
+            for (unsigned i=0; i<24; ++i) {
+                if (native_adreno_bo_owners[i][2])
+                    IOLog("UKE GPU BO owner: pid=%u bytes=%u count=%u peak=%u\n", native_adreno_bo_owners[i][0],
+                        native_adreno_bo_owners[i][1], native_adreno_bo_owners[i][2], native_adreno_bo_owners[i][3]);
+                if (native_adreno_view_owners[i][2])
+                    IOLog("UKE GPU view owner: pid=%u KiB=%u count=%u peak=%u\n", native_adreno_view_owners[i][0],
+                        native_adreno_view_owners[i][1], native_adreno_view_owners[i][2], native_adreno_view_owners[i][3]);
+            }
+        }
+
 #endif
 		uke_last_log_write();
 		// The userdata copy is paced separately: the 32 MiB window only holds

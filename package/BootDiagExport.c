@@ -143,6 +143,14 @@ extern void absolutetime_to_nanoseconds(uint64_t, uint64_t *);
 extern volatile uint64_t *native_touch_report_ring __attribute__((weak_import));
 extern volatile uint32_t native_touch_report_count __attribute__((weak_import));
 enum {TouchRing = 65536};
+// CPU frequency governor windows (CpuFreqProbe.cpp), kernel.cpufreq.bin: header "CPF1", total, kept, 0; then 32-byte records
+// {u64 microseconds, u16 voted MHz[3], u16 running MHz[3], u16 busiest CPU per mille[3], u16 flags (1 touch boost, 2 frame floor), u32 0},
+// domains 0 the A520s, 1 the A720s, 2 the X4.
+struct cpufreq_rec {uint64_t abs; uint16_t vote_mhz[3], state_mhz[3], busy_pm[3]; uint16_t flags; uint32_t reserved;};
+_Static_assert(sizeof(struct cpufreq_rec) == 32, "cpufreq record");
+extern struct cpufreq_rec *native_cpufreq_ring __attribute__((weak_import));
+extern volatile uint32_t native_cpufreq_count __attribute__((weak_import));
+enum {CpuFreqRing = 32768};
 // The client sampler (BootUiTraceProbe.c): kernel.client.bin is its ring in time order (16-byte header "CLI1", u32 total, u32 kept, u32 0;
 // then 128-byte records {u64 microseconds, i32 pid, u16 state, i16 priority, u32 context switches, i32 mach_msg peer pid, u64 CPU time
 // (mach units), u64 wait event, u64 frames[11] (pc, lr, nine callers)}); kernel.rings.txt has a C row per target (pid, shared cache
@@ -196,6 +204,7 @@ extern volatile unsigned boot_client_target_count __attribute__((weak_import));
 enum {ClientRing = 262144};   // BootUiTraceProbe.c CS_RING
 static uint32_t client_kept, client_keep;
 static uint32_t touch_kept,touch_keep;
+static uint32_t cpufreq_kept,cpufreq_keep;
 
 static void latency_tick(unsigned diag) {
   if (!&native_legacy_swapstat || native_legacy_swapstat[9] < 50) return;   // the home screen draws
@@ -206,6 +215,10 @@ static void latency_tick(unsigned diag) {
       boalloc_ring = IOMallocAligned(sizeof(struct boalloc_rec) * BoAllocRing, PAGE_SIZE);
       if (boalloc_ring) {memset(boalloc_ring, 0, sizeof(struct boalloc_rec) * BoAllocRing); native_adreno_bo_hook = boalloc_hook;}
     }
+  }
+  if (&native_cpufreq_ring && !native_cpufreq_ring) {
+    struct cpufreq_rec *windows = IOMallocAligned(sizeof(struct cpufreq_rec) * CpuFreqRing, PAGE_SIZE);
+    if (windows) {memset(windows, 0, sizeof(struct cpufreq_rec) * CpuFreqRing); native_cpufreq_ring = windows;}
   }
   if (&native_touch_report_ring && !native_touch_report_ring) {
     uint64_t *touches = IOMallocAligned(sizeof(uint64_t) * TouchRing, PAGE_SIZE);
@@ -429,6 +442,13 @@ uint64_t boot_diag_scan(uint64_t budget) {
     const uint64_t cost = 24 + strlen("kernel.boalloc.bin") + 16 + (uint64_t)kept * sizeof(struct boalloc_rec);
     if (used + cost <= budget) {boalloc_keep = 1; used += cost;}
   }
+  cpufreq_keep = 0;
+  cpufreq_kept = (&native_cpufreq_count && &native_cpufreq_ring && native_cpufreq_ring) ? native_cpufreq_count : 0;
+  if (cpufreq_kept) {
+    const uint32_t kept = cpufreq_kept > CpuFreqRing ? CpuFreqRing : cpufreq_kept;
+    const uint64_t cost = 24 + strlen("kernel.cpufreq.bin") + 16 + (uint64_t)kept * sizeof(struct cpufreq_rec);
+    if (used + cost <= budget) {cpufreq_keep = 1; used += cost;}
+  }
   touch_kept = (&native_touch_report_count && &native_touch_report_ring && native_touch_report_ring) ?
     __atomic_load_n(&native_touch_report_count,__ATOMIC_ACQUIRE) : 0;
   if (touch_kept) {
@@ -460,7 +480,7 @@ int boot_diag_stream(boot_diag_emit_t emit, void *arg) {
   if (!chunk) return -1;
   vfs_context_t ctx = vfs_context_kernel();
   int rc = emit("M2VCACH1", 8, arg);
-  const uint32_t root_len = 1, count = boot_diag_files + 1 + rings_keep + client_keep + touch_keep + cpu_keep + boalloc_keep + ptime_keep + !!gpu_trace_size[0] + !!latency_size + shots_kept;
+  const uint32_t root_len = 1, count = boot_diag_files + 1 + rings_keep + client_keep + touch_keep + cpufreq_keep + cpu_keep + boalloc_keep + ptime_keep + !!gpu_trace_size[0] + !!latency_size + shots_kept;
   if (!rc) rc = emit(&root_len, 4, arg);
   if (!rc) rc = emit("/", 1, arg);
   if (!rc) rc = emit(&count, 4, arg);
@@ -510,6 +530,24 @@ int boot_diag_stream(boot_diag_emit_t emit, void *arg) {
         memcpy(chunk + (size_t)k * sizeof out, &out, sizeof out);
       }
       rc = emit(chunk, n * sizeof(struct boalloc_rec), arg);
+      at += n;
+    }
+  }
+  if (!rc && cpufreq_keep) {
+    const uint32_t total = cpufreq_kept, kept = total > CpuFreqRing ? CpuFreqRing : total;
+    const uint32_t head[4] = {'C' | 'P' << 8 | 'F' << 16 | (uint32_t)'1' << 24, total, kept, 0};
+    rc = put_head(emit, arg, "kernel.cpufreq.bin", 0100644, 0, 0, 16 + (uint64_t)kept * sizeof(struct cpufreq_rec));
+    if (!rc) rc = emit(head, sizeof head, arg);
+    for (uint32_t at = 0; !rc && at < kept;) {
+      const uint32_t n = kept - at < 4096 ? kept - at : 4096;
+      for (uint32_t k = 0; k < n; ++k) {
+        struct cpufreq_rec r = native_cpufreq_ring[(total - kept + at + k) & (CpuFreqRing - 1)];
+        uint64_t ns = 0;
+        absolutetime_to_nanoseconds(r.abs, &ns);
+        r.abs = ns / 1000;
+        memcpy(chunk + (size_t)k * sizeof r, &r, sizeof r);
+      }
+      rc = emit(chunk, n * sizeof(struct cpufreq_rec), arg);
       at += n;
     }
   }

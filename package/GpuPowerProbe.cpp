@@ -60,6 +60,7 @@
 #include <string.h>
 extern "C" {
 #include "GpuPowerBoard.h"
+extern "C" void sheng_gpu_pool_probe(void);
 }
 
 #include "NativeAdrenoGmuContext.h"
@@ -385,6 +386,7 @@ int preemptWrite(void *, uint32_t reg, uint32_t value) {
 }
 // The CP's preemption, as the board sees it: [0] set up (0 yes), [1] CP_SW interrupts seen, [2] the last such RBBM_INT_0_STATUS word.
 extern "C" {volatile uint32_t native_gpu_preempt[8];}
+extern "C" void native_adreno_gpu_interrupt(uint32_t status) __attribute__((weak));
 extern "C" bool native_adreno_preempt_irq() __attribute__((weak));   // NativeAdrenoPublish.cpp
 // The ring, memptrs and lists are Normal non-cacheable on both sides (GPU PTE MAIR 0, CPU write-combine): no cache
 // maintenance, only ordering.
@@ -733,6 +735,7 @@ void gpuIrq(void *) {
         if (gPreemptCall) thread_call_enter(gPreemptCall);
     }
     if ((status & (1u << 20)) && &native_legacy_gpu_fence_irq) native_legacy_gpu_fence_irq();
+    if (native_adreno_gpu_interrupt) native_adreno_gpu_interrupt(status);
     thread_wakeup(event_t(&gIrqCount));
 }
 bool cpFence(const uint32_t *words, size_t count) {
@@ -1859,7 +1862,7 @@ void gpuStart() {
 }
 // GPU frequency governor (`sheng-gpu-dcvs=1`, after the Metal service is published): the GMU's XO power counter 0 counts 19.2 MHz
 // ticks while the GPU is busy (a6xx_gpu.c hw_init: GPU_GMU_AO_GPU_CX_BUSY_MASK 0xff000000, countable 5 on counter 0, enable). Every
-// 16 ms it takes the frequency that would have kept that window 50 % busy (msm_gpu_devfreq's upthreshold 50) and goes up at once to
+// 16 ms the upstream optional gpu-dcvs-span path evaluates recent windows; it keeps spans 50 % busy (msm_gpu_devfreq's upthreshold 50) and goes up at once to
 // the lowest level at or above 1.1 x of it, to the top after a window over 85 % busy or 50 ms busy without a break; it goes down one
 // level after 4 windows in a row (5 right after a step up) that would have needed at most 0.8 x the next lower level, and back to the
 // floor after 80 ms without work. `sheng-gpu-dcvs-min` is the floor index (default 3, 500 MHz on uke). Each change is the same HFI
@@ -1869,6 +1872,7 @@ void gpuStart() {
 // starts at the lowest level at or above max(2 x now, 578 MHz) for 50 ms, and a touch report holds the top level until
 // `sheng-gpu-dcvs-boost-ms` (default 1000, 0 = off) after the last one. [13] counts the touch boosts started.
 static GpuDcvsOpps gDcvsOpps;
+constexpr unsigned kGpuSpanMax = 8, kGpuKeep = 16;
 extern "C" void (*uke_gpu_iokit_hook)(void *,uint32_t,uint32_t,uint32_t,uint32_t,uint64_t,uint32_t) __attribute__((weak_import));
 // No allocations, stack reads, IOKit calls or text output on this hot path.
 // Track one client's map and external-method phases across all its threads,
@@ -1890,6 +1894,7 @@ volatile uint32_t native_gpu_dcvs_level_share[16];
 // 5 touch boost, 6 wake boost, 7 raised to the floor, 8 the vote failed.
 volatile uint64_t native_gpu_dcvs_log[256][2];
 volatile uint32_t native_gpu_dcvs_log_count;
+volatile uint32_t native_gpu_dcvs_reasons[9], native_gpu_dcvs_windows[8];
 extern volatile uint32_t native_hid_input_events[8] __attribute__((weak_import));
 }
 uint64_t gpuBusyTicks() {
@@ -1978,9 +1983,9 @@ void gpuLightPerfTick(bool preempt) {
 }
 void gpuDcvsThread(void *, wait_result_t) {
     ShengGmuIo &io = gColdDevice.io;
-    const unsigned kGpuTop=gDcvsOpps.top;
-    const uint32_t *kGpuMHz=gDcvsOpps.mhz;
-    unsigned floor = bootArg("sheng-gpu-dcvs-min", 3);
+    const unsigned kGpuTop = gDcvsOpps.top;
+    const uint32_t *kGpuMHz = gDcvsOpps.mhz;
+    unsigned floor = bootArg("gpu-dcvs-min", 3);
     if (floor < 1) floor = 1;
     if (floor > kGpuTop) floor = kGpuTop;
     io.write32(io.cookie, ShengGmuCore, kGmuReg(0x23b0e), 0xff000000u);
@@ -1994,13 +1999,22 @@ void gpuDcvsThread(void *, wait_result_t) {
     uint64_t lastBusy = gpuBusyTicks(), lastT = mach_absolute_time(), idleSince = lastT;
     uint64_t runNs = 0, winBusy = 0, winNs = 0, atLevel[16] = {};
     unsigned down = 0, hold = 0;
+    unsigned span = bootArg("gpu-dcvs-span", 1);
+    if (span < 1) span = 1;
+    if (span > kGpuSpanMax) span = kGpuSpanMax;
+    const unsigned keep = span > 1 ? kGpuKeep : 1;
+    native_gpu_dcvs_windows[7] = span;
+    // The last `span` windows (busy time, length, busy time x MHz), one bit per window that had work, and the last `keep` span needs.
+    uint64_t spanBusy[kGpuSpanMax] = {}, spanNs[kGpuSpanMax] = {}, spanWork[kGpuSpanMax] = {}, kept[kGpuKeep] = {};
+    unsigned spanAt = 0, keptAt = 0, spanActive = 0;
+    uint32_t seen = 0, seenBusy = 0, seenFaint = 0, seenRing = 0, longestUs = 0, longestMHz = 0;
     uint64_t boostAbs = 0, touchEnd = 0, wakeEnd = 0, wakeAbs = 0;
-    nanoseconds_to_absolutetime((uint64_t)bootArg("sheng-gpu-dcvs-boost-ms", 1000) * 1000000, &boostAbs);
+    nanoseconds_to_absolutetime((uint64_t)bootArg("gpu-dcvs-boost-ms", 1000) * 1000000, &boostAbs);
     nanoseconds_to_absolutetime(50000000ull, &wakeAbs);
     uint32_t touches = &native_hid_input_events ? native_hid_input_events[6] : 0;
     bool idle = false;
-    const bool tracePerf=!gLightGpuPerf && bootArg("sheng-gpu-perf",0)==1;
-    const bool perfPreempt=bootArg("sheng-gpu-preempt",2)!=0;
+    const bool tracePerf=!gLightGpuPerf && bootArg("gpu-perf",0)==1;
+    const bool perfPreempt=bootArg("gpu-preempt",2)!=0;
     uint64_t perfUntil=0,perfHold=0;unsigned perfTick=0;
     if(gLightGpuPerf)nanoseconds_to_absolutetime(1000000000ull,&perfHold);
     for (;;) {
@@ -2015,26 +2029,48 @@ void gpuDcvsThread(void *, wait_result_t) {
         if (!ns) continue;
         winBusy += busyNs; winNs += ns; atLevel[cur] += ns;
         const bool active = busyNs > 0 || gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR);
-        const uint64_t need = busyNs * kGpuMHz[cur] * 2 / ns;
+        ++seen;
+        if (busyNs) {
+            ++seenBusy;
+            if (busyNs * 100 < ns) ++seenFaint;
+            if (busyNs / 1000 > longestUs) {longestUs = (uint32_t)(busyNs / 1000); longestMHz = kGpuMHz[cur];}
+        } else if (active) {
+            ++seenRing;
+        }
+        spanBusy[spanAt] = busyNs; spanNs[spanAt] = ns; spanWork[spanAt] = busyNs * kGpuMHz[cur];
+        spanAt = (spanAt + 1) % span;
+        spanActive = (spanActive << 1 | (active ? 1u : 0u)) & ((1u << span) - 1);
+        uint64_t sumBusy = 0, sumNs = 0, sumWork = 0;
+        for (unsigned i = 0; i < span; ++i) {sumBusy += spanBusy[i]; sumNs += spanNs[i]; sumWork += spanWork[i];}
+        // The MHz that would have kept the span 50 % busy, and the highest such value of the last `keep` windows.
+        const uint64_t need = sumWork * 2 / sumNs;
+        kept[keptAt] = need;
+        keptAt = (keptAt + 1) % keep;
+        uint64_t peak = 0;
+        for (unsigned i = 0; i < keep; ++i) if (kept[i] > peak) peak = kept[i];
         runNs = busyNs * 100 >= ns * 95 ? runNs + ns : 0;
         unsigned want = cur, reason = 0;
-        if (busyNs * 100 > ns * 85 || runNs >= 50000000ull) {
+        bool rested = false;
+        if (sumBusy * 100 > sumNs * 85 || runNs >= 50000000ull) {
             want = kGpuTop;reason = 1;
         } else if (gpuLevelFor(need * 11 / 10) > cur) {
             want = gpuLevelFor(need * 11 / 10);reason = 2;
-        } else if (active) {
-            if (cur > floor && need * 10 <= (uint64_t)kGpuMHz[cur - 1] * 8) {
+        } else if (spanActive) {
+            if (cur > floor && peak * 10 <= (uint64_t)kGpuMHz[cur - 1] * 8) {
                 if (++down >= 4 + hold) {want = cur - 1;reason = 3;}
             } else {
                 down = 0;
             }
         } else {
-            uint64_t idle = 0;
-            absolutetime_to_nanoseconds(t - idleSince, &idle);
-            if (idle >= 80000000ull) {want = floor;reason = 4;}
+            uint64_t quiet = 0;
+            absolutetime_to_nanoseconds(t - idleSince, &quiet);
+            if (quiet >= 80000000ull) {want = floor;reason = 4;rested = true;}
         }
         if (active) idleSince = t;
-        if (!active && want == floor) idle = true;
+        // Idle only after those 80 ms: one empty window at the floor is the gap between two light frames, not a rest, and the wake boost
+        // after it took the level to the top about once a second with the GPU under 1 % busy (run54: 96 % of the time above the floor).
+        if (rested && !idle) native_gpu_dcvs_windows[6] = native_gpu_dcvs_windows[6] + 1;
+        if (rested) idle = true;
         if (active && idle) {
             idle = false; wakeEnd = t + wakeAbs; native_gpu_dcvs[14] = native_gpu_dcvs[14] + 1;
         }
@@ -2060,9 +2096,10 @@ void gpuDcvsThread(void *, wait_result_t) {
             absolutetime_to_nanoseconds(t, &tns);
             native_gpu_dcvs_log[slot][0] = tns / 1000;
             native_gpu_dcvs_log[slot][1] = (uint64_t)cur << 56 | (uint64_t)want << 48 | (uint64_t)(voted ? reason : 8) << 40 |
-                                           (uint64_t)(busyNs * 100 / ns) << 32 | (uint32_t)need;
-            boot_latency_record(4,cur,want,voted?reason:8,busyNs*100/ns,need,voted?want:cur);
+                                           (uint64_t)(sumBusy * 100 / sumNs) << 32 | (uint32_t)need;
+            boot_latency_record(4,cur,want,voted?reason:8,sumBusy*100/sumNs,need,voted?want:cur);
             native_gpu_dcvs_log_count = native_gpu_dcvs_log_count + 1;
+            native_gpu_dcvs_reasons[voted ? reason : 8] = native_gpu_dcvs_reasons[voted ? reason : 8] + 1;
             if (voted) {hold = want > cur; cur = want; native_gpu_dcvs[1] = cur; native_gpu_dcvs[2] = native_gpu_dcvs[2] + 1;}
             else native_gpu_dcvs[3] = native_gpu_dcvs[3] + 1;
             down = 0;
@@ -2077,6 +2114,9 @@ void gpuDcvsThread(void *, wait_result_t) {
                 atLevel[l]=0;
             }
             winBusy = winNs = 0;
+            native_gpu_dcvs_windows[0] = seen; native_gpu_dcvs_windows[1] = seenBusy; native_gpu_dcvs_windows[2] = seenFaint;
+            native_gpu_dcvs_windows[3] = seenRing; native_gpu_dcvs_windows[4] = longestUs; native_gpu_dcvs_windows[5] = longestMHz;
+            seen = seenBusy = seenFaint = seenRing = longestUs = longestMHz = 0;
         }
     }
 }
@@ -2431,6 +2471,7 @@ void probeThread(void *, wait_result_t) {
 }
 
 extern "C" void sheng_gpu_power_probe(void) {
+    sheng_gpu_pool_probe();
     unsigned mode = 0;
     if (!PE_parse_boot_argn("sheng-gpu-power", &mode, sizeof mode) || !mode || native_gpu_power_stage) return;
     native_gpu_power_stage = 1;
