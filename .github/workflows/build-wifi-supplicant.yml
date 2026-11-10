@@ -1,0 +1,155 @@
+name: build-uke-wifi-supplicant
+
+# Builds the native wpa_supplicant for the iPadOS 27 line on a macOS runner.
+#
+# The supplicant is a Mach-O userspace program: it needs the iPhoneOS userland
+# SDK (stdlib.h, libSystem), xcrun and codesign, none of which exist on the
+# Linux build host. The kernel, payload and vendor_boot stay local; this job
+# produces exactly one input - the signed `/usr/libexec/unixnu-wpa_supplicant`
+# binary that the board's Data addon installs (see
+# UniXNU-uke-build/scripts/build-wifi-userspace.py and the wifi_tool keys in
+# board.toml).
+#
+# Source: UniXNU/Ath12kWifi at the commit sheng pins (28de7b9), which carries
+# tools/build-supplicant.py, userspace/ and the locked wpa_supplicant 2.12
+# tarball identity. The driver's local uke branch is irrelevant here: the
+# supplicant compiles from userspace/ only.
+#
+# Dispatch-only: nothing here runs on a push.
+
+on:
+  workflow_dispatch:
+    inputs:
+      driver_commit:
+        description: 'Ath12kWifi commit to build from'
+        required: false
+        default: '28de7b91d7a880682b777e0e3564245a99dbc3f5'
+
+permissions:
+  contents: read
+
+jobs:
+  supplicant:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+        with:
+          path: UniXNU-uke
+
+      - name: Check out the Wi-Fi component
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/Ath12kWifi
+          ref: ${{ inputs.driver_commit }}
+          path: Ath12kWifi
+
+      # fetch-sources.py's non-check path adds the locked paths with
+      # `git sparse-checkout add`, which a fresh clone's cone mode rejects
+      # ("specify directories rather than patterns"). Materialise the two locked
+      # checkouts in non-cone mode here from tools/source-lock.json, download the
+      # locked supplicant archive, then let the module's own --check verify it.
+      - name: Materialise the locked sources
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess, tarfile, urllib.request
+
+          component = pathlib.Path('Ath12kWifi')
+          lock = json.loads((component / 'tools/source-lock.json').read_text())
+          for name in ('linux', 'freebsd'):
+              source = lock[name]
+              directory = component / 'deps' / name
+              if not directory.exists():
+                  # Shallow like the module's own fetch: the server ignores blob
+                  # filters, and the supplicant build only needs the locked tree.
+                  subprocess.run(['git', 'clone', '--depth', '1', '--branch', source['ref'],
+                                  '--no-checkout', source['url'], str(directory)], check=True)
+              subprocess.run(['git', '-C', str(directory), 'sparse-checkout', 'init', '--no-cone'], check=True)
+              subprocess.run(['git', '-C', str(directory), 'checkout', '--detach', source['commit']], check=True)
+              subprocess.run(['git', '-C', str(directory), 'sparse-checkout', 'set', '--no-cone', '--stdin'],
+                             input='\n'.join(source['paths']) + '\n', text=True, check=True)
+              head = subprocess.check_output(['git', '-C', str(directory), 'rev-parse', 'HEAD'], text=True).strip()
+              if head != source['commit']:
+                  raise SystemExit(f'{name}: expected {source["commit"]}, found {head}')
+
+          supplicant = lock['supplicant']
+          archive = component / 'deps' / supplicant['archive']
+          if not archive.exists():
+              partial = archive.with_suffix('.part')
+              with urllib.request.urlopen(supplicant['url'], timeout=60) as response, partial.open('wb') as output:
+                  while True:
+                      chunk = response.read(1024 * 1024)
+                      if not chunk:
+                          break
+                      output.write(chunk)
+              if hashlib.sha256(partial.read_bytes()).hexdigest() != supplicant['sha256']:
+                  raise SystemExit('supplicant archive differs from the lock')
+              partial.rename(archive)
+          # --check verifies the extracted release tree, not just the archive.
+          extracted = component / 'deps' / supplicant['directory']
+          if not extracted.exists():
+              with tarfile.open(archive) as package:
+                  for member in package.getmembers():
+                      path = (component / 'deps' / member.name).resolve()
+                      if (not (member.isfile() or member.isdir()) or
+                              extracted.resolve() not in (path, *path.parents)):
+                          raise SystemExit('unexpected archive member: ' + member.name)
+                  package.extractall(component / 'deps')
+          PY
+          python3 Ath12kWifi/tools/fetch-sources.py --check
+
+      - name: Report the runner toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          clang --version | head -1
+
+      - name: Build the supplicant for the iOS target
+        run: python3 Ath12kWifi/tools/build-supplicant.py --target ios --jobs 4
+
+      - name: Sign and record the service
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, plistlib, re, subprocess
+          from pathlib import Path
+
+          component = Path('Ath12kWifi')
+          binary = component / 'out/wpa-ios/bin/wpa_supplicant'
+          if not binary.is_file():
+              raise SystemExit('no supplicant binary')
+          entitlements = Path('entitlements.plist')
+          entitlements.write_bytes(plistlib.dumps({'com.apple.private.security.no-container': True}))
+          subprocess.run(['codesign', '--force', '--sign', '-', '--pagesize', '4096', '--identifier',
+                          'org.unixnu.wifi.supplicant', '--entitlements', str(entitlements), str(binary)], check=True)
+          subprocess.run(['codesign', '--verify', '--strict', str(binary)], check=True)
+          detail = subprocess.run(['codesign', '--display', '--verbose=4', str(binary)], check=True,
+                                  capture_output=True, text=True).stderr
+          match = re.search(r'^CDHash=([0-9a-f]{40})$', detail, re.M)
+          if not match:
+              raise SystemExit('signed supplicant has no CDHash')
+          build = json.loads((component / 'out/wpa-ios/report.json').read_text())
+          report = {
+              'built': True, 'target': 'ios27', 'driver_commit': subprocess.check_output(
+                  ['git', '-C', str(component), 'rev-parse', 'HEAD'], text=True).strip(),
+              'cdhash': match[1], 'bytes': binary.stat().st_size,
+              'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+              'identifier': 'org.unixnu.wifi.supplicant',
+              'hardware_verified': False, 'supplicant': build,
+          }
+          Path('supplicant-report.json').write_text(json.dumps(report, indent=2) + '\n')
+          Path('unixnu-wpa_supplicant').write_bytes(binary.read_bytes())
+          print(json.dumps({k: report[k] for k in ('cdhash', 'bytes', 'sha256', 'driver_commit')}, indent=1))
+          PY
+
+      - name: Upload the signed service
+        uses: actions/upload-artifact@v4
+        with:
+          name: uke-wifi-supplicant
+          path: |
+            unixnu-wpa_supplicant
+            supplicant-report.json
+            entitlements.plist
+          if-no-files-found: error
