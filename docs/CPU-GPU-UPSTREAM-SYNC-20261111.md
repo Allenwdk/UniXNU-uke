@@ -95,3 +95,8 @@ A75A9E6483062E93是未刷中间包，补齐L3延后enable的原有poll接线与n
 升降档、围栏/切换、outside池范围/分配/回退，以及电池、Wi-Fi、显示、背光、
 触摸与稳定性回归。CPU idle-latency与Edge、GPU span保留上游默认，不预先调参。
 温度采集/热压力与新温度限频功能未引入，L3动态MEMLAT按用户要求暂缓。
+
+
+## 2026-11-11 E8AF当次授权部署
+
+用户“刷吧”授权候选`E8AF2F935F600E17`。同包新boot与vendor_boot四分区写入成功，A槽回读和重启命令成功。boot SHA256 `e8cbc39f13b40300d930915b7da3b9ab3ec2c5b63af03292c7ae88215cf9b289`，vendor_boot SHA256 `e7f17d80aa29b03d1472e4d58a65c02be7d90c564ed1933d6c50fe1b8c805d19`，回执`uke-port/releases/2026-11-11-cpu-gpu-upstream-sync-v2/flash-result-20261111-031503.json`。50项原始归档SHA与13区预检通过。未写擦userdata，D4EF配套回退保留。此记录只证明刷写传输；启动、L3投票、CPU/GPU调频、围栏/池及电池/Wi-Fi/显示/背光/触摸回归待用户反馈和同次日志。
