@@ -31,3 +31,15 @@
 取证按既有原厂四分区/A槽/TWRP流程执行，主机未写擦userdata。当前设备留TWRP。本轮没有读取整份Data快照，现有尾环和诊断export已能证明参数/直扫回归。
 
 6D31包已标DO_NOT_FLASH，后续使用修正版。实机需确认刷新日志hz120/start1/refresh1、DPU直扫flip/latch恢复、桌面与台前调度无撕裂，再回归按键/背光、电池、Wi-Fi及>8分钟重载稳定性。新的候选仍逐次授权部署。
+
+## 最终修正候选
+
+`19948EA4D7EDD158` 归档于 `uke-port/releases/2026-11-11-vsync-adt-alias/`，尚未部署。正式kernel、payload、bootimg和vendor_boot通过，prelink仍2缺失/19桩，无新增回归。
+
+boot SHA-256 `e8cbc39f13b40300d930915b7da3b9ab3ec2c5b63af03292c7ae88215cf9b289`，vendor_boot SHA-256 `488b55ca5a3b126c673ca9b15ac757290c5da9161d934bc6629f7a6c00ddeb14`，47,525,888B。最终内核SHA-256 `03a3dce77e74c0825ebe355ed824e046d7554f86026379680b417b8d79d49de9`。core运行源码 `8d7872fd0d1ce0b793f300f89d3e2f49e9afec1f`，设备归档源码 `867cd159ccac4b91b1c5cddb421d9458d25675ef`。
+
+83项平台/显示源与14项存储源均与6D31逐字节相同，GPU/Metal/GOP/UFS组件提交相同。最终包的图形addon、配对trust、Data seed、721B参数和18项ADT与6D31相同，ADT只正常random-seed变化。原固件通过哈希复核，bootimg与基线相同。运行差异位于XNU ADT入口的名称归一化，core同步构建期参数验证/报告和回归覆盖。
+
+原prepared parser负对照重现canonical三项ok0/值0，legacy三项ok1/值120/1/2；修正后的同一生产parser检查332项通过，覆盖新旧名称及优先级。归档覆盖72项SHA，13区结构化检查通过。此处记录主机构建与输入验证，软件timer启动、实际DPU换帧及撕裂消失仍待本候选实机证据。
+
+新候选取得当次授权后刷四分区/A槽，先验证桌面滑动和120Hz刷新/直扫latch，再延续>8分钟台前调度重载与基础外设回归。
