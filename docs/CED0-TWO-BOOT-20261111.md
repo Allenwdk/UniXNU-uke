@@ -16,3 +16,7 @@
 新拉取的 Adreno740 `5282bd96c73bd0e2e111c8380ce3c8b0c5c19ba9` 移除 GPU 池注册时的整段常驻 CPU 映射。上游在 sheng 实机记录过大范围常驻 WC 映射与 GMU 启动停滞，后续 sheng `43f6f01` 报告采用临时映射后进入桌面。CED0 仍使用旧的整段映射，第二次尾环还记录一段高位池注册返回 NoMemory。Uke 两次日志均已进入 GPU 发布阶段，现场未证实常驻映射直接造成两次症状。
 
 在现有功能分支合入上游修复。池注册只保存物理地址标记，清零时按 run 创建 WC 映射并在退出前释放。保留 CED0 显式 WC 描述符、启动表范围检查、secure_memset 和 DSB。构建候选后以同次证据验证连续两次冷启动、进桌面上划、池分配和显示提交。
+
+## 修复候选
+
+候选 `A5E3AA6C0356E4BF` 已归档于 `uke-port/releases/2026-11-11-cpu-gpu-pool-transient/`。vendor_boot SHA-256 为 `353510a7af450abf2ecb8d3d62f61fbc4ee479c25ab62c6ce123bf116a6d3724`，大小 47,435,776 B。正式 kernel、payload、boot 和 vendor_boot 构建完成，58 项归档 SHA 和 13 区检查通过。最终内核确认注册仅返回物理标记，清零调用 XNU secure_memset，映射在 run 清零后释放。最终镜像保留配套 DarwinBoot 固件。修复候选未刷，设备留在 TWRP。
