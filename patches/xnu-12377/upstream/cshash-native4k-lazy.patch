@@ -590,10 +590,7 @@ Has not run on hardware.
  #endif
  static boolean_t
  cs_validate_hash(
-@@ -6338,7 +6786,16 @@
- 					*tainted = CS_VALIDATE_NX;
- 					return TRUE;
- 				}
+@@ -6341,4 +6789,13 @@
 -				if ((offset & PAGE_MASK) || offset >= codeLimit ||
 +				if (blob->csb_native4k_lazy != NULL) {
 +					/* cs-lazy=1: the hash derived when the page's block was authenticated, or no answer yet. */
