@@ -127,5 +127,4 @@ APM状态1，但电池新增subscribe/inbox/response/refresh日志均为零，OS
 投递修复版 `E0FE5A52E8C1EAD7` 已正式构建，vendor_boot SHA-256
 `cbbc566e504a094bfbc3cfcc91859fe13e71f5c531f09dd7eb4fed7b24d5dfc3`，47,411,200B，源码5d9e511，721B参数。
 运行时改动为ShengBattery.cpp和UkeLastLog.c，最终PAC及直接thread_call
-检查通过。记录在docs/releases/2026-11-11-battery-dispatch.json。未刷，
-具体投递进度、首次电池快照和UI仍待当次授权后验证。
+检查通过。记录在docs/releases/2026-11-11-battery-dispatch.json。2026-11-11 用户本轮授权后，四分区写入、A 槽回读和重启命令成功，回执 `uke-port/releases/2026-11-11-battery-dispatch/flash-result-20261111-010412.json`。电池服务发布、读数和充电图标待用户反馈及同次日志。
