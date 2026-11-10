@@ -64,7 +64,8 @@ void sheng_battmgr_init(ShengBattmgr *b);
 uint32_t sheng_battmgr_enable_request(uint8_t out[SHENG_BATTMGR_ENABLE_BYTES]);
 /* Starts a refresh cycle (no effect while one runs: it is remembered and runs after). slow: also the fields that hardly change. */
 void sheng_battmgr_refresh(ShengBattmgr *b, int slow);
-/* The next measurement request, or 0 while another request is outstanding or the transport is quarantined. */
+/* Consume BmCycleDone before calling next again. A queued refresh begins here, after the owner publishes the completed snapshot.
+ * Returns 0 while another request is outstanding or the transport is quarantined. */
 uint32_t sheng_battmgr_next(ShengBattmgr *b, uint8_t out[SHENG_BATTMGR_REQUEST_BYTES]);
 /* Quarantine an untagged request after timeout. A clean transport generation must reinitialize it. */
 void sheng_battmgr_timeout(ShengBattmgr *b);

@@ -18,7 +18,7 @@ struct Timer {
 struct ShengBattery {
     unsigned channelChanged = 0, channelLost = 0, channelUp = 0;
     bool wasUp = false, published = false, unavailable = true;
-    unsigned transportGeneration = 0, subscriptions = 0, updates = 0;
+    unsigned transportGeneration = 0, subscriptions = 0, updates = 0, messageLogs = 0;
     ShengBattmgr bm = {};
     Timer requestTimer, refreshTimer;
     Timer *request = &requestTimer, *refresh = &refreshTimer;

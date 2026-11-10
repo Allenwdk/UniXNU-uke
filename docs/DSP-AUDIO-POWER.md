@@ -2,7 +2,7 @@
 
 本项按[官方流程](https://unixnu.com/zh/porting/power)分阶段实施，目标为
 24A446 arm64e。第一阶段代码接通 ADSP 传输、电池只读服务和 AudioReach
-APM 就绪查询，实机验收待进行。PCM 流、FS19xx 功放、WCD939x 采集和 HAL
+APM 就绪查询。259E 同次启动已确认 ADSP、三个 GLINK 通道和 APM 回复。电池服务未发布，用户看不到电量与充电图标。PCM 流、FS19xx 功放、WCD939x 采集和 HAL
 服务接入仍在后续阶段，整项尚未完成。
 
 ## 输入与复用
@@ -13,7 +13,7 @@ APM 就绪查询，实机验收待进行。PCM 流、FS19xx 功放、WCD939x 采
 - ADSP 的 Cliffs PAS 为1，独立 DTB PAS 为0x24。预留区域分别为
   0x9d400000/0x4500000 和 0xa1900000/0x80000。启动使用固件分区现有
   `adsp.bNN`、`adsp_dtb.bNN`，元数据经安全世界认证。版本及完整二进制
-  哈希须实机补录，当前清单明确标为待回读。
+  哈希已通过2026-11-11只读取证补齐到清单，元数据与同次 PAS 日志一致。
 - 设备树的 AP IPCC 为0x406000/SPI229，AOSS 为0xc300000/0x400，
   AP RSC DRV2 为0x17a20000，SPI5，TCS 块偏移0xd00。传输核心从
   SM7675 共用仓复用，共用一个 IRQ 和 QMP 状态机。
@@ -57,8 +57,7 @@ QMP 超时保持未确认邮箱，后续请求先等原消息确认。RPMh 超�
 | 内置麦克风 | WCD939x，TX SoundWire 0x6d30000，48kHz，ADC1/3/4/2 映射四路输入 | 核实供电、复位、枚举 ID 与 Uke 图，逐路录制已知输入 |
 | iPadOS HAL | sheng 音频服务及 ShengAudio.driver，arm64e-apple-ios27.0 | 直接 PCM 通过后验证24A446 ABI、时基、签名和系统应用 |
 
-当前主机没有原厂 FS19xx 预设和完整 CoreAudio HAL SDK 头文件。HAL
-正式构建使用具有完整 Apple SDK 的 macOS 环境。每个端点均在自己的
+2026-11-11已只读取回原厂 FS19xx 预设及 Forte ACDB，源文件保留 ignored 缓存并记录哈希，预设结构校验通过。主机仍缺完整 CoreAudio HAL SDK 头文件，HAL 正式构建使用具有完整 Apple SDK 的 macOS 环境。每个端点均在自己的
 直接流通过后发布，格式、声道和路由由已完成的硬件路径决定。
 
 ## 验证与取证
@@ -82,3 +81,23 @@ PAS ready、通道开闭、元数据哈希、APM 响应字节和电池快照。�
 源码为 core cc87305、设备239e407、SM7675 2f12b23，均在本项新分支。
 完整记录见 `docs/releases/2026-11-10-adsp-battery-apm.json`。
 2026-11-11 用户本轮授权后，四分区写入、A 槽回读和重启命令成功，回执 `uke-port/releases/2026-11-10-adsp-battery-apm-v3/flash-result-20261111-001649.json`。ADSP、电池、APM 和 Wi-Fi 共存待用户反馈及同次日志。
+
+## 2026-11-11 电池发布顺序修复
+
+同次启动 UUID `77F87F49-A9ED-41CE-9345-EC65848E888A`，ADSP ready370ms，
+IPCRTR/PMIC/GPR 通道打开，APM 收到token2状态1回复。powerd 记录没有
+电池包，SpringBoard 缺 BatteryInstalledKey。原始同次日志没有请求进度
+计数，具体电池刷新阶段仍待修复版的新增日志。
+
+实际解码器测试复现了通知插入一轮刷新后，finish 在返回 BmCycleDone
+前调用下一轮 refresh，使完整快照的有效位变为000e0000，必需位bf全失。
+修正为由 next 延后启动排队刷新，消费者先发布，回放有效位为03fe1fff。
+慢刷新请求保留较高优先级。新增176项通知风暴/排队/快照/超时检查通过，
+205项电池、10项生产通道状态和RSCv2/v3各38项仍通过，旧代码负对照失败。
+同时新增有界回复前缀、订阅发送结果、工作循环和发布有效位日志。
+
+这项缺陷的主机因果已证实，尚不能以现有实机日志确认它是 UI 症状的
+全部原因。新候选待当次刷写授权和实机发布、单位、插拔充电验收。
+取证在 `uke-port/fixes/2026-11-11-adsp-battery-readback/`，完整报告在根
+docs/status/adsp-battery-readback-2026-11-11.md。设备当前为原厂四分区、
+A槽和TWRP。

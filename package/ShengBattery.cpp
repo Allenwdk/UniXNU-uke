@@ -56,7 +56,7 @@ class ShengBattery : public IOPMPowerSource {
     volatile uint32_t channelUp = 0, channelChanged = 0, channelLost = 0;
     bool wasUp = false, published = false;
     uint32_t transportGeneration = 0;
-    uint32_t refreshes = 0;
+    uint32_t refreshes = 0, messageLogs = 0;
     uint64_t requestDeadline = 0;
     ShengBattmgr bm;
     ShengAdspChannel *channel = nullptr;
@@ -87,7 +87,11 @@ class ShengBattery : public IOPMPowerSource {
 
     void subscribe() {
         uint8_t enable[SHENG_BATTMGR_ENABLE_BYTES];
-        if (!sheng_adsp_send(channel, enable, sheng_battmgr_enable_request(enable))) {
+        const int rc = sheng_adsp_send(channel, enable, sheng_battmgr_enable_request(enable));
+        if (!rc || !native_battery_stats[15])
+            printf("UKE BATTERY: subscribe generation=%u send_rc=%d\n", transportGeneration, rc);
+        if (rc) native_battery_stats[15] = native_battery_stats[15] + 1;
+        if (!rc) {
             bm.notification_pending = 1;
             clock_interval_to_deadline(kRequestMs, kMillisecondScale, &requestDeadline);
             request->setTimeoutMS(kRequestMs);
@@ -146,6 +150,8 @@ class ShengBattery : public IOPMPowerSource {
     void publish() {
         constexpr uint32_t required = (1u << BmStatus) | (1u << BmPresent) | (1u << BmCapacity) |
             (1u << BmVoltage) | (1u << BmCurrent) | (1u << BmTemperature) | (1u << BmUsbOnline);
+        printf("UKE BATTERY: refresh=%u valid=%08x required=%08x responses=%u errors=%u timeouts=%u\n",
+               bm.cycles_done, bm.valid, required, bm.responses, bm.errors, bm.timeouts);
         if (bm.poisoned || (bm.valid & required) != required) {
             stale(true);
             if (published) updateStatus();
@@ -220,7 +226,10 @@ class ShengBattery : public IOPMPowerSource {
 
     static void inboxAction(OSObject *owner, IOInterruptEventSource *, int) {
         ShengBattery *self = OSDynamicCast(ShengBattery, owner);
-        if (!self) return;
+        if (!self) {
+            printf("UKE BATTERY: inbox owner class mismatch\n");
+            return;
+        }
         if (__atomic_exchange_n(&self->channelChanged, 0u, __ATOMIC_ACQ_REL)) {
             if (__atomic_exchange_n(&self->channelLost, 0u, __ATOMIC_ACQ_REL)) {
                 self->bm.valid = 0;
@@ -237,6 +246,7 @@ class ShengBattery : public IOPMPowerSource {
                 if (generation != self->transportGeneration) {
                     sheng_battmgr_init(&self->bm);
                     self->transportGeneration = generation;
+                    self->messageLogs = 0;
                 }
                 if (!self->bm.poisoned) {
                     self->subscribe();
@@ -245,6 +255,8 @@ class ShengBattery : public IOPMPowerSource {
                 }
             }
             self->wasUp = up;
+            printf("UKE BATTERY: inbox up=%u generation=%u poisoned=%u\n", (unsigned)up,
+                   self->transportGeneration, self->bm.poisoned);
         }
         for (;;) {
             uint8_t data[kMessage];
@@ -261,6 +273,13 @@ class ShengBattery : public IOPMPowerSource {
             if (!length) break;
             if ((self->bm.in_flight || self->bm.notification_pending) && mach_absolute_time() >= self->requestDeadline) {
                 requestAction(self, nullptr);
+            }
+            if (self->messageLogs < 8) {
+                char hex[49] = {};
+                const unsigned n = length < 24 ? length : 24;
+                for (unsigned i = 0; i < n; ++i) snprintf(hex + 2 * i, 3, "%02x", data[i]);
+                printf("UKE BATTERY: response bytes=%u head=%s\n", length, hex);
+                ++self->messageLogs;
             }
             const int result = sheng_battmgr_receive(&self->bm, data, length);
             if (result == BmAnswer || result == BmCycleDone || result == BmEnabled) self->request->cancelTimeout();

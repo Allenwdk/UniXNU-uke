@@ -76,7 +76,11 @@ static void advance(ShengBattmgr *b)
 void sheng_battmgr_refresh(ShengBattmgr *b, int slow)
 {
     if (b->poisoned) return;
-    if (b->cursor != NO_CYCLE) {b->refresh_wanted = 1 + (slow != 0); return;}
+    if (b->cursor != NO_CYCLE) {
+        const uint32_t wanted = 1 + (slow != 0);
+        if (wanted > b->refresh_wanted) b->refresh_wanted = wanted;
+        return;
+    }
     b->slow_due = slow || !(b->valid & (1u << BmFull));
     for (unsigned i = 0; i < BmFields; ++i)
         if (!kFields[i].slow || b->slow_due) b->valid &= ~(1u << i);
@@ -88,6 +92,13 @@ void sheng_battmgr_refresh(ShengBattmgr *b, int slow)
 uint32_t sheng_battmgr_next(ShengBattmgr *b, uint8_t out[SHENG_BATTMGR_REQUEST_BYTES])
 {
     if (b->poisoned || b->in_flight || b->notification_pending) return 0;
+    // The owner consumes BmCycleDone before asking for another request. Keep
+    // the completed snapshot intact until that publication has happened.
+    if (b->cursor == NO_CYCLE && b->refresh_wanted) {
+        const int slow = b->refresh_wanted == 2;
+        b->refresh_wanted = 0;
+        sheng_battmgr_refresh(b, slow);
+    }
     if (b->cursor == NO_CYCLE || b->cursor >= BmFields) return 0;
     header(out, kFields[b->cursor].opcode);
     put32(out + 12, 0);
@@ -97,17 +108,12 @@ uint32_t sheng_battmgr_next(ShengBattmgr *b, uint8_t out[SHENG_BATTMGR_REQUEST_B
     return SHENG_BATTMGR_REQUEST_BYTES;
 }
 
-/* Ends the cycle when the cursor ran past the last field; starts the remembered one. Returns 1 when a cycle ended. */
+/* End this cycle. A queued refresh starts only when the owner next asks for work. */
 static int finish(ShengBattmgr *b)
 {
     if (b->cursor == NO_CYCLE || b->cursor < BmFields) return 0;
     b->cursor = NO_CYCLE;
     b->cycles_done++;
-    if (b->refresh_wanted) {
-        const int slow = b->refresh_wanted == 2;
-        b->refresh_wanted = 0;
-        sheng_battmgr_refresh(b, slow);
-    }
     return 1;
 }
 
