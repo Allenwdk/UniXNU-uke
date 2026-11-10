@@ -101,3 +101,6 @@ uke-adt-driver-args.patch
 
 # Legacy sheng-* and upstream argument names share the existing precedence.
 uke-upstream-boot-arg-aliases.patch
+
+# Keep loader-approved outside-window DRAM Normal for GPU WC mappings.
+uke-outside-dram-wc.patch

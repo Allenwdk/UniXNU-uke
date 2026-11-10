@@ -1,0 +1,100 @@
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2054,6 +2054,68 @@
+ #define ARM64_PHYSMAP_SLIDE_RANGE (1ULL << 30) // 1 GB
+ #define ARM64_PHYSMAP_SLIDE_MASK  (ARM64_PHYSMAP_SLIDE_RANGE - 1)
+ 
++/* The final EFI map supplies conventional DRAM outside the XNU window.
++ * Keep a private copy before the flattened device tree is retired. These
++ * ranges affect WC PTE attributes only, never VM page ownership. */
++struct uke_outside_dram_range {
++	uint64_t base;
++	uint64_t size;
++};
++
++static SECURITY_READ_ONLY_LATE(struct uke_outside_dram_range) uke_outside_dram[16];
++static SECURITY_READ_ONLY_LATE(unsigned int) uke_outside_dram_count;
++
++bool uke_outside_dram_contains(uint64_t base, uint64_t size);
++
++bool
++uke_outside_dram_contains(uint64_t base, uint64_t size)
++{
++	for (unsigned int i = 0; i < uke_outside_dram_count; i++) {
++		const struct uke_outside_dram_range *range = &uke_outside_dram[i];
++		uint64_t offset = base - range->base;
++		if (offset < range->size && size && size <= range->size - offset) {
++			return true;
++		}
++	}
++	return false;
++}
++
++static void
++uke_outside_dram_init(const boot_args *args)
++{
++	SecureDTEntry chosen;
++	const void *data;
++	unsigned int bytes;
++	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
++	    SecureDTGetProperty(chosen, "darwinboot-memory-outside", &data, &bytes) != kSuccess) {
++		return;
++	}
++	if (!bytes || bytes > sizeof(uke_outside_dram) || bytes % sizeof(uke_outside_dram[0]) ||
++	    !args->memSize || args->physBase > UINT64_MAX - args->memSize) {
++		return;
++	}
++
++	uint64_t previous_end = 0;
++	unsigned int count = 0;
++	for (unsigned int offset = 0; offset < bytes; offset += sizeof(uke_outside_dram[0])) {
++		struct uke_outside_dram_range range;
++		memcpy(&range, (const uint8_t *)data + offset, sizeof(range));
++		if (!range.base && !range.size) {
++			continue;
++		}
++		if (!range.base || !range.size || ((range.base | range.size) & PAGE_MASK) ||
++		    range.base < previous_end || range.base > UINT64_MAX - range.size) {
++			return;
++		}
++		previous_end = range.base + range.size;
++		if (range.base < args->physBase + args->memSize && previous_end > args->physBase) {
++			return;
++		}
++		uke_outside_dram[count++] = range;
++	}
++	uke_outside_dram_count = count;
++}
++
+ void
+ arm_vm_init(uint64_t memory_size, boot_args * args)
+ {
+@@ -2073,6 +2135,7 @@
+ 	uke_boot_stage("VM tables enter");
+ 	gVirtBase = args->virtBase;
+ 	gPhysBase = args->physBase;
++	uke_outside_dram_init(args);
+ #if KASAN
+ 	real_phys_size = args->memSize + (shadow_ptop - shadow_pbase);
+ #else
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -144,6 +144,7 @@
+ static void free_asid(pmap_t pmap);
+ static void flush_mmu_tlb_region_asid_async(vm_offset_t va, size_t length, pmap_t pmap, bool last_level_only, bool strong);
+ static void flush_mmu_tlb_full_asid_async(pmap_t pmap);
++extern bool uke_outside_dram_contains(uint64_t base, uint64_t size);
+ static pt_entry_t wimg_to_pte(unsigned int wimg, pmap_paddr_t pa);
+ 
+ const struct page_table_ops native_pt_ops =
+@@ -6091,8 +6092,8 @@
+ 		pte |= ARM_PTE_NX | ARM_PTE_PNX;
+ 		break;
+ 	case VM_WIMG_WCOMB:
+-		/* DRAM outside the gDramBase window (more than one physical range) is still managed memory: Normal, not Device. */
+-		if (is_dram_addr(pa) || pa_valid(pa)) {
++		/* Loader-approved pool DRAM stays outside the VM, with Normal WC PTEs. */
++		if (is_dram_addr(pa) || pa_valid(pa) || uke_outside_dram_contains(pa, PAGE_SIZE)) {
+ 			pte = ARM_PTE_ATTRINDX(CACHE_ATTRINDX_WRITECOMB);
+ 		} else {
+ #if HAS_FEAT_XS

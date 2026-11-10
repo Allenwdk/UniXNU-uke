@@ -9,6 +9,7 @@
 #include <libkern/c++/OSData.h>
 #include <string.h>
 
+extern "C" bool uke_outside_dram_contains(uint64_t physical, uint64_t bytes);
 extern "C" IOReturn native_adreno_pool_add(uint64_t physical, uint64_t bytes) __attribute__((weak));   // Adreno740 NativeAdrenoPool.cpp
 // For the boot log: [0] runs in the table, [1] runs the driver took, [2] KiB the driver took, [3] the last refusal.
 extern "C" {volatile uint32_t native_gpu_pool_board[4];}
@@ -27,7 +28,8 @@ extern "C" void sheng_gpu_pool_probe(void)
             memcpy(&size, bytes + i + 8, 8);
             if (!size) continue;
             native_gpu_pool_board[0] = native_gpu_pool_board[0] + 1;
-            const IOReturn status = native_adreno_pool_add(base, size);
+            const IOReturn status = uke_outside_dram_contains(base, size)
+                ? native_adreno_pool_add(base, size) : kIOReturnNotPermitted;
             if (status == kIOReturnSuccess) {
                 native_gpu_pool_board[1] = native_gpu_pool_board[1] + 1;
                 native_gpu_pool_board[2] = native_gpu_pool_board[2] + (uint32_t)(size >> 10);
