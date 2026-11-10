@@ -48,7 +48,50 @@ NATIVE_ACCELERATOR_BASE宏与旧已验收Metal ABI头文件的接口差异；构
 失败日志kernel-build-attempt1-accelerator-abi.log保留。
 
 按既有要求不追加可选主机模型/单元/压力测试，以正式kernel、firmware、payload、
-bootimg与镜像输入/结构核验为本轮门禁。构建中，不把已编译或静态接线当作硬件验收。
+bootimg与镜像输入/结构核验为本轮门禁。正式构建和最终归档已完成，不把已编译或静态接线当作硬件验收。
 设备仍以最后用户反馈的D4EF/A槽为准，本轮没有ADB/fastboot操作。
 
 最终L3接线补齐：新页使用现有native MMIO API，sheng原有poll由既有日志轮询每2秒调用；固件延后enable时重试，成功仍只投最高档一次。A75为未刷中间包，已标DO_NOT_FLASH，由v2替代。
+
+
+## 最终候选与验收门禁
+
+最终候选 `E8AF2F935F600E17`，归档 `uke-port/releases/2026-11-11-cpu-gpu-upstream-sync-v2/`。
+boot SHA256 `e8cbc39f13b40300d930915b7da3b9ab3ec2c5b63af03292c7ae88215cf9b289`；vendor_boot SHA256 `e7f17d80aa29b03d1472e4d58a65c02be7d90c564ed1933d6c50fe1b8c805d19`，47,435,776B。
+新boot包含FD SHA256 `8c19c72451def1ea302bf37525cd1ebb03584ff0b44fd5beae5895d1938f959d`，
+DarwinBoot EFI `56ee330f9bceb16efa028cf957adbb96d8ac38b943a4693c24ef11fcaa9bb058`。
+必须与本包vendor_boot成套使用；D4EF原包仍保留作电池UI已验收回退。
+
+| 仓库 | 最终归档源码 |
+|---|---|
+| core | `7d8a23ae207a465b28925c0cb81bc74e11794835` |
+| device | `0c45de3fbbc4a1155f6fa551dfb2fae4a80cc04e` |
+| soc | `e5c8d35c32381613e72d37b5dfdc3d65c923b39e` |
+| ArmCpu | `795159ef145e1768b27e7fa9c1bf01dcc981e17c` |
+| Adreno740 | `c3cb6093c4ba466d7c25589df85f9b92440e528a` |
+| DarwinBoot | `a4e33b3af7574425da7cc52ba7356b466d084ad7` |
+| uefi | `8a1153e6c54c508e613127af8c639334cdd8e51f` |
+
+source-revisions.json是最终源码身份；coverage.json保留初始合并范围，之后的L3
+重试和native-MMIO补接由最终device源码及build-report源哈希覆盖。正式kernel、
+firmware、payload、boot/vendor_boot通过；83项显示/平台源码、14项存储源码、
+实际归档SHA及两个组件archive均核验。原ADSP、电池、Wi-Fi、背光和触摸源与
+D4EF归档逐字节对照一致。
+
+固件LZMA解压后包含实际新DarwinBoot模块，FFS正文与构建输出一致（GenFv
+仅反转FFS状态字节）；ADT相比D4EF只新增16组空outside范围及正常random-seed。
+721B启动参数和18项输入/显示ADT、addon/trust/Data签名资产保持；prelink
+缺失2/桩24与基线一致。最终L3 vote+90、GPU IRQ调用和SPI route的64位ldsetl
+指令、CPU/GPU新符号已核对，GPU HFI表哈希与同步前一致。13区检查通过。
+
+A75A9E6483062E93是未刷中间包，补齐L3延后enable的原有poll接线与native-MMIO
+后由v2替代，已标DO_NOT_FLASH，不当作硬件失败。预检脚本旧路径问题已修复，
+42处DT保留区对77个UEFI描述符无静态错误；stock cfg额外扫描本次为0，未冒称
+已经检查全部原厂配置。失败日志和中间包均保留。
+
+候选未刷，硬件未验。本轮没有ADB/fastboot，没有主机写擦userdata；未运行额外
+可选模型/单元/ASan套件。下一步需该候选当次授权后刷四分区/A槽，再验证同次
+镜像身份、L3 enable/LUT/vote读回（请求最高档不等于测得最高实频）、CPU/GPU
+升降档、围栏/切换、outside池范围/分配/回退，以及电池、Wi-Fi、显示、背光、
+触摸与稳定性回归。CPU idle-latency与Edge、GPU span保留上游默认，不预先调参。
+温度采集/热压力与新温度限频功能未引入，L3动态MEMLAT按用户要求暂缓。
