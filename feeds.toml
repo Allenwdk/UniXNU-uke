@@ -21,7 +21,7 @@ name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
 # GPU preflight lifecycle and scoped BR31-counter capture.
-commit = "8b86a9908098391c4181d280e181c8fd50248543"
+commit = "8dae4b5308d053c62bbe9fe40e63f7f59cdb6030"
 
 [[source]]
 name = "GopFramebuffer"
