@@ -8,7 +8,7 @@
  #include <kern/locks_internal.h>
  #include <kern/locks.h>
  #include <kern/lock_stat.h>
-@@ -371,6 +372,77 @@
+@@ -371,6 +372,78 @@
  	    HW_SPIN_TIMEOUT_DETAILS_ARG(to, st));
  }
  
@@ -36,7 +36,8 @@
 +	}
 +
 +	uint64_t sequence = os_atomic_load(&uke_pset_owner.sequence, relaxed);
-+	os_atomic_store(&uke_pset_owner.sequence, sequence + 1, seq_cst);
++	os_atomic_store(&uke_pset_owner.sequence, sequence + 1, relaxed);
++	os_atomic_thread_fence(release);
 +	os_atomic_store(&uke_pset_owner.acquired, mach_absolute_time(), relaxed);
 +	os_atomic_store(&uke_pset_owner.owner, (uintptr_t)thread, relaxed);
 +	os_atomic_store(&uke_pset_owner.ticket, lock->tu.cticket, relaxed);
@@ -86,7 +87,7 @@
  __abortlike
  static hw_spin_timeout_status_t
  lck_ticket_timeout_panic(void *_lock, hw_spin_timeout_t to, hw_spin_state_t st)
-@@ -381,6 +453,18 @@
+@@ -381,6 +454,18 @@
  
  	lsti = lck_spinlock_timeout_hit(&lck->tu, lck->lck_ticket_owner);
  	tmp.tcurnext = os_atomic_load(&lck->tu.tcurnext, relaxed);
@@ -105,7 +106,7 @@
  
  	panic("Ticket spinlock[%p] " HW_SPIN_TIMEOUT_FMT "; "
  	    "cticket: 0x%x, nticket: 0x%x, waiting for 0x%x, "
-@@ -712,6 +796,8 @@
+@@ -712,6 +797,8 @@
  
  	lock_disable_preemption_for_thread(cthread);
  	lck_ticket_lock_internal(tlock, cthread, grp);
@@ -114,7 +115,7 @@
  }
  
  void
-@@ -720,6 +806,8 @@
+@@ -720,6 +807,8 @@
  	thread_t cthread = current_thread();
  
  	lck_ticket_lock_internal(tlock, cthread, grp);
@@ -123,7 +124,7 @@
  }
  
  __header_always_inline bool
-@@ -796,13 +884,23 @@
+@@ -796,13 +885,23 @@
  bool
  lck_ticket_lock_try(lck_ticket_t *tlock, __unused lck_grp_t *grp)
  {
