@@ -52,3 +52,8 @@ boot SHA-256 `e8cbc39f13b40300d930915b7da3b9ab3ec2c5b63af03292c7ae88215cf9b289`�
 UFS创建DPU stage1映射的生产者也已改读dpu-scanout，与GOP消费者同受ADT入口遗漏影响，1994的同一修复覆盖两端。CPU SMP/调频、GPU/DCVS/抢占、存储持久化/日志、触摸/按键/背光配置入口均在本次实际查询核查范围内。Metal仍显式读取kern.bootargs，当前需要的图形/轻量记录开关都在CLI中，vsync仅在TARGET_OS_OSX的可选WindowServer路径读取原始CLI，未应用于此iPadOS路径。
 
 当前配置未发现另一处活动别名失效。该结论限于静态源入口和主机执行查询，运行时120Hz消息、DPUflip/latch、撕裂观感及所有可选参数组合仍需分别验证。核查没有更改候选或运行代码。证据为uke-port/fixes/2026-11-11-alias-audit/report.json及两个生产入口harness/log。
+
+
+## 2026-11-11 刷新参数入口修正版授权部署
+
+用户授权刷入 `19948EA4D7EDD158`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。72 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-vsync-adt-alias/flash-result-20261111-055059.json`。120Hz软件刷新、DPU直扫/latch与无撕裂观感待实机验证。
