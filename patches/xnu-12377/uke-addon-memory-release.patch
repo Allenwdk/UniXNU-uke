@@ -1,0 +1,59 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8715,6 +8715,48 @@
+ 		kfree_data(path, 256);
+ 	}
+ }
++/*
++ * boot-payload-release=1: the addon's memory goes back to the VM. The addon is boot memory of the loader's image
++ * (/chosen/memory-map/GpuAddon, 22 MiB with a Metal plugin), wired for the session. native_gpu_addon_install is its
++ * only reader and its iPadOS installer has returned when this is called, so its whole pages are returned the way XNU
++ * returns loader memory: IODTFreeLoaderInfo frees them with ml_static_mfree and removes the range from the
++ * registry's /chosen/memory-map, where native_ram_block_gpu_addon looks it up; a later reader finds no addon, never
++ * freed memory. The range is the one that passed that function's bounds when the install read it. It is kept unless
++ * every file of the addon was written to the Data volume, or found equal there, in this boot.
++ * Status for the boot log: the pages returned, 0 not asked, -1 no addon installed, -2 a file failed or was skipped,
++ * -3 no range in the registry, -4 a range ml_static_mfree does not take.
++ */
++volatile int native_gpu_addon_released = 0;
++extern int IODTGetLoaderInfo(const char *key, void **infoAddr, int *infoSize);
++extern void IODTFreeLoaderInfo(const char *key, void *infoAddr, int infoSize);
++extern bool ml_static_mfree_prepare(vm_offset_t vaddr, vm_size_t size);
++
++static void
++native_gpu_addon_release(void)
++{
++	uint32_t enabled = 0;
++	void *address = NULL;
++	int size = 0;
++
++	if (!PE_parse_boot_argn("boot-payload-release", &enabled, sizeof(enabled)) || enabled != 1) {
++		return;
++	}
++	if (native_gpu_addon_files <= 0) {
++		native_gpu_addon_released = -1;
++	} else if (native_gpu_addon_failed || native_gpu_addon_written + native_gpu_addon_same < native_gpu_addon_files) {
++		native_gpu_addon_released = -2;
++	} else if (IODTGetLoaderInfo("GpuAddon", &address, &size) != 0 || size < (int)PAGE_SIZE) {
++		native_gpu_addon_released = -3;
++	} else if (!ml_static_mfree_prepare(ml_static_ptovirt((vm_offset_t)address), (vm_size_t)size)) {
++		native_gpu_addon_released = -4;
++	} else {
++		IODTFreeLoaderInfo("GpuAddon", address, size);
++		native_gpu_addon_released = (int)atop_64(trunc_page_64((uint64_t)size));
++	}
++	printf("owner Data: GPU addon memory release %d\n", native_gpu_addon_released);
++}
++
++
+ static void
+ native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
+ {
+@@ -8805,6 +8847,7 @@
+ 	native_cryptex_os_view(p, scratch);
+ 	native_gestalt_cache_drop(p, scratch);
+ 	native_ls_store_drop(p, scratch);
++	if (native_gpu_addon_stage == 5) native_gpu_addon_release();
+ }
+ 
+ /* The deletable system apps (Weather, Notes, Calendar, ...) ship in the OS volume's /private/var/staged_system_apps. A restore copies

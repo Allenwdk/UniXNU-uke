@@ -127,3 +127,6 @@ upstream/memwired-cs-lazy-page-chunks.patch
 upstream/vfs-union-below-walk.patch
 upstream/vmwait-dyld-pager-source-release.patch
 upstream/zzzzzzzzzzz-sheng-edge-matrix.patch
+
+# Board callsite for the shared loader-tail release routine.
+uke-addon-memory-release.patch

@@ -42,7 +42,7 @@ static const char lite_jobs[]=
 // Upstream board defaults are parsed after the command line (which wins).
 // The existing owner Data volume is unencrypted: retain the file-protection
 // class metadata callers set, using the already linked VFS compatibility path.
-char PE_builtin_boot_args[] = "owner-staged-apps=1 owner-dataprotect=1";
+char PE_builtin_boot_args[] = "owner-staged-apps=1 owner-dataprotect=1 cs-lazy=1 boot-payload-release=1 armcpu-edge=1 armcpu-self-ipi=1";
 static char policy[2048],jobs[200];
 volatile int sheng_watchdog_policy_status=-1;
 

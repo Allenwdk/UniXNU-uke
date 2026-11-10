@@ -21,21 +21,21 @@ name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
 # GPU preflight lifecycle and scoped BR31-counter capture.
-commit = "8dae4b5308d053c62bbe9fe40e63f7f59cdb6030"
+commit = "936c13827f4e4d256f2d396b2d7cd65aa5d19107"
 
 [[source]]
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
 # Display fence callout delivery and bounded polling fallback.
-commit = "99b0d7e8c3d31c4f6b9f669d9c291e95fa7f2fc8"
+commit = "f0c18e0e8f7b0a16d669b7e800e63fae70fc6b01"
 
 [[source]]
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/Allenwdk/AdrenoMetal.git"
 # Upstream icon Metal records with Uke pass-timing and rendering repairs.
-commit = "98931e7c6528763d588603f1250765ee0952a222"
+commit = "f984b0851240e9a65bdc98a467c1037918f92c67"
 
 [[source]]
 name = "ShengUfs"
@@ -62,7 +62,7 @@ local = "drivers/NativeNovatekTouch"
 name = "Ath12kWifi"
 kind = "driver"
 git = "https://github.com/UniXNU/Ath12kWifi.git"
-commit = "de17340500b72bb4f33cf3973e0608c145cb5b67"
+commit = "1942d53c7c7e010bae9a5acf8dcc23095cb84c2f"
 
 # Upstream CPU/GPU synchronization, with Uke integration retained.
 [[source]]
@@ -77,3 +77,15 @@ name = "DarwinBoot"
 kind = "driver"
 git = "https://github.com/UniXNU/DarwinBoot.git"
 commit = "a4e33b3af7574425da7cc52ba7356b466d084ad7"
+
+[[source]]
+name = "ArmDTPlatform"
+kind = "driver"
+git = "https://github.com/UniXNU/ArmDTPlatform.git"
+commit = "638c39acc135a224e287a3155927d28b9a115d7f"
+
+[[source]]
+name = "XnuPrelink"
+kind = "kit"
+git = "https://github.com/UniXNU/XnuPrelink.git"
+commit = "64425131a9f88a428f808bbc6ae8a37c21abf577"
