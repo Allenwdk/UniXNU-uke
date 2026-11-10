@@ -33,7 +33,7 @@
 +static void
 +uke_outside_dram_init(const boot_args *args)
 +{
-+	SecureDTEntry chosen;
++	DTEntry chosen;
 +	const void *data;
 +	unsigned int bytes;
 +	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
