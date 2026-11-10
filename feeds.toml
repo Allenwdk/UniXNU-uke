@@ -41,9 +41,9 @@ commit = "f984b0851240e9a65bdc98a467c1037918f92c67"
 name = "ShengUfs"
 kind = "driver"
 git = "https://github.com/UniXNU/ShengUfs.git"
-# Upstream feat/ipados27-gpu-parity: the source-storage UFS runtime and the
-# display bank's stage-1 window live here now, not in the old NativeUfs fork.
-commit = "78c93b0941896e0515c6abaad3ff0d88b50a78ca"
+# Board-owned merge of upstream 34ff541d; Uke SID, DMA and MSI wiring stays in this source.
+commit = "34ff541decbd018906a914aa53d0e732b2c1c3da"
+local = "drivers/ShengUfs"
 
 [[source]]
 name = "ShengHidInput"
