@@ -20,3 +20,8 @@
 ## 修复候选
 
 候选 `A5E3AA6C0356E4BF` 已归档于 `uke-port/releases/2026-11-11-cpu-gpu-pool-transient/`。vendor_boot SHA-256 为 `353510a7af450abf2ecb8d3d62f61fbc4ee479c25ab62c6ce123bf116a6d3724`，大小 47,435,776 B。正式 kernel、payload、boot 和 vendor_boot 构建完成，58 项归档 SHA 和 13 区检查通过。最终内核确认注册仅返回物理标记，清零调用 XNU secure_memset，映射在 run 清零后释放。最终镜像保留配套 DarwinBoot 固件。修复候选未刷，设备留在 TWRP。
+
+
+## 2026-11-11 A5E3 授权部署
+
+用户授权刷入 `A5E3AA6C0356E4BF`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。58 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-cpu-gpu-pool-transient/flash-result-20261111-035206.json`。连续启动、桌面上划与 GPU 池待实机验证。
