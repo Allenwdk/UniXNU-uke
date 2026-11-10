@@ -49,3 +49,10 @@ core新增82a8e54是macOS profile的page radix root启动初始化，sheng43f6f0
 ## 2026-11-11 pset0持锁调用点诊断版授权部署
 
 用户授权刷入 `34DE79C17FE8A795`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。69 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-pset-lock-owner/flash-result-20261111-042009.json`。启动和持锁调用点捕获待实机验证，原超时根因仍待定位。
+
+
+## 2026-11-11 用户确认启动与桌面通过
+
+用户确认 `34DE79C17FE8A795` 无panic、进入桌面及上划后不卡死。boot SHA-256 `e8cbc39f13b40300d930915b7da3b9ab3ec2c5b63af03292c7ae88215cf9b289`，vendor_boot SHA-256 `4e6564741832644ee3f2f4449b3df7d5bb62465c79122deaab6004a76e0e778a`。此项登记本次用户所测启动和桌面行为，pset0超时未复现，原超时根因尚未取得持锁现场。
+
+用户另报开机约7分钟、台前调度切换应用时疑似GPU卡死，以及重载后变卡。用户推测可能是此前问题，当前因果与调频状态待同次日志核实。后续调查见 `docs/status/gpu-stage-manager-readback-2026-11-11.md`。证据 `uke-port/fixes/2026-11-11-gpu-stage-manager-readback/user-observation.json`。
