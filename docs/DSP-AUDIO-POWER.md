@@ -200,3 +200,8 @@ vendor_boot SHA-256 `af011efef7268bdc54d9c11ec568530c15ec9226f198d5223ced53c51c7
 授权部署，确认SCM962中断与RESUME/ACK的终结响应、ADSP/WPSS共同启动、
 无panic和电池投递/发布，再检查电量/充电图标及Wi-Fi、显示、背光和调频。
 PCM、四路采集、HAL和自动DSP恢复仍未完成，不登记新硬件里程碑。
+
+
+## 2026-11-11 本轮授权部署
+
+用户“刷吧”授权候选 `3EAE3F4E0AC9DE5B`。四个boot/vendor_boot分区写入成功，A槽回读及重启命令成功。vendor_boot SHA-256 `af011efef7268bdc54d9c11ec568530c15ec9226f198d5223ced53c51c76f9d1`，回执 `uke-port/releases/2026-11-11-adsp-scm-waitq/flash-result-20261111-014856.json`。41项原始归档校验及13区预检通过，未写擦userdata。此项仅记录刷写传输；启动、panic是否复现、电量/充电图标和ADSP/WPSS共存待用户反馈及同次日志。
