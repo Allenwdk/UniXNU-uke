@@ -32,6 +32,8 @@ extern volatile uint32_t boot_log_rounds;
 extern volatile int32_t native_battery_stats[16];
 extern volatile uint32_t native_battery_dispatch[6];
 extern unsigned armcpu_stats_row(unsigned, char *, unsigned);
+extern void sheng_cpufreq_poll(void);
+extern char native_cpufreq_row[120];
 extern volatile uint32_t native_cpufreq_ramp[9], native_gpu_dcvs_reasons[9], native_gpu_dcvs_windows[8];
 extern volatile uint32_t native_gpu_pool_board[4], native_adreno_pool_state[12];
 extern volatile uint64_t native_adreno_fence_wake[8], native_adreno_submit_us[8];
@@ -468,7 +470,11 @@ uke_last_log_writer(void *arg, wait_result_t result)
                 native_battery_stats[0], counts[0], counts[1], counts[2], counts[3], counts[4], counts[5],
                 native_battery_stats[7], native_battery_stats[8], native_battery_stats[14], native_battery_stats[15]);
         }
+        // Upstream's regular log round retries the L3 vote until firmware enables
+        // that domain. Keep its existing one-shot guard; no new worker is needed.
+        if ((tick % 4) == 0) sheng_cpufreq_poll();
         if ((tick % 40) == 0) {
+            IOLog("UKE %s\n", native_cpufreq_row);
             char row[512];
             for (unsigned i = 0; i < 17 && armcpu_stats_row(i, row, sizeof row); ++i)
                 IOLog("UKE %s\n", row);
