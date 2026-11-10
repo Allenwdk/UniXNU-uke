@@ -1,0 +1,41 @@
+{
+  "kernel_crc": "D4EFA944BD2B2081",
+  "kernel_final_sha256": "b6437f8190829f4c88908a96700b8777200e765796efad3c33a7d16dabe4e128",
+  "boot_sha256": "2e46cba11922b6f2ea4018cdf5b75a564d8215fc75a8e17547bd90a5763c1328",
+  "vendor_boot_sha256": "a0780fb7be038b74520e0174e507b7694f44134a2c334831f1986b4c904e0860",
+  "vendor_boot_bytes": 47415296,
+  "source_revisions": {
+    "core": "cc87305c2030e495e6131ad25b449d734fcb3804",
+    "device": "4eb1665f9295f00d815c31ac847fb265c45b7766",
+    "soc": "e5c8d35c32381613e72d37b5dfdc3d65c923b39e"
+  },
+  "source_hashes_verified": 75,
+  "stage": "explicit kActive on upstream battery IOInterruptEventSource",
+  "changed_runtime_sources": [
+    "kits/uke/ShengBattery.cpp"
+  ],
+  "compared_to_crc": "3EAE3F4E0AC9DE5B",
+  "pcm_routes_implemented": false,
+  "hal_integrated": false,
+  "automatic_dsp_restart_implemented": false,
+  "kernel_args_bytes": 721,
+  "adt_driver_args": "offline-legacy-register=1 offline-legacy-gop=1 offline-legacy-unit-scale=2 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1 offline-legacy-phase=4 offline-legacy-noconsole=1 sheng-touch=4 sheng-touch-hid=1 sheng-buttons=1 sheng-backlight=1 sheng-touch-split=1 sheng-touch-poll=1 sheng-dpu-scanout=2 sheng-vsync=120 sheng-vsync-fixed=1",
+  "baseline_signed_assets_equal": true,
+  "source_and_archive_hashes_verified": true,
+  "prelink_missing_and_stubs_equal_baseline": true,
+  "uefi_compression_roundtrip_in_formal_payload_build": true,
+  "host_battery_checks": 205,
+  "host_notification_refresh_checks": 176,
+  "host_production_dispatch_checks": 63,
+  "storage_source_hashes_verified": 14,
+  "host_channel_state_checks": 10,
+  "host_shared_runtime_checks_per_rsc": 38,
+  "upstream_event_source_pac_verified": true,
+  "host_scm_checks": 268,
+  "host_metadata_checks": 27,
+  "host_actual_xnu_classifier_checks": 14,
+  "old_unflagged_classifier_negative_failed": true,
+  "battery_publication_on_hardware_verified": false,
+  "flashed": false,
+  "hardware_verified": false
+}

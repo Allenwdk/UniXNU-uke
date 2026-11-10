@@ -281,3 +281,24 @@ SCM268、共享RSCv2/v3各38项以及core11项继续通过。
 
 源码及最终指令已经证明该分类缺陷，修正后的实机电池发布、属性读取及
 充电图标仍待新候选验证。四扬声器PCM、四路采集、HAL、DSP自动恢复未完成。
+
+## 正式候选
+
+候选 `D4EFA944BD2B2081`，vendor_boot SHA256 `a0780fb7be038b74520e0174e507b7694f44134a2c334831f1986b4c904e0860`，47,415,296B，
+归档 `uke-port/releases/2026-11-11-battery-active-inbox/`。运行时代码
+`0bc1f97`，归档设备源码 `4eb1665f9295f00d815c31ac847fb265c45b7766`，core cc87305、common e5c8d35。
+三个仓仍在feat/uke-ipados27-dsp-audio-power，未推送。
+
+正式kernel/payload/boot/vendor_boot通过。75项显示/平台源码与14项存储
+源码及实际归档哈希通过；运行时代码相对3EAE仅ShengBattery.cpp改变。
+最终arm64e指令已核验active标志写入，生产接收/checkForWork/setWorkLoop
+虚表项与原IOInterruptEventSource一致。双元数据0x413、共享SCM、原
+PAC回调均保留。721B启动参数、18项ADT、Data/addon/trust签名资产、
+prelink缺失2/桩24与3EAE对照一致。14项分类验证及旧路径负对照、原有
+检查和结构化13区通过。
+
+候选未刷。下一次取得该候选当次授权后，先看独立events/drain是否增长、
+subscribe响应和快照有效字段是否齐备，再验电量、充电图标、插拔及
+Wi-Fi/显示/背光和调频回归。此前主机通过不代表这些硬件行为已通过。
+设备留原厂四分区/A/TWRP，本轮未额外复制Data；保留3EAE和旧版本回退
+归档，E0FE仍禁止刷写。
