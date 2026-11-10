@@ -25,3 +25,8 @@
 新候选 `DB5C89823294AB4A` 包含 Wi-Fi 列表刷新，vendor_boot SHA-256 `c6c17e7a0b14ec56cd420da853a46c4e4273f36434bfb3d8704afc08004558f9`，设备源码 `c881bbb8ee52ea5c0b432bdce578182853f1ef6c`。正式 kernel、payload、bootimg 和 vendor_boot 核验通过。实际封包确认发布调用位于背光工作循环，背光生产方法主机检查通过 132,782 项。候选待刷。[构建记录](../../uke-port/releases/2026-11-11-backlight-reported-level/build-result.json)
 
 实机先设中档，短按熄屏、亮屏后查看滑块位置和面板亮度，再分别通过设置和控制中心调节，记录大致时间。
+
+
+## 2026-11-11 熄屏亮度属性与 Wi-Fi 列表刷新修正版授权部署
+
+用户授权刷入 `DB5C89823294AB4A`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。73 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-backlight-reported-level/flash-result-20261111-065457.json`。Wi-Fi 首次扫描、列表反复刷新、连接中的扫描与亮度对照待实机验证。
