@@ -40,6 +40,15 @@ extern volatile uint64_t native_adreno_fence_wake[8], native_adreno_submit_us[8]
 extern volatile uint64_t native_adreno_maint_walk[8];
 extern volatile uint32_t native_adreno_sync_audit[6], native_adreno_sync_skips[2];
 extern volatile uint32_t native_adreno_bo_owners[24][4], native_adreno_view_owners[24][4];
+extern volatile uint32_t native_adreno_job_time[8], native_adreno_stall_kick[26], native_adreno_pool_views[5];
+extern volatile uint64_t native_adreno_long_jobs[8][8], native_adreno_slow_jobs[16][8];
+extern volatile uint32_t native_gpu_dcvs[15], native_gpu_dcvs_level_share[16];
+extern uint32_t native_gpu_perf_vote[2];
+extern volatile uint32_t sheng_edge_cross_type_steals[2] __attribute__((weak_import));
+extern volatile uint32_t sheng_edge_idle_beside_excess[2] __attribute__((weak_import));
+extern volatile uint32_t sheng_edge_idle_beside_queued[2][8] __attribute__((weak_import));
+extern volatile int native_gpu_addon_released;
+extern uint64_t ml_static_mfree_pages;
 
 #else
 extern void pe_print_last_panic_again(void);
@@ -496,6 +505,49 @@ uke_last_log_writer(void *arg, wait_result_t result)
                 native_gpu_pool_board[0], native_gpu_pool_board[1], native_gpu_pool_board[2], native_gpu_pool_board[3],
                 native_adreno_pool_state[0], native_adreno_pool_state[1], native_adreno_pool_state[2],
                 native_adreno_pool_state[4], native_adreno_pool_state[5], native_adreno_pool_state[8]);
+            IOLog("UKE GPU governor: level=%u bw=%u changes=%u failed=%u busy=%u topShare=%u touch=%u wake=%u\n",
+                native_gpu_perf_vote[0], native_gpu_perf_vote[1], native_gpu_dcvs[2], native_gpu_dcvs[3],
+                native_gpu_dcvs[4], native_gpu_dcvs_level_share[9], native_gpu_dcvs[13], native_gpu_dcvs[14]);
+            IOLog("UKE GPU pool views: hook=%u tracked=%u untracked=%u closes=%u returned=%u retiredKiB=%u\n",
+                native_adreno_pool_views[4], native_adreno_pool_views[0], native_adreno_pool_views[1],
+                native_adreno_pool_views[2], native_adreno_pool_views[3], native_adreno_pool_state[9]);
+            IOLog("UKE boot memory: addonReleasedPages=%d staticFreedPages=%llu\n",
+                native_gpu_addon_released, ml_static_mfree_pages);
+            if (&sheng_edge_cross_type_steals && &sheng_edge_idle_beside_excess && &sheng_edge_idle_beside_queued) {
+                IOLog("UKE CPU edges: steals=%u/%u idleExcess=%u/%u queuedE=%u/%u/%u/%u/%u/%u/%u/%u queuedP=%u/%u/%u/%u/%u/%u/%u/%u\n",
+                    sheng_edge_cross_type_steals[0], sheng_edge_cross_type_steals[1],
+                    sheng_edge_idle_beside_excess[0], sheng_edge_idle_beside_excess[1],
+                    sheng_edge_idle_beside_queued[0][0], sheng_edge_idle_beside_queued[0][1],
+                    sheng_edge_idle_beside_queued[0][2], sheng_edge_idle_beside_queued[0][3],
+                    sheng_edge_idle_beside_queued[0][4], sheng_edge_idle_beside_queued[0][5],
+                    sheng_edge_idle_beside_queued[0][6], sheng_edge_idle_beside_queued[0][7],
+                    sheng_edge_idle_beside_queued[1][0], sheng_edge_idle_beside_queued[1][1],
+                    sheng_edge_idle_beside_queued[1][2], sheng_edge_idle_beside_queued[1][3],
+                    sheng_edge_idle_beside_queued[1][4], sheng_edge_idle_beside_queued[1][5],
+                    sheng_edge_idle_beside_queued[1][6], sheng_edge_idle_beside_queued[1][7]);
+            }
+            if (native_adreno_job_time[0]) {
+                const volatile uint32_t *t = native_adreno_job_time;
+                IOLog("UKE GPU jobs: timed=%u stamped=%u over8=%u over16=%u over33=%u over100=%u longestUs=%u slow=%u\n",
+                    t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]);
+                for (unsigned i = 0; i < 6; ++i) {
+                    const volatile uint64_t *j = i < 2 ? native_adreno_long_jobs[i] :
+                        native_adreno_slow_jobs[(t[7] - 1 - (i - 2)) & 15];
+                    if ((i >= 2 && i - 2 >= t[7]) || !j[1]) continue;
+                    IOLog("UKE GPU job %s: fence=%u pid=%u q=%llx ring=%u pri=%d ibs=%u KiB=%llu us=%llu src=%u lvl=%u role=%u at=%llums lat=%lluus\n",
+                        i < 2 ? "long" : "slow", (uint32_t)j[0], (uint32_t)j[3], j[4], (unsigned)(j[0] >> 40 & 15),
+                        (int)(j[0] >> 44 & 0xff) - 1, (unsigned)(j[0] >> 32 & 0xff), j[2] >> 10, j[1],
+                        (unsigned)(j[0] >> 52 & 15), (unsigned)(j[3] >> 40 & 0xffff), (unsigned)(j[3] >> 32 & 0xff),
+                        j[5] / 1000, j[6]);
+                }
+            }
+            if (native_adreno_stall_kick[25]) {
+                const volatile uint32_t *k = native_adreno_stall_kick;
+                IOLog("UKE GPU kick: n=%u fence=%u pendingUs=%u moved=%x retiredUs=%u pid=%u ibs=%u ring=%u pri=%d KiB=%u first=%x:%x/%u/%u at=%x:%x/%u/%u after=%x:%x/%u/%u\n",
+                    k[25], k[0], k[1], k[20], k[21], k[22], k[23] & 0xffff, k[23] >> 16 & 0xff,
+                    (int)(k[23] >> 24) - 1, k[24] >> 10,
+                    k[3], k[2], k[6], k[7], k[9], k[8], k[12], k[13], k[15], k[14], k[18], k[19]);
+            }
             IOLog("UKE GPU maintenance: walk=%llu/%llu/%llu/%llu/%llu skip=%u/%u audit=%u dirty=%u submit=%llu totalUs=%llu\n",
                 native_adreno_maint_walk[0], native_adreno_maint_walk[1], native_adreno_maint_walk[2],
                 native_adreno_maint_walk[3], native_adreno_maint_walk[4], native_adreno_sync_skips[0], native_adreno_sync_skips[1],
