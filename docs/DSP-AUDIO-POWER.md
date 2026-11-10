@@ -105,3 +105,21 @@ A槽和TWRP。
 修复版正式候选为 `0847D1BCA4BBE9BD`，vendor_boot SHA-256
 `b8b691d06fb46155a8e53922e4cb7ab2d6d8b1e1b4eb500d572c998cc3c6caf2`，源码2c43669，721B参数和18项ADT。
 镜像记录见 docs/releases/2026-11-11-battery-publication.json。2026-11-11 用户本轮授权后，四分区写入、A 槽回读和重启命令成功，回执 `uke-port/releases/2026-11-11-battery-publication/flash-result-20261111-004514.json`。电池服务发布、读数和充电图标待用户反馈及同次日志。
+
+## 2026-11-11 消费者投递回读
+
+0847实机仍无电量和充电图标。同次UUID96711F13-AF9E-43D8-8FD2-38865F39B3DC，
+376个新尾环槽、2224095条统一日志。ADSP ready372ms，PMIC/GPR通道打开且
+APM状态1，但电池新增subscribe/inbox/response/refresh日志均为零，OS无电池服务。
+上一轮刷新顺序修复未覆盖实际更早的消费者投递阻塞点。
+
+复用本项目DA49背光已验证的thread_call加IOWorkLoop runAction路径，
+状态和接收回调继续只更新有界队列并唤醒，协议处理仍在原work-loop gate。
+加入六阶段投递计数，并由独立UkeLastLog线程每20秒记录一次，避免消费者
+停住后诊断也无法输出。63项实际生产回调/队列/gate/并发到达检查通过，
+205电池、10通道、176快照和RSCv2/v3各38项仍通过。
+
+旧链接代码中0xf8事件源调用槽已核验，但缺回调进入/返回计数，当前不能
+确定具体哪一步停止。新路径硬件效果和充电图标待新候选实机验证。
+根报告 docs/status/battery-dispatch-readback-2026-11-11.md，完整只读取证
+位于uke-port/fixes/2026-11-11-battery-publication-readback。

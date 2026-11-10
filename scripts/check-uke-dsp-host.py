@@ -38,6 +38,15 @@ with tempfile.TemporaryDirectory(prefix='uke-dsp-host-') as directory:
                     DEVICE / 'package/tests/uke_battmgr_refresh_host.c', battery_object,
                     '-o', refresh_exe], check=True)
     subprocess.run([refresh_exe], check=True)
+    start = source.index('    static void dspState(')
+    end = source.index('    void subscribe()', start)
+    fixture = (DEVICE / 'package/tests/uke_battery_dispatch_host.cpp').read_text()
+    dispatch_source = scratch / 'battery-dispatch.cpp'
+    dispatch_source.write_text(fixture.replace('    // PRODUCTION_CALLBACKS', source[start:end]))
+    dispatch_exe = scratch / 'battery-dispatch'
+    subprocess.run([os.environ.get('CXX', 'clang++'), '-std=c++17', *flags,
+                    dispatch_source, '-o', dispatch_exe], check=True)
+    subprocess.run([dispatch_exe], check=True)
     # The real shared runtime is included by the fixture. These empty headers
     # replace kernel declarations supplied by its modeled MMIO/lock fixture.
     for name in ('IOKit/IODeviceMemory.h', 'IOKit/IOLib.h', 'kern/locks.h', 'kern/thread.h'):

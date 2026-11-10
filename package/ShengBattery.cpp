@@ -5,11 +5,12 @@
 // message updateStatus sends; the status bar, the lock screen's charging state and Settings > Battery follow from that.
 //
 // DSP callbacks copy responses to a bounded ring. The service work loop owns
-// requests and snapshots. Timed-out untagged replies quarantine the transport.
+// requests and snapshots. A coalesced thread_call enters the existing work-loop gate,
+// as the accepted Uke backlight path does. Timed-out replies quarantine the transport.
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/IOTimerEventSource.h>
-#include <IOKit/IOInterruptEventSource.h>
+#include <kern/thread_call.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/pwr_mgt/IOPM.h>
 #include <IOKit/pwr_mgt/IOPMPowerSource.h>
@@ -35,6 +36,8 @@ extern "C" {extern volatile int32_t native_battery_stats[16];}
 // remaining, [4] gauge 2 full, [5] temperature property, [6] current property (uA, discharge positive), [7] valid field bits, [8] the field
 // the last timeout skipped (-1 none)
 extern "C" {volatile int32_t native_battery_raw[10];}
+// State callbacks, receive callbacks, inbox signals, signal returns, callout entries, gated drains.
+extern "C" {volatile uint32_t native_battery_dispatch[6];}
 // The charger as the firmware reports it (-1 no reading): [0] USB online, [1] USB type, [2] adapter type, [3] the board's adapter type,
 // [4] input current limit mA, [5] the most the port offers mA, [6] USB mV, [7] USB mA, [8] battery status, [9] charge type, [10] thermal
 // level, [11] charge current mA, [12] adapter watts, [13] bits: 0 cell 1 authenticated, 1 cell 2, 2 PD adapter authenticated, 3 input
@@ -49,7 +52,7 @@ class ShengBattery : public IOPMPowerSource {
     OSDeclareDefaultStructors(ShengBattery)
     IOWorkLoop *loop = nullptr;
     IOTimerEventSource *request = nullptr, *refresh = nullptr;
-    IOInterruptEventSource *inbox = nullptr;
+    thread_call_t inboxCall = nullptr;
     IOSimpleLock *ringLock = nullptr;
     struct {uint32_t length; uint8_t data[kMessage];} ring[kRing];
     uint32_t ringHead = 0, ringCount = 0;
@@ -61,6 +64,7 @@ class ShengBattery : public IOPMPowerSource {
     ShengBattmgr bm;
     ShengAdspChannel *channel = nullptr;
     static void dspState(void *context, int up) {
+        __atomic_fetch_add(&native_battery_dispatch[0], 1u, __ATOMIC_RELAXED);
         ShengBattery *self = static_cast<ShengBattery *>(context);
         IOSimpleLockLock(self->ringLock);
         self->ringCount = self->ringHead = 0;
@@ -68,9 +72,12 @@ class ShengBattery : public IOPMPowerSource {
         if (!up) __atomic_store_n(&self->channelLost, 1u, __ATOMIC_RELEASE);
         __atomic_store_n(&self->channelUp, up ? 1u : 0u, __ATOMIC_RELEASE);
         __atomic_store_n(&self->channelChanged, 1u, __ATOMIC_RELEASE);
-        self->inbox->interruptOccurred(nullptr, nullptr, 0);
+        __atomic_fetch_add(&native_battery_dispatch[2], 1u, __ATOMIC_RELAXED);
+        thread_call_enter(self->inboxCall);
+        __atomic_fetch_add(&native_battery_dispatch[3], 1u, __ATOMIC_RELAXED);
     }
     static void dspReceive(void *context, const uint8_t *data, uint32_t length) {
+        __atomic_fetch_add(&native_battery_dispatch[1], 1u, __ATOMIC_RELAXED);
         ShengBattery *self = static_cast<ShengBattery *>(context);
         IOSimpleLockLock(self->ringLock);
         if (self->ringCount < kRing && length <= kMessage) {
@@ -82,7 +89,19 @@ class ShengBattery : public IOPMPowerSource {
             native_battery_stats[14] = native_battery_stats[14] + 1;
         }
         IOSimpleLockUnlock(self->ringLock);
-        self->inbox->interruptOccurred(nullptr, nullptr, 0);
+        __atomic_fetch_add(&native_battery_dispatch[2], 1u, __ATOMIC_RELAXED);
+        thread_call_enter(self->inboxCall);
+        __atomic_fetch_add(&native_battery_dispatch[3], 1u, __ATOMIC_RELAXED);
+    }
+
+    static void deliverInbox(thread_call_param_t owner, thread_call_param_t) {
+        auto *self = static_cast<ShengBattery *>(owner);
+        __atomic_fetch_add(&native_battery_dispatch[4], 1u, __ATOMIC_RELAXED);
+        self->loop->runAction([](OSObject *owner, void *, void *, void *, void *) -> IOReturn {
+            __atomic_fetch_add(&native_battery_dispatch[5], 1u, __ATOMIC_RELAXED);
+            inboxAction(owner);
+            return kIOReturnSuccess;
+        }, self);
     }
 
     void subscribe() {
@@ -224,12 +243,16 @@ class ShengBattery : public IOPMPowerSource {
         counters();
     }
 
-    static void inboxAction(OSObject *owner, IOInterruptEventSource *, int) {
+    static void inboxAction(OSObject *owner) {
         ShengBattery *self = OSDynamicCast(ShengBattery, owner);
         if (!self) {
             printf("UKE BATTERY: inbox owner class mismatch\n");
             return;
         }
+        if (__atomic_load_n(&native_battery_dispatch[5], __ATOMIC_RELAXED) <= 3)
+            printf("UKE BATTERY: dispatch state=%u rx=%u signal=%u returned=%u callout=%u drain=%u\n",
+                native_battery_dispatch[0], native_battery_dispatch[1], native_battery_dispatch[2],
+                native_battery_dispatch[3], native_battery_dispatch[4], native_battery_dispatch[5]);
         if (__atomic_exchange_n(&self->channelChanged, 0u, __ATOMIC_ACQ_REL)) {
             if (__atomic_exchange_n(&self->channelLost, 0u, __ATOMIC_ACQ_REL)) {
                 self->bm.valid = 0;
@@ -312,14 +335,17 @@ class ShengBattery : public IOPMPowerSource {
 
 public:
     void free() override {
+        if (inboxCall) {
+            thread_call_cancel_wait(inboxCall);
+            thread_call_free(inboxCall);
+            inboxCall = nullptr;
+        }
         if (request) request->cancelTimeout();
         if (refresh) refresh->cancelTimeout();
         if (loop) {
-            if (inbox) loop->removeEventSource(inbox);
             if (request) loop->removeEventSource(request);
             if (refresh) loop->removeEventSource(refresh);
         }
-        OSSafeReleaseNULL(inbox);
         OSSafeReleaseNULL(request);
         OSSafeReleaseNULL(refresh);
         OSSafeReleaseNULL(loop);
@@ -331,10 +357,11 @@ public:
         sheng_battmgr_init(&bm);
         loop = IOWorkLoop::workLoop();
         ringLock = IOSimpleLockAlloc();
-        inbox = IOInterruptEventSource::interruptEventSource(this, &ShengBattery::inboxAction);
+        inboxCall = thread_call_allocate_with_options(&ShengBattery::deliverInbox, this,
+            THREAD_CALL_PRIORITY_KERNEL_HIGH, THREAD_CALL_OPTIONS_ONCE);
         request = IOTimerEventSource::timerEventSource(this, &ShengBattery::requestAction);
         refresh = IOTimerEventSource::timerEventSource(this, &ShengBattery::refreshAction);
-        if (!loop || !ringLock || !inbox || !request || !refresh || loop->addEventSource(inbox) != kIOReturnSuccess ||
+        if (!loop || !ringLock || !inboxCall || !request || !refresh ||
             loop->addEventSource(request) != kIOReturnSuccess || loop->addEventSource(refresh) != kIOReturnSuccess)
             return false;
         native_battery_stats[0] = 1;
@@ -342,6 +369,7 @@ public:
         channel = sheng_adsp_channel ? sheng_adsp_channel("PMIC_RTR_ADSP_APPS", 1024, 4, 0, &client, this) : nullptr;
         if (!channel) return false;
         native_battery_stats[0] = 2;
+        printf("UKE BATTERY: consumer ready dispatch=thread_call queue=%u message=%u\n", kRing, kMessage);
         return true;
     }
 };
