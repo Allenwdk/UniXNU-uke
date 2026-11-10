@@ -27,7 +27,7 @@
  
 --- /dev/null
 +++ b/pexpert/gen/uke_adt_driver_args.h
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,87 @@
 +/* SPDX-License-Identifier: BSD-2-Clause-Patent */
 +/* Uke iPadOS27 migration policy. Keep allowlist matched by the host regression. */
 +#ifndef UKE_ADT_DRIVER_ARGS_H
@@ -57,8 +57,12 @@
 +static int
 +uke_adt_driver_key(const char *key, unsigned length)
 +{
-+    for (unsigned i = 0; i < sizeof(uke_adt_driver_keys) / sizeof(uke_adt_driver_keys[0]); ++i)
-+        if (strlen(uke_adt_driver_keys[i]) == length && !strncmp(key, uke_adt_driver_keys[i], length)) return (int)i;
++    if (length > 6 && !strncmp(key, "sheng-", 6)) { key += 6; length -= 6; }
++    for (unsigned i = 0; i < sizeof(uke_adt_driver_keys) / sizeof(uke_adt_driver_keys[0]); ++i) {
++        const char *allowed = uke_adt_driver_keys[i];
++        if (!strncmp(allowed, "sheng-", 6)) allowed += 6;
++        if (strlen(allowed) == length && !strncmp(key, allowed, length)) return (int)i;
++    }
 +    return -1;
 +}
 +/* Validate every token before using any default. Original CLI grammar is unchanged. */
