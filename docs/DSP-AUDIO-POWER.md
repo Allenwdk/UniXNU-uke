@@ -101,3 +101,8 @@ IPCRTR/PMIC/GPR 通道打开，APM 收到token2状态1回复。powerd 记录没�
 取证在 `uke-port/fixes/2026-11-11-adsp-battery-readback/`，完整报告在根
 docs/status/adsp-battery-readback-2026-11-11.md。设备当前为原厂四分区、
 A槽和TWRP。
+
+修复版正式候选为 `0847D1BCA4BBE9BD`，vendor_boot SHA-256
+`b8b691d06fb46155a8e53922e4cb7ab2d6d8b1e1b4eb500d572c998cc3c6caf2`，源码2c43669，721B参数和18项ADT。
+镜像记录见 docs/releases/2026-11-11-battery-publication.json。候选未刷，
+电池服务发布、读数和充电图标需实机验收。
