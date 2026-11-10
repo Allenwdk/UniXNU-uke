@@ -126,11 +126,13 @@
   },
   "adaptation_review": {
     "date": "2026-11-11",
-    "sheng_review_revision": "0215f34a6d5307dab53e9a81dff9ae0fd047f3be",
+    "sheng_review_revision": "81f43ebaaa3317a5917b76093f7bc44c4949bc02",
     "original_relevant_sheng_files_unchanged": true,
     "uke_oem_revision": "5712080a4b0c0b1a879e6d145c601c649ddaddfd",
     "metadata_contract": "drivers/soc/qcom/mdt_loader.c requires page-isolated noncacheable coherent metadata, with PAS shutdown before free on error",
     "evidence": "uke-port/fixes/2026-11-11-battery-dispatch-panic/upstream-comparison.json",
-    "scm_contract": "OEM qcom_scm-smc.c/qcom_scm.c WAITQ_SLEEP=2, WAKE=3, shared non-atomic lock, IRQ GET_WQ_CTX and standard RESUME/ACK; adapted in GPL-2.0-only Sm7675Scm.cpp"
+    "scm_contract": "OEM qcom_scm-smc.c/qcom_scm.c WAITQ_SLEEP=2, WAKE=3, shared non-atomic lock, IRQ GET_WQ_CTX and standard RESUME/ACK; adapted in GPL-2.0-only Sm7675Scm.cpp",
+    "battery_event_source_contract": "XNU ac9718fb: modern arm64e _ptmf2ptf re-signs a shared virtual thunk; legacy IOWorkLoop classifier sees same pointer and passivates unflagged sources. Use upstream kActive mechanism in UkeBatteryInbox; inherited producer/action/workloop behavior unchanged.",
+    "battery_event_source_evidence": "uke-port/fixes/2026-11-11-scm-waitq-readback/upstream-comparison.json"
   }
 }

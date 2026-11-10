@@ -48,6 +48,25 @@ namespace {
 constexpr uint32_t kRequestMs = 2000, kRefreshMs = 60000, kSlowEvery = 10, kRing = 16, kMessage = 560;
 }
 
+// Keep the upstream interrupt producer, action dispatch and work-loop gate.
+// With the arm64e member-function-thunk ABI, IOWorkLoop's automatic classifier
+// compares the same checkForWork thunk for this source and IOCommandGate.
+// Use XNU's explicit kActive contract, as its work-loop timer sources do.
+class UkeBatteryInbox final : public IOInterruptEventSource {
+    OSDeclareDefaultStructors(UkeBatteryInbox)
+public:
+    static UkeBatteryInbox *create(OSObject *owner, Action action) {
+        UkeBatteryInbox *source = OSTypeAlloc(UkeBatteryInbox);
+        if (source && !source->init(owner, action)) {
+            source->release();
+            return nullptr;
+        }
+        if (source) source->flags = (source->flags & ~kPassive) | kActive;
+        return source;
+    }
+};
+OSDefineMetaClassAndStructors(UkeBatteryInbox, IOInterruptEventSource)
+
 class ShengBattery : public IOPMPowerSource {
     OSDeclareDefaultStructors(ShengBattery)
     IOWorkLoop *loop = nullptr;
@@ -346,7 +365,7 @@ public:
         sheng_battmgr_init(&bm);
         loop = IOWorkLoop::workLoop();
         ringLock = IOSimpleLockAlloc();
-        inbox = IOInterruptEventSource::interruptEventSource(this, &ShengBattery::inboxAction);
+        inbox = UkeBatteryInbox::create(this, &ShengBattery::inboxAction);
         request = IOTimerEventSource::timerEventSource(this, &ShengBattery::requestAction);
         refresh = IOTimerEventSource::timerEventSource(this, &ShengBattery::refreshAction);
         if (!loop || !ringLock || !inbox || !request || !refresh ||
@@ -357,7 +376,7 @@ public:
         channel = sheng_adsp_channel ? sheng_adsp_channel("PMIC_RTR_ADSP_APPS", 1024, 4, 0, &client, this) : nullptr;
         if (!channel) return false;
         native_battery_stats[0] = 2;
-        printf("UKE BATTERY: consumer ready dispatch=upstream-event-source queue=%u message=%u\n", kRing, kMessage);
+        printf("UKE BATTERY: consumer ready dispatch=upstream-event-source-active queue=%u message=%u\n", kRing, kMessage);
         return true;
     }
 };

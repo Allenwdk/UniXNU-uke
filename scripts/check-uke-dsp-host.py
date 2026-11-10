@@ -47,6 +47,24 @@ with tempfile.TemporaryDirectory(prefix='uke-dsp-host-') as directory:
     subprocess.run([os.environ.get('CXX', 'clang++'), '-std=c++17', *flags,
                     dispatch_source, '-o', dispatch_exe], check=True)
     subprocess.run([dispatch_exe], check=True)
+    # Reproduce the exact linked arm64e thunk classification with the actual
+    # XNU function, then exercise the production explicit-active inbox factory.
+    import json
+    inputs = DEVICE.parent / 'UniXNU/out/uke/ipados-27.0.1-24A446/uke_ipados27/xnu-inputs.json'
+    xnu = Path(json.loads(inputs.read_text())['source'])
+    classifier = (xnu / 'iokit/Kernel/IOWorkLoop.cpp').read_text()
+    start = classifier.index('bool\nIOWorkLoop::eventSourcePerformsWork(')
+    end = classifier.index('\nvoid\nIOWorkLoop::lockTime(', start)
+    start_inbox = source.index('class UkeBatteryInbox ')
+    end_inbox = source.index('class ShengBattery :', start_inbox)
+    fixture = (DEVICE / 'package/tests/uke_battery_event_active_host.cpp').read_text()
+    active_source = scratch / 'battery-event-active.cpp'
+    active_source.write_text(fixture.replace('// PRODUCTION_ACTIVE_INBOX', source[start_inbox:end_inbox])
+                            .replace('// PRODUCTION_CLASSIFIER', classifier[start:end]))
+    active_exe = scratch / 'battery-event-active'
+    subprocess.run([os.environ.get('CXX', 'clang++'), '-std=c++17', *flags,
+                    active_source, '-o', active_exe], check=True)
+    subprocess.run([active_exe], check=True)
     metadata_source = (DEVICE / 'package/AdspProbe.cpp').read_text()
     start = metadata_source.index('void release(Image &image) {')
     end = metadata_source.index('int openImage(', start)
