@@ -107,9 +107,7 @@ directory below. The counters change no result.
  
  	error = VNOP_LOOKUP(dp, &ndp->ni_vp, cnp, ctx);
  
-@@ -1800,6 +1854,12 @@
- 				error = ENOENT;
- 			}
+@@ -1802,4 +1856,10 @@
  			vnode_put(tdp);
 +			if (union_started != 0) {
 +				uint64_t union_ns = 0;
