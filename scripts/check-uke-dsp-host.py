@@ -47,6 +47,19 @@ with tempfile.TemporaryDirectory(prefix='uke-dsp-host-') as directory:
     subprocess.run([os.environ.get('CXX', 'clang++'), '-std=c++17', *flags,
                     dispatch_source, '-o', dispatch_exe], check=True)
     subprocess.run([dispatch_exe], check=True)
+    metadata_source = (DEVICE / 'package/AdspProbe.cpp').read_text()
+    start = metadata_source.index('void release(Image &image) {')
+    end = metadata_source.index('int openImage(', start)
+    release_function = metadata_source[start:end]
+    start = metadata_source.index('bool stopImage(')
+    end = metadata_source.index('bool start()', start)
+    cleanup_functions = metadata_source[start:end]
+    fixture = (DEVICE / 'package/tests/uke_adsp_metadata_host.cpp').read_text()
+    metadata_host = scratch / 'adsp-metadata.cpp'
+    metadata_host.write_text(fixture.replace('// PRODUCTION_METADATA_LIFECYCLE', release_function + cleanup_functions))
+    metadata_exe = scratch / 'adsp-metadata'
+    subprocess.run([os.environ.get('CXX', 'clang++'), '-std=c++17', *flags, metadata_host, '-o', metadata_exe], check=True)
+    subprocess.run([metadata_exe], check=True)
     # The real shared runtime is included by the fixture. These empty headers
     # replace kernel declarations supplied by its modeled MMIO/lock fixture.
     for name in ('IOKit/IODeviceMemory.h', 'IOKit/IOLib.h', 'kern/locks.h', 'kern/thread.h'):

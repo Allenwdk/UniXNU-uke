@@ -81,7 +81,7 @@ QcomSmp2p gP2p;
 int gStopEntry = -1;
 QcomGlink gGlink;
 bool gGlinkStarted;
-bool gDtbOwned, gAdspOwned, gProxyHeld, gLoadStateOn;
+bool gProxyHeld, gLoadStateOn;
 volatile uint32_t gPending;
 
 // ---- clients ----
@@ -229,15 +229,6 @@ ScmResult scm(uint32_t command, uint32_t arginfo, uint64_t a, uint64_t b, uint64
 }
 bool scmOk(const ScmResult &r) {return r.x0 == 0 && r.x1 == 0;}
 
-void cleanToPoc(const void *start, size_t length) {
-    uint64_t ctr;
-    __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
-    const uintptr_t line = static_cast<uintptr_t>(4) << ((ctr >> 16) & 15);
-    for (uintptr_t a = reinterpret_cast<uintptr_t>(start) & ~(line - 1); a < reinterpret_cast<uintptr_t>(start) + length; a += line)
-        __asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
-    __asm__ volatile("dsb sy" ::: "memory");
-}
-
 // ---- a firmware image: parsed from its file, metadata handed over, segments written into the carveout ----
 struct Image {  // plain data, zero at start: the two live in static storage (a few KiB of header table each, kept off the stack)
     void *file;
@@ -245,11 +236,19 @@ struct Image {  // plain data, zero at start: the two live in static storage (a 
     QcomMdtImage mdt;
     IOBufferMemoryDescriptor *meta;
     bool prepared;
+    bool secureMetadata;
+    uint32_t pas;
+    bool pasActive;
 };
 Image gDtbImage, gAdspImage;
 int fileRead(void *context, uint64_t offset, void *to, size_t length) {return sheng_fw_read(context, offset, to, length);}
 void release(Image &image) {
     if (image.file) sheng_fw_close(image.file);
+    image.file = nullptr;
+    if (image.meta && image.secureMetadata) {
+        printf("UKE ADSP: retain metadata pas=%u until shutdown is confirmed\n", image.pas);
+        return;
+    }
     if (image.meta) {
         if (image.prepared) image.meta->complete();
         image.meta->release();
@@ -268,8 +267,14 @@ int openImage(Image &image, const char *path) {
 // init_image with the metadata in physically contiguous memory, then the memory setup of a relocatable image.
 int authenticateHeader(Image &image, uint32_t pas, uint64_t base) {
     const uint64_t bytes = qcom_mdt_metadata_size(&image.mdt);
-    image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, (IOOptionBits)kIODirectionInOut | (IOOptionBits)kIOMemoryPhysicallyContiguous, bytes,
-                                                                 0xfffffffffffff000ull);
+    if (!bytes || bytes > UINT64_MAX - 0xfff) return -7;
+    const uint64_t allocation = (bytes + 0xfff) & ~0xfffull;
+    // Uke OEM mdt_loader uses a page-aligned, non-cacheable coherent buffer:
+    // secure authentication can protect its entire physical pages (XPU).
+    // Write-combine selects normal uncached memory, retaining bulk-copy support.
+    image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+        (IOOptionBits)kIODirectionInOut | (IOOptionBits)kIOMemoryPhysicallyContiguous |
+        (IOOptionBits)kIOMapWriteCombineCache, allocation, 0xfffffffffffff000ull);
     if (!image.meta || image.meta->prepare() != kIOReturnSuccess) return -12;
     image.prepared = true;
     uint8_t *va = static_cast<uint8_t *>(image.meta->getBytesNoCopy());
@@ -284,13 +289,18 @@ int authenticateHeader(Image &image, uint32_t pas, uint64_t base) {
         snprintf(hex + 2 * i, 3, "%02x", digest[i]);
     printf("UKE ADSP: pas=%u base=%llx metadata=%llu sha256=%s\n",
            pas, (unsigned long long)base, (unsigned long long)bytes, hex);
-    cleanToPoc(va, bytes);
+    __asm__ volatile("dsb sy" ::: "memory");
     IOByteCount segment = 0;
     const uint64_t phys = image.meta->getPhysicalSegment(0, &segment, kIOMemoryMapperNone);
-    if (!phys || segment < bytes) return -12;
+    if (!phys || (phys & 0xfff) || segment < allocation) return -12;
+    printf("UKE ADSP: metadata pas=%u pa=%llx span=%llu allocation=%llu cache=normal-uncached\n",
+        pas, (unsigned long long)phys, (unsigned long long)segment, (unsigned long long)allocation);
+    // Even a failed INIT_IMAGE may have enabled memory protection. Keep the
+    // buffer owned until a successful shutdown on every failure path.
+    image.pas = pas;
+    image.secureMetadata = true;
+    image.pasActive = true;
     if (!scmOk(scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0))) return -1;
-    if (pas == kPasDtb) gDtbOwned = true;
-    else if (pas == kPasAdsp) gAdspOwned = true;
     if (image.mdt.relocatable &&
         !scmOk(scm(QCOM_SCM_PAS_MEM_SETUP, qcom_scm_args(3, 0, 0, 0), pas, base, qcom_mdt_span(&image.mdt))))
         return -2;
@@ -503,17 +513,27 @@ int openFirmware(Image &dtb, Image &adsp, char *path, size_t size, const char *c
     }
 }
 
+bool stopImage(Image &image) {
+    if (!image.secureMetadata && !image.pasActive) return true;
+    const ScmResult result = scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), image.pas, 0, 0);
+    if (!scmOk(result)) {
+        printf("UKE ADSP: quarantine pas=%u owned resources and power scm=%lld/%llu\n", image.pas,
+            (long long)result.x0, (unsigned long long)result.x1);
+        return false;
+    }
+    image.secureMetadata = false;
+    image.pasActive = false;
+    printf("UKE ADSP: shutdown confirmed pas=%u before metadata release\n", image.pas);
+    return true;
+}
+
 void unwindStart() {
-    // An unacknowledged PAS shutdown may leave firmware using its reservation.
-    // Keep power references in that case until a clean boot.
-    if (gAdspOwned) {
-        if (!scmOk(scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), kPasAdsp, 0, 0))) return;
-        gAdspOwned = false;
-    }
-    if (gDtbOwned) {
-        if (!scmOk(scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), kPasDtb, 0, 0))) return;
-        gDtbOwned = false;
-    }
+    // Match the target OEM qcom_mdt_free_metadata contract: shutdown before
+    // free on error, including INIT_IMAGE failure. A refused shutdown retains
+    // the metadata and dependent power references until a clean boot.
+    if (!stopImage(gAdspImage) || !stopImage(gDtbImage)) return;
+    release(gAdspImage);
+    release(gDtbImage);
     if (gProxyHeld && vote(0, 0)) return;
     if (gLoadStateOn && !sm7675_remote_qmp("{class: image, res: load_state, name: adsp, val: off}"))
         gLoadStateOn = false;
@@ -587,13 +607,16 @@ bool start() {
     uint64_t ns = 0;
     absolutetime_to_nanoseconds(mach_absolute_time() - began, &ns);
     native_adsp_stats[8] = (int32_t)(ns / 1000000);
-    release(dtb);
-    release(adsp);  // the metadata may go once the images are authenticated
     if (!ready || (gSlave & kFatal)) {
         readCrashReason();
         fail(StReady, ready ? -5 : -60);
         return false;
     }
+    // The OEM releases metadata after authentication and start completion.
+    // Runtime firmware ownership is independent of these transient buffers.
+    dtb.secureMetadata = adsp.secureMetadata = false;
+    release(dtb);
+    release(adsp);
     stage(StReady);
     printf("UKE ADSP: PAS ready %d ms SMP2P=%x\n", native_adsp_stats[8], gSlave);
     return true;

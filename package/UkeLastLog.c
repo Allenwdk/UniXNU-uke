@@ -456,7 +456,7 @@ uke_last_log_writer(void *arg, wait_result_t result)
             uint32_t counts[6];
             for (unsigned i = 0; i < 6; ++i)
                 counts[i] = __atomic_load_n(&native_battery_dispatch[i], __ATOMIC_RELAXED);
-            IOLog("UKE BATTERY dispatch: st=%d state=%u rx=%u signal=%u returned=%u callout=%u drain=%u ans=%d to=%x drop=%x refuse=%d\n",
+            IOLog("UKE BATTERY dispatch: st=%d state=%u rx=%u signal=%u returned=%u events=%u drain=%u ans=%d to=%x drop=%x refuse=%d\n",
                 native_battery_stats[0], counts[0], counts[1], counts[2], counts[3], counts[4], counts[5],
                 native_battery_stats[7], native_battery_stats[8], native_battery_stats[14], native_battery_stats[15]);
         }

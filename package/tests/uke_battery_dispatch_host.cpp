@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
-/* The checker inserts the production GLINK callbacks and gated callout. */
+/* The checker inserts the production GLINK callbacks using the upstream software event source. */
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -11,22 +11,16 @@ static unsigned checks;
 constexpr unsigned kRing = 16, kMessage = 560;
 constexpr int kIOReturnSuccess = 0;
 using IOReturn = int;
-using thread_call_param_t = void *;
 struct OSObject {};
 struct Lock {unsigned held = 0;};
 static void IOSimpleLockLock(Lock *lock) {assert(!lock->held); ++lock->held;}
 static void IOSimpleLockUnlock(Lock *lock) {assert(lock->held == 1); --lock->held;}
-struct Call {
-    void (*function)(void *, void *);
-    void *context;
+struct Source {
     bool pending = false;
+    void (*action)(OSObject *, Source *, int) = nullptr;
+    OSObject *owner = nullptr;
+    void interruptOccurred(void *, void *, int) {pending = true;}
 };
-using thread_call_t = Call *;
-static bool thread_call_enter(thread_call_t call) {
-    const bool pending = call->pending;
-    call->pending = true;
-    return pending;
-}
 struct Loop {
     bool gated = false;
     unsigned actions = 0;
@@ -49,16 +43,18 @@ struct ShengBattery : OSObject {
     unsigned ringHead = 0, ringCount = 0, channelChanged = 0, channelLost = 0, channelUp = 0;
     Loop workLoop;
     Loop *loop = &workLoop;
-    Call call;
-    thread_call_t inboxCall = &call;
+    Source source;
+    Source *inbox = &source;
     std::vector<unsigned> packets;
     unsigned stateChanges = 0;
     bool injectDuringDrain = false;
-    static void inboxAction(OSObject *owner);
+    static void inboxAction(OSObject *owner, Source *, int);
     // PRODUCTION_CALLBACKS
 };
 
-void ShengBattery::inboxAction(OSObject *owner) {
+void ShengBattery::inboxAction(OSObject *owner, Source *, int) {
+    ++native_battery_dispatch[4];
+    ++native_battery_dispatch[5];
     auto *self = static_cast<ShengBattery *>(owner);
     CHECK(self->loop->gated);
     if (self->channelChanged) {++self->stateChanges; self->channelChanged = 0;}
@@ -78,19 +74,23 @@ void ShengBattery::inboxAction(OSObject *owner) {
 
 static void pump(ShengBattery &battery) {
     unsigned loops = 0;
-    while (battery.call.pending) {
+    while (battery.source.pending) {
         CHECK(++loops < 10);
-        battery.call.pending = false;
-        battery.call.function(battery.call.context, nullptr);
+        battery.source.pending = false;
+        battery.workLoop.runAction([](OSObject *owner, void *, void *, void *, void *) -> IOReturn {
+            auto *self = static_cast<ShengBattery *>(owner);
+            self->source.action(owner, &self->source, 1);
+            return kIOReturnSuccess;
+        }, &battery);
     }
 }
 
 int main() {
     ShengBattery battery;
-    battery.call.function = ShengBattery::deliverInbox;
-    battery.call.context = &battery;
+    battery.source.action = ShengBattery::inboxAction;
+    battery.source.owner = &battery;
     ShengBattery::dspState(&battery, 1);
-    CHECK(battery.channelUp && battery.channelChanged && battery.call.pending);
+    CHECK(battery.channelUp && battery.channelChanged && battery.source.pending);
     CHECK(!battery.workLoop.actions && !battery.stateChanges);
     pump(battery);
     CHECK(battery.stateChanges == 1 && battery.workLoop.actions == 1);
@@ -127,5 +127,5 @@ int main() {
     CHECK(!battery.ringCount && battery.packets.back() == 99 && !battery.storage.held);
     CHECK(native_battery_dispatch[2] == native_battery_dispatch[3]);
     CHECK(native_battery_dispatch[4] == native_battery_dispatch[5]);
-    printf("PASS production battery callbacks and gated callout: %u checks\n", checks);
+    printf("PASS production battery callbacks with upstream event source: %u checks\n", checks);
 }

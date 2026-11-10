@@ -128,3 +128,37 @@ APM状态1，但电池新增subscribe/inbox/response/refresh日志均为零，OS
 `cbbc566e504a094bfbc3cfcc91859fe13e71f5c531f09dd7eb4fed7b24d5dfc3`，47,411,200B，源码5d9e511，721B参数。
 运行时改动为ShengBattery.cpp和UkeLastLog.c，最终PAC及直接thread_call
 检查通过。记录在docs/releases/2026-11-11-battery-dispatch.json。2026-11-11 用户本轮授权后，四分区写入、A 槽回读和重启命令成功，回执 `uke-port/releases/2026-11-11-battery-dispatch/flash-result-20261111-010412.json`。电池服务发布、读数和充电图标待用户反馈及同次日志。
+
+## 2026-11-11 E0FE panic与上游差异复核
+
+E0FE实机panic，原包已标DO_NOT_FLASH。照片按同版最终kernel及LR-4
+检查，异常指令在memcpy/memmove+0x4c，调用链为IOMemoryDescriptor::writeBytes、
+copypv、bcopy_phys_internal。缺少故障目标物理地址和更上层调用帧。
+272条新尾环到183.299045秒显示，ADSP在DTB PAS36 INIT_IMAGE失败，
+scm=2/1。七次独立投递采样state/rx/signal/returned/events/drain全0，
+电池callout没有实际执行。Data仅1页变化，最新持久化UUID仍为0847，
+旧统一日志不能用于解释本次panic。
+
+已重新fetch并更新参考sheng到0215f34a6d5307dab53e9a81dff9ae0fd047f3be，
+ShengBattery.cpp/AdspProbe.cpp/ShengBattmgr.c相对6bc0ce1e无变化。
+电池投递恢复sheng的IOInterruptEventSource创建、addEventSource和
+interruptOccurred路径，删除本地thread_call/runAction替代路径，保留
+独立计数。具体软件事件源调度阶段仍待实机计数。
+
+认证元数据核对到uke OEM5712080a的mdt_loader.c，其要求独立4KiB、
+non-cacheable coherent页，失败时先PAS shutdown确认，再free。通用sheng
+在这部分使用缓存的连续缓冲并在错误后直接释放，本地也继承了这个风险。
+本轮按目标OEM契约分配向上取整4KiB的normal-uncached连续元数据，
+INIT_IMAGE前标记安全世界可能持有，即使调用失败也先确认shutdown，
+拒绝时隔离元数据和电源引用；成功启动后才释放临时元数据。PAS运行期
+所有权独立保存，GLINK后续失败仍能停固件。增加PA/跨度及回收日志。
+
+实际release/stop/unwind生产函数的27项ASan/UBSan测试通过，覆盖INIT失败、
+shutdown拒绝、双PAS次序、认证前失败、成功后释放及GLINK失败；旧release
+函数在同一测试中提前释放，按预期失败。205电池/10通道/176刷新/63事件
+回调/RSCv2-v3各38项仍通过。
+
+这项元数据生命周期缺陷已由目标源码和主机负对照证实。受保护页重用与
+照片中的拷贝panic相符，但缺少目标PA，完整硬件因果尚未证明。只读取证
+和原始照片在uke-port/fixes/2026-11-11-battery-dispatch-panic，根报告
+docs/status/adsp-metadata-panic-2026-11-11.md。设备为原厂四分区/A/TWRP。

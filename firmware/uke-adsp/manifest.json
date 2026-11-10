@@ -123,5 +123,13 @@
     "size": 2838166,
     "sha256": "bd3f9b8834b80c23f86241756e263e36ddf92b2b8993ed83ff71c310af952f3e",
     "hardware_qualified": false
+  },
+  "adaptation_review": {
+    "date": "2026-11-11",
+    "sheng_review_revision": "0215f34a6d5307dab53e9a81dff9ae0fd047f3be",
+    "original_relevant_sheng_files_unchanged": true,
+    "uke_oem_revision": "5712080a4b0c0b1a879e6d145c601c649ddaddfd",
+    "metadata_contract": "drivers/soc/qcom/mdt_loader.c requires page-isolated noncacheable coherent metadata, with PAS shutdown before free on error",
+    "evidence": "uke-port/fixes/2026-11-11-battery-dispatch-panic/upstream-comparison.json"
   }
 }
