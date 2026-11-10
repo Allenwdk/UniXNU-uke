@@ -101,6 +101,7 @@ if __name__ == '__main__':
               'stock_regions_checked': stock_count,
               'static_errors': errors, 'missing_vendor_inputs': missing,
               'runtime_ram_verified': False, 'hardware_boot_demonstrated': False}
+    Path('build/uke').mkdir(parents=True, exist_ok=True)
     Path('build/uke/check.json').write_text(json.dumps(result, indent=2) + '\n')
     print(f'{len(reservations)} DTS reservations checked against {len(rows)} descriptors')
     print(f'{len(errors)} static errors; {len(missing)} vendor inputs still missing; hardware unverified')
