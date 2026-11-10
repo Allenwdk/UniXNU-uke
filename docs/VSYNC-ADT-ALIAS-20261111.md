@@ -43,3 +43,12 @@ boot SHA-256 `e8cbc39f13b40300d930915b7da3b9ab3ec2c5b63af03292c7ae88215cf9b289`�
 原prepared parser负对照重现canonical三项ok0/值0，legacy三项ok1/值120/1/2；修正后的同一生产parser检查332项通过，覆盖新旧名称及优先级。归档覆盖72项SHA，13区结构化检查通过。此处记录主机构建与输入验证，软件timer启动、实际DPU换帧及撕裂消失仍待本候选实机证据。
 
 新候选取得当次授权后刷四分区/A槽，先验证桌面滑动和120Hz刷新/直扫latch，再延续>8分钟台前调度重载与基础外设回归。
+
+
+## 2026-11-11 当次部署前的同类入口核查
+
+用户授权刷19948EA4D7EDD158，并要求检查类似遗漏。本轮以该候选的实际721B命令行、18项ADT和6项builtin为输入，执行准备XNU的生产参数解析器，90个旧名/canonical查询均返回预期值。直接抽取同版Metal插件的bootArgToken/bootArgSet，对当前配置及该文件所有16项精确开关查询核验，全部通过。两层没有归一化名称冲突。
+
+UFS创建DPU stage1映射的生产者也已改读dpu-scanout，与GOP消费者同受ADT入口遗漏影响，1994的同一修复覆盖两端。CPU SMP/调频、GPU/DCVS/抢占、存储持久化/日志、触摸/按键/背光配置入口均在本次实际查询核查范围内。Metal仍显式读取kern.bootargs，当前需要的图形/轻量记录开关都在CLI中，vsync仅在TARGET_OS_OSX的可选WindowServer路径读取原始CLI，未应用于此iPadOS路径。
+
+当前配置未发现另一处活动别名失效。该结论限于静态源入口和主机执行查询，运行时120Hz消息、DPUflip/latch、撕裂观感及所有可选参数组合仍需分别验证。核查没有更改候选或运行代码。证据为uke-port/fixes/2026-11-11-alias-audit/report.json及两个生产入口harness/log。
