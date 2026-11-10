@@ -44,3 +44,8 @@ core新增82a8e54是macOS profile的page radix root启动初始化，sheng43f6f0
 83项显示/平台源码、14项存储源码及实际archive哈希通过。721B启动参数、18项ADT和原签名addon/trust/Data保留，prelink缺失2/桩24与基线一致。正式打包检查通过，SHA256SUMS覆盖69个文件。结构化13区通过。新增记录会带来尚未量化的取证开销，可能影响超时复现时序，候选仍属于诊断阶段。
 
 取得本候选当次授权后刷四分区/A槽。若复现panic，照片应包含`pset0 ticket timeout`、`valid`、`held`及`acquire BT`三地址，用同包内核按LR-4还原CPU0获取锁的调用链。若启动成功，仍需桌面上划、再次启动与电池/Wi-Fi/显示/触摸回归。D4EF配对回退保留。根因与修复效果继续待实机证据。
+
+
+## 2026-11-11 pset0持锁调用点诊断版授权部署
+
+用户授权刷入 `34DE79C17FE8A795`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。69 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-pset-lock-owner/flash-result-20261111-042009.json`。启动和持锁调用点捕获待实机验证，原超时根因仍待定位。
