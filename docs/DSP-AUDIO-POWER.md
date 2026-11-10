@@ -182,3 +182,21 @@ XNU等待有10秒上限，超时或协议异常后隔离后续调用，保留安
 真实共享SCM代码268项ASan/UBSan检查通过，包括睡眠→IRQ→GET→RESUME、
 WAKE→ACK、连续WAITQ、wake_one/wake_all、A6保持、ACK返回busy后重发原请求、
 超时隔离、畸形回复与双调用者串行。主机通过不能证明实机IRQ及PAS已经成功。
+
+## 新候选与验证状态
+
+新候选 `3EAE3F4E0AC9DE5B` 已正式完成kernel、payload、boot及vendor_boot构建，
+vendor_boot SHA-256 `af011efef7268bdc54d9c11ec568530c15ec9226f198d5223ced53c51c76f9d1`，47,415,296B，小于96MiB分区上限。
+归档 `uke-port/releases/2026-11-11-adsp-scm-waitq/`，源码快照core
+`cc87305c2030e495e6131ad25b449d734fcb3804`、device `a94da50a5ce23df0d7949f260d4ab47e4361ecb6`、common `e5c8d35c32381613e72d37b5dfdc3d65c923b39e`，
+运行时代码提交device `eb29ddd`、common `e5c8d35`。三个仓均保留同名新分支。
+
+75项显示/平台源码与14项存储源码及实际归档SHA核验通过；最终arm64e
+代码中ADSP/WPSS两处factory均为0x413，电池事件源PAC调用和共享SCM链接
+已核对。721B参数、18项ADT、缺失2/桩24及Data/addon/trust签名资产与E0FE
+对照一致。主机SCM268、元数据27及原有检查、core11、结构化13区通过。
+
+候选未刷、未做硬件验收，设备留在原厂四分区/A/TWRP。下一步须当次
+授权部署，确认SCM962中断与RESUME/ACK的终结响应、ADSP/WPSS共同启动、
+无panic和电池投递/发布，再检查电量/充电图标及Wi-Fi、显示、背光和调频。
+PCM、四路采集、HAL和自动DSP恢复仍未完成，不登记新硬件里程碑。
