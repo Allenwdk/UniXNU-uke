@@ -584,6 +584,7 @@ class ShengBacklight : public IOService {
             const uint32_t goal = (uint32_t)(request >> 16) & 0xffff;
             // The same mailbox batch may contain the system's nonzero dark floor.
             // An explicit power transition retains the last lit user request.
+            const uint32_t previous = self->power.requested;
             if (!transitioning) ukeBacklightRequest(self->power, goal);
             if (received <= 12 || !(received % 64))
                 printf("UKE BL: apply request=%u goal=%u display_on=%u mode=%s\n",
@@ -593,6 +594,9 @@ class ShengBacklight : public IOService {
                 const uint32_t effective = explicitPower ? ukeBacklightEffective(self->power) : (self->power.on ? goal : 0);
                 self->beginFade(effective, self->power.on ? (uint32_t)request & 0xffff : 0);
             }
+            // Report the accepted brightness to CoreBrightness. The temporary
+            // output level during screen-off must not replace it in the registry.
+            if (self->power.requested != previous) self->publish(self->power.requested);
         } else if (explicitPower && self->power.on) self->beginFade(ukeBacklightEffective(self->power), 0);
         self->finishWake();
     }
@@ -851,7 +855,6 @@ public:
         // the interrupt source, carries it: int-278 signalled the interrupt source for 345 requests and wrote none.
         __atomic_store_n(&gRequest, 1ull << 63 | (uint64_t)goal << 16 | milliseconds, __ATOMIC_RELEASE);
         request->setTimeoutUS(1);
-        publish(goal);
         return kIOReturnSuccess;
     }
 };
