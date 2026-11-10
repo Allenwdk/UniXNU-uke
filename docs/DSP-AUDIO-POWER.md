@@ -205,3 +205,79 @@ PCM、四路采集、HAL和自动DSP恢复仍未完成，不登记新硬件里�
 ## 2026-11-11 本轮授权部署
 
 用户“刷吧”授权候选 `3EAE3F4E0AC9DE5B`。四个boot/vendor_boot分区写入成功，A槽回读及重启命令成功。vendor_boot SHA-256 `af011efef7268bdc54d9c11ec568530c15ec9226f198d5223ced53c51c76f9d1`，回执 `uke-port/releases/2026-11-11-adsp-scm-waitq/flash-result-20261111-014856.json`。41项原始归档校验及13区预检通过，未写擦userdata。此项仅记录刷写传输；启动、panic是否复现、电量/充电图标和ADSP/WPSS共存待用户反馈及同次日志。
+
+
+# 3EAE回读与电池事件源active分类
+
+用户反馈 `3EAE3F4E0AC9DE5B` 本次没有panic，电池仍未显示。该版
+vendor_boot SHA256 `af011efef7268bdc54d9c11ec568530c15ec9226f198d5223ced53c51c76f9d1`。
+这项反馈只覆盖此次使用，不能将上一版panic的完整硬件因果标为已证明。
+
+## 同次取证
+
+按既有恢复流程校验设备uke、原厂镜像SHA和分区上限，恢复原厂
+boot/vendor_boot A+B、A槽、TWRP，等待30秒后只读回收userdata尾环。
+本轮没有主机写擦userdata。设备目前留TWRP。
+
+- 原始 `reference/logs/ukelog/ukelog-20261111-015455-scm-waitq-readback.bin`，
+  SHA256 `3cd940bfe70760766b41d76cb1c49540535e1e4e9d45f82b02f8b314f90eaf4b`。
+- 256条新CRC有效记录，1792不变旧槽排除；槽内重复行另行去重。
+- 配对 `reference/logs/boot/boot-20261111-015455-scm-waitq-readback.log`。
+- 脚本、回执、去重结果及结构化证据在
+  `uke-port/fixes/2026-11-11-scm-waitq-readback/`。
+
+SCM初始化成功，报告contexts2、GIC intid962。DTB PAS36、WPSS PAS6和
+ADSP PAS1的INIT/MEM_SETUP/AUTH_AND_RESET终结回复均为0/0；
+ADSP ready370ms、generation1，IPCRTR/adsp_apps/PMIC全部up；
+APM token2状态1。WPSS进入14阶段。此次没有WAITQ2/3日志，不能把普通
+成功返回当作962中断、GET/RESUME/ACK实际执行的证明。
+
+电池独立采样最后为：stage2、state1、rx52、signal53、returned53、
+events0、drain0、responses0，环满丢36包。信号调用完整返回，但软件
+事件源action一次也没进入，故障范围收敛到工作循环事件源投递。
+本轮未复制或解析完整Data快照，也未引用旧UUID的统一日志作新结论。
+
+## 上游及最终代码对照
+
+本轮fetch core main到 `268bfa1c587db5ee616e955cdfd97a281500a6fb`，
+其新增为macOS27.3/GPU/签名等，与本故障无关，保留已部署的core构建
+基线 `cc87305c2030e495e6131ad25b449d734fcb3804`，未将这些变更混入修复。
+参考sheng已fetch并快进到 `81f43ebaaa3317a5917b76093f7bc44c4949bc02`，
+电池及ADSP相关文件与原6bc0ce1e一致，没有现成的该ABI修复。
+
+实际构建XNU源 `ac9718fb1af618d5ce8678d0dc6e8a58f252216f`：
+
+- `IOWorkLoop.cpp:682`用两个OSMemberFunctionCast结果比较来决定
+  active/passive，没有标志时依赖这个启发式。仅active链调用checkForWork。
+- `OSMetaClass.cpp:221`在现代arm64e成员函数指针ABI下，只将虚调用桩
+  重签为函数指针，不再根据self去虚表解析实际override。
+- 同版最终代码 `eventSourcePerformsWork` 两次均传
+  `IOEventSource::checkForWork` 的同一个vfpthunk，地址
+  `0xfffffff00b4d4128`，`_ptmf2ptf`函数不读取self。返回相同指针后，
+  无显式标志的IOInterruptEventSource进入passive链。
+- 最终虚表中IOInterruptEventSource的checkForWork确实不同于
+  IOCommandGate；错误发生在前述桩地址比较，而非缺少override。
+- XNU `IOTimerEventSource.cpp:292`已用`flags |= kActive`显式标记需要
+  工作循环执行的源；`IOEventSource.h`定义active/passive契约。
+
+原始上游可查
+[IOWorkLoop](https://github.com/apple-oss-distributions/xnu/blob/main/iokit/Kernel/IOWorkLoop.cpp)、
+[IOInterruptEventSource](https://github.com/apple-oss-distributions/xnu/blob/main/iokit/Kernel/IOInterruptEventSource.cpp)。
+本次判断以锁定XNU源码及最终链接指令为准，源码SHA/摘录见
+upstream-comparison.json，具体汇编见linked-event-source.asm和ptmf2ptf.asm。
+
+## 修正与验收边界
+
+`UkeBatteryInbox`继承原IOInterruptEventSource，仅在初始化时采用XNU
+已有的kActive标志，再交给原addEventSource。生产计数、interruptOccurred、
+signalWorkAvailable、checkForWork、action和work-loop gate全部沿用上游。
+没有改全局XNU、换线程或加入定时轮询。该调整用于适配当前编译器ABI。
+
+实际XNU分类函数和生产factory的14项ASan/UBSan检查通过：旧无标志源
+被passive分类，action不执行；新源可处理同样的53次通知；command gate
+仍被正确识别为passive，覆盖分配/init失败清理。去掉active标志的旧路径
+负对照按预期失败。原有电池205、通道10、刷新176、回调63、元数据27、
+SCM268、共享RSCv2/v3各38项以及core11项继续通过。
+
+源码及最终指令已经证明该分类缺陷，修正后的实机电池发布、属性读取及
+充电图标仍待新候选验证。四扬声器PCM、四路采集、HAL、DSP自动恢复未完成。
