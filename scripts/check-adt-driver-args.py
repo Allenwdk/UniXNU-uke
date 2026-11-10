@@ -34,7 +34,10 @@ def main():
               'sheng-buttons=0X1', 'sheng-buttons=0x', 'sheng-buttons=1k', 'sheng-buttons=1.5',
               'sheng-buttons=4294967296', 'sheng-buttons=0x100000000',
               'sheng-buttons=1\nsheng-touch=4', 'sheng-buttons=é', 'x' * 4096,
-              'sheng-buttons=0' + ' ' * (4095 - len('sheng-buttons=0'))]
+              'sheng-buttons=0' + ' ' * (4095 - len('sheng-buttons=0')),
+              'vsync=120 vsync-fixed=1 dpu-scanout=2',
+              'sheng-vsync=120 vsync=60', 'vsync=120 sheng-vsync=60',
+              'sheng-debug=0', 'not-vsync=120']
     rows = []
     for case in cases:
         try:
@@ -121,6 +124,14 @@ int main(void) {
   const char *key=uke_adt_driver_keys[i];char text[128];unsigned value=99;
   snprintf(text,sizeof(text),"%s=120",key);prop(text);
   CHECK(PE_parse_boot_argn(key,&value,4)&&value==120);
+  const char *canonical=!strncmp(key,"sheng-",6)?key+6:key;
+  CHECK(PE_parse_boot_argn(canonical,&value,4)&&value==120);
+  snprintf(cli,sizeof(cli),"%s=0",canonical);
+  CHECK(PE_parse_boot_argn(key,&value,4)&&value==0);
+  cli[0]=0;
+  snprintf(text,sizeof(text),"%s=120",canonical);prop(text);
+  CHECK(PE_parse_boot_argn(key,&value,4)&&value==120);
+  CHECK(PE_parse_boot_argn(canonical,&value,4)&&value==120);
   char string[16];CHECK(PE_parse_boot_arg_str(key,string,sizeof(string))&&!strcmp(string,"120"));
   snprintf(cli,sizeof(cli),"%s=0",key);CHECK(PE_parse_boot_argn(key,&value,4)&&value==0);cli[0]=0;
   CHECK(PE_parse_boot_argn(key,NULL,0));
@@ -152,7 +163,7 @@ int main(void) {
     for token in full.split():
         key, value = token.split('=')
         expected = int(value, 16 if value.startswith('0x') else 10)
-        full_checks += '{unsigned v=99;CHECK(PE_parse_boot_argn(' + json.dumps(key) + ',&v,4)&&v==' + str(expected) + 'u);}\n'
+        full_checks += '{unsigned v=99;CHECK(PE_parse_boot_argn(' + json.dumps(key) + ',&v,4)&&v==' + str(expected) + 'u);CHECK(PE_parse_boot_argn(' + json.dumps(key.removeprefix('sheng-')) + ',&v,4)&&v==' + str(expected) + 'u);}'+'\n'
     full_checks += 'ready=0;property=NULL;strcpy(cli,' + json.dumps(full) + ');\n'
     for token in full.split():
         key, value = token.split('=')
