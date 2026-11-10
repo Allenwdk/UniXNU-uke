@@ -147,7 +147,9 @@ int sheng_battmgr_receive(ShengBattmgr *b, const uint8_t *data, uint32_t length)
     const int bad_value = (!signed_field && value > 0x7fffffffu) ||
         (b->cursor == BmCapacity && value > 10000) ||
         (b->cursor == BmPresent && value > 1) ||
-        (b->cursor == BmStatus && value > 4);
+        (b->cursor == BmStatus && value > 4) ||
+        (b->cursor == BmTemperature && ((int32_t)value < -4000 || (int32_t)value > 9000)) ||
+        (b->cursor == BmCurrent && value == 0x80000000u);
     if (result || bad_value) {
         b->errors++;
         b->valid &= ~(1u << b->cursor);
@@ -187,7 +189,7 @@ void sheng_battmgr_snapshot(const ShengBattmgr *b, ShengBatterySnapshot *s)
     s->percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
     s->charge_known = full > 0 || HAS(BmCapacity);
     s->charging = s->external && status == 1;
-    s->fully_charged = s->external && (status == 4 || s->percent == 100);
+    s->fully_charged = s->external && status == 4;
     s->critical = s->present && !s->external && s->percent <= 2;
     s->voltage_mv = HAS(BmVoltage) ? V(BmVoltage) / 1000 : 0;
     s->current_ma = HAS(BmCurrent) ? (int)(-(int64_t)V(BmCurrent) / 1000) : 0;

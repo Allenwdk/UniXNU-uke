@@ -95,6 +95,28 @@ int main(void)
     CHECK(!(b.valid & (1u << BmStatus)) && b.errors == 1);
 
     sheng_battmgr_init(&b);
+    b.cursor = BmTemperature;
+    CHECK(sheng_battmgr_next(&b, request));
+    response(reply, request, 0x7fffffff);
+    CHECK(sheng_battmgr_receive(&b, reply, 24) == BmAnswer);
+    CHECK(!(b.valid & (1u << BmTemperature)) && b.errors == 1);
+    sheng_battmgr_init(&b);
+    b.cursor = BmCurrent;
+    CHECK(sheng_battmgr_next(&b, request));
+    response(reply, request, 0x80000000u);
+    CHECK(sheng_battmgr_receive(&b, reply, 24) == BmAnswer);
+    CHECK(!(b.valid & (1u << BmCurrent)) && b.errors == 1);
+    b.value[BmUsbOnline] = 1;
+    b.value[BmStatus] = 1;
+    b.value[BmCapacity] = 10000;
+    b.valid = (1u << BmUsbOnline) | (1u << BmStatus) | (1u << BmCapacity);
+    sheng_battmgr_snapshot(&b, &snapshot);
+    CHECK(snapshot.charging && !snapshot.fully_charged);
+    b.value[BmStatus] = 4;
+    sheng_battmgr_snapshot(&b, &snapshot);
+    CHECK(!snapshot.charging && snapshot.fully_charged);
+
+    sheng_battmgr_init(&b);
     b.notification_pending = 1;
     sheng_battmgr_timeout(&b);
     CHECK(b.poisoned && b.last_timeout == -2 && !b.valid);
