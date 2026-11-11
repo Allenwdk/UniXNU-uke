@@ -279,6 +279,7 @@ kernel_args = [
   "sheng-log=1",
   # Periodic full CrashReporter scans are optional; normal frame tracing/export remains.
   "native-ufs-root=1",
+  "memory-outside=0", # Opt in explicitly after verifying the Uke firmware memory map.
   # Existing upstream detail screen for the next root-preparation failure.
   # Board policy carried over from the 17.7.11 line.
   "sheng-lite=1",

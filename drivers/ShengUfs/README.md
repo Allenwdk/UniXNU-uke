@@ -26,3 +26,9 @@ tables travel in `kernel.macho.vroot`; only the owner public anchor is linked
 into the kernel. This implementation has not been built or run since the
 request to stop testing. Class size equality alone does not establish virtual
 interface compatibility. The previous iOS 17 qualification does not apply.
+
+## Verified Root table cache
+
+At boot the driver authenticates the full tables. It keeps per-page hashes and
+a wired cache for authenticated table pages read on demand. Set
+`native-vroot-cache=0` to keep the whole tables wired instead.

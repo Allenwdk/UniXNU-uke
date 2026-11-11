@@ -9,6 +9,7 @@
 #include <libkern/c++/OSData.h>
 #include <string.h>
 
+extern "C" uint32_t ml_outside_memory_pages __attribute__((weak_import));
 extern "C" bool uke_outside_dram_contains(uint64_t physical, uint64_t bytes);
 extern "C" IOReturn native_adreno_pool_add(uint64_t physical, uint64_t bytes) __attribute__((weak));   // Adreno740 NativeAdrenoPool.cpp
 // For the boot log: [0] runs in the table, [1] runs the driver took, [2] KiB the driver took, [3] the last refusal.
@@ -16,6 +17,8 @@ extern "C" {volatile uint32_t native_gpu_pool_board[4];}
 
 extern "C" void sheng_gpu_pool_probe(void)
 {
+    // VM-adopted pages and driver-owned pages must never overlap.
+    if (&ml_outside_memory_pages && ml_outside_memory_pages) return;
     if (!native_adreno_pool_add) return;
     IORegistryEntry *chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
     if (!chosen) return;

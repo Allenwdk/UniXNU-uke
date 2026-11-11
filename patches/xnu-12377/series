@@ -130,3 +130,9 @@ upstream/zzzzzzzzzzz-sheng-edge-matrix.patch
 
 # Board callsite for the shared loader-tail release routine.
 uke-addon-memory-release.patch
+
+# Opt-in outside-window VM memory and contiguous allocation diagnostics.
+upstream/window-memory-excluded-ranges.patch
+upstream/platform-error-name-address.patch
+upstream/window-outside-memory-adoption.patch
+upstream/contig-search-report.patch

@@ -41,6 +41,9 @@ extern volatile uint64_t native_adreno_maint_walk[8];
 extern volatile uint32_t native_adreno_sync_audit[6], native_adreno_sync_skips[2];
 extern volatile uint32_t native_adreno_bo_owners[24][4], native_adreno_view_owners[24][4];
 extern volatile uint32_t native_adreno_job_time[8], native_adreno_stall_kick[26], native_adreno_pool_views[5];
+extern volatile uint32_t native_adreno_kernel_alloc_fail[6], native_adreno_switch_timeout[2][30], native_adreno_switch_timeouts;
+extern uint32_t ml_outside_memory_pages, ml_outside_memory_refused;
+extern char *PE_boot_args(void);
 extern volatile uint64_t native_adreno_long_jobs[8][8], native_adreno_slow_jobs[16][8];
 extern volatile uint32_t native_gpu_dcvs[15], native_gpu_dcvs_level_share[16];
 extern uint32_t native_gpu_perf_vote[2];
@@ -460,6 +463,15 @@ uke_last_log_writer(void *arg, wait_result_t result)
 		if (tick == 240) {
 			IOLog("UkeLastLog: vnodes desired=%d sane=%llu\n",
 			    desiredvnodes, (unsigned long long)sane_size);
+			const char *args = PE_boot_args();
+			const size_t length = args ? strnlen(args, 2048) : 0;
+			uint32_t autoreset = 0;
+			const int found = PE_parse_boot_argn("autoreset", &autoreset, sizeof(autoreset));
+			const size_t tail = length > 80 ? 80 : length;
+			IOLog("UkeLastLog: cmdline len=%lu autoreset=%d/%u tail=%.*s\n",
+			    (unsigned long)length, found, autoreset, (int)tail, args ? args + length - tail : "");
+			IOLog("UkeLastLog: outside memory adopted=%u refused=%u pages\n",
+			    ml_outside_memory_pages, ml_outside_memory_refused);
 		}
 #if !defined(UKE_SOURCE_STORAGE_LOG)
 		if (tick == 4) {
@@ -547,6 +559,19 @@ uke_last_log_writer(void *arg, wait_result_t result)
                     k[25], k[0], k[1], k[20], k[21], k[22], k[23] & 0xffff, k[23] >> 16 & 0xff,
                     (int)(k[23] >> 24) - 1, k[24] >> 10,
                     k[3], k[2], k[6], k[7], k[9], k[8], k[12], k[13], k[15], k[14], k[18], k[19]);
+            }
+            const volatile uint32_t *alloc = native_adreno_kernel_alloc_fail;
+            if (alloc[5]) {
+                IOLog("UKE GPU first allocation failure: stage=%u status=%x bytes=%u bits=%u contiguous=%u total=%u\n",
+                    alloc[0], alloc[1], alloc[2], alloc[3], alloc[4], alloc[5]);
+            }
+            const unsigned timeouts = native_adreno_switch_timeouts;
+            for (unsigned i = 0; i < 2 && i < timeouts; ++i) {
+                const volatile uint32_t *words = native_adreno_switch_timeout[i];
+                for (unsigned j = 0; j < 30; j += 6) {
+                    IOLog("UKE GPU switch timeout %u/%u words %u: %08x %08x %08x %08x %08x %08x\n",
+                        i + 1, timeouts, j, words[j], words[j + 1], words[j + 2], words[j + 3], words[j + 4], words[j + 5]);
+                }
             }
             IOLog("UKE GPU maintenance: walk=%llu/%llu/%llu/%llu/%llu skip=%u/%u audit=%u dirty=%u submit=%llu totalUs=%llu\n",
                 native_adreno_maint_walk[0], native_adreno_maint_walk[1], native_adreno_maint_walk[2],

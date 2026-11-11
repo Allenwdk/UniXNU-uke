@@ -21,7 +21,7 @@ name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
 # GPU preflight lifecycle and scoped BR31-counter capture.
-commit = "936c13827f4e4d256f2d396b2d7cd65aa5d19107"
+commit = "df763aa22b1ab19ec59d5affd1ac0705be95df8c"
 
 [[source]]
 name = "GopFramebuffer"
@@ -35,14 +35,14 @@ name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/Allenwdk/AdrenoMetal.git"
 # Upstream icon Metal records with Uke pass-timing and rendering repairs.
-commit = "f984b0851240e9a65bdc98a467c1037918f92c67"
+commit = "001383d6f9ad4e33e973f542ee9c6d31223e4d9f"
 
 [[source]]
 name = "ShengUfs"
 kind = "driver"
 git = "https://github.com/UniXNU/ShengUfs.git"
-# Board-owned merge of upstream 34ff541d; Uke SID, DMA and MSI wiring stays in this source.
-commit = "34ff541decbd018906a914aa53d0e732b2c1c3da"
+# Board-owned merge of upstream 57f031c; Uke SID, DMA and MSI wiring stays in this source.
+commit = "57f031c99d7f69ffa611626bebaeab0731e93254"
 local = "drivers/ShengUfs"
 
 [[source]]

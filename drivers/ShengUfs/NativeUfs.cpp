@@ -1519,6 +1519,7 @@ static uint32_t be32w (const uint8_t *at)
 
 #include "RootLayout.h"
 #include "RootWindowRead.h"
+#include "VerifiedTableCache.h"
 #include "RootPublication.h"
 
 }
@@ -1968,11 +1969,22 @@ class NativeUfsBlock : public IOBlockStorageDevice {
   struct vr_view verified = {};
   vm_offset_t verifiedStorage = 0;
   vm_size_t verifiedStorageBytes = 0;
+  bool verifiedReady = false;          // the signed header (and its whole table) authenticated
+  // Cached table mode (verified.hashes is null): page hashes and the cache index of a header-only policy.
+  VrootTable table = {};
+  vm_offset_t tableHashStorage = 0, tableIndexStorage = 0;
+  vm_size_t tableHashBytes = 0, tableIndexBytes = 0;
+  // SHA-384 of header, signature and table for the root authorization query, taken on its first use from a fresh read of the
+  // table that is authenticated again against the signed header.
+  uint8_t envelopeDigest[48] = {};
+  volatile bool envelopeDigestReady = false;
+  bool cachedEnvelopeDigest (uint8_t out[48]);
   bool configureVerification ();
+  bool configureCachedTable (const uint8_t *manifest, uint64_t hashBytes);
 #endif
 public:
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
-  bool authenticatesVolume (const char *uuid, uint8_t *manifestDigest = nullptr) const;
+  bool authenticatesVolume (const char *uuid, uint8_t *manifestDigest = nullptr);
   bool signedVolumeUuid (char out[37]) const;
 #endif
   const char *windowLabel () const { return label; }
@@ -2080,17 +2092,25 @@ static uint64_t gRootObjectBase;
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
 volatile uint64_t native_ufs_verified_blocks = 0;
 
-// Read the hash table of a header-only policy from the root image object "<window>.vroot" into `table`.
-// The bytes are untrusted here; vr_open checks them against the digest in the signed header.
-static bool readPolicyTable (const char *window, uint8_t *table, uint64_t tableBytes)
+// The LUN 0 block of the root image object "<window>.vroot", the hash table of a header-only policy, whose size must be tableBytes.
+static bool policyTableLba (const char *window, uint64_t tableBytes, uint64_t *lba)
 {
   char name[32];
   if (snprintf (name, sizeof (name), "%s.vroot", window) >= static_cast<int> (sizeof (name))) return false;
   const RootWindow *object = nullptr;
   for (unsigned i = 0; i < gRootObjects; ++i)
     if (!strcmp (gRootObject[i].name, name)) object = &gRootObject[i];
-  if (!object || object->size != tableBytes) return false;
-  uint64_t lba = (gRootObjectBase + object->offset) / 4096, done = 0;
+  if (!object || object->size != tableBytes || ((gRootObjectBase + object->offset) & 4095)) return false;
+  *lba = (gRootObjectBase + object->offset) / 4096;
+  return true;
+}
+
+// Read the hash table of a header-only policy into `table`.
+// The bytes are untrusted here; vr_open checks them against the digest in the signed header.
+static bool readPolicyTable (const char *window, uint8_t *table, uint64_t tableBytes)
+{
+  uint64_t lba = 0, done = 0;
+  if (!policyTableLba (window, tableBytes, &lba)) return false;
   while (done < tableBytes) {
     uint64_t left = tableBytes - done;
     uint32_t blocks = static_cast<uint32_t> (left >= kDataMax ? kDataMax / 4096 : (left + 4095) / 4096);
@@ -2106,6 +2126,159 @@ static bool readPolicyTable (const char *window, uint8_t *table, uint64_t tableB
 volatile uint64_t native_ufs_verify_ticks = 0, native_ufs_read_ticks = 0;
 static inline uint64_t timerTicks (void) {uint64_t v; __asm__ volatile ("isb\n\tmrs %0, cntpct_el0" : "=r" (v)); return v;}
 volatile uint32_t native_ufs_integrity_failures = 0;
+
+// Table pages of header-only policies are cached (VerifiedTableCache.h) unless native-vroot-cache=0, which keeps every
+// window's whole table wired. native-vroot-cache=N sizes the cache shared by all windows in MiB (default 8, 2048 table pages,
+// which cover 1 GiB of image). Each window's whole table is still read and authenticated at bring-up.
+static VrootTableCache gVrootCache;
+static IOLock *gVrootLock = nullptr;
+static uint32_t gVrootCacheMiB = 8;
+static bool gVrootCacheParsed = false;
+volatile uint64_t native_ufs_vroot_wired_bytes = 0;   // wired bytes of policies, tables, page hashes, index and cache
+struct VrootKernelOps {
+  void lock () { IOLockLock (gVrootLock); }
+  void unlock () { IOLockUnlock (gVrootLock); }
+  void sleep (void *event) { IOLockSleep (gVrootLock, event, THREAD_UNINT); }
+  void wakeup (void *event) { IOLockWakeup (gVrootLock, event, false); }
+  // Straight to the transport: the table object is not a window, so this read never needs a verified read or an allocation.
+  bool readPage (const VrootTable &table, uint64_t page, void *dst) {
+    return hostRead4k (0, table.firstLba + page, 1, dst) == kIOReturnSuccess;
+  }
+  bool sha256 (const void *data, size_t bytes, uint8_t out[32]) { return vr_xnu_crypto.sha256 (data, bytes, out) != 0; }
+};
+
+static bool vrootCacheWanted ()
+{
+  if (!gVrootCacheParsed) {
+    uint32_t mib = 0;
+    if (PE_parse_boot_argn ("native-vroot-cache", &mib, sizeof (mib))) gVrootCacheMiB = mib;
+    gVrootCacheParsed = true;
+  }
+  return gVrootCacheMiB != 0;
+}
+
+// Allocated once, before the first window is published, and kept: a fill never allocates.
+static bool vrootCacheReady ()
+{
+  if (gVrootCache.count) return true;
+  if (gVrootCacheMiB > UINT32_MAX / 256) return false;
+  const uint32_t count = gVrootCacheMiB * 256;
+  const vm_size_t pageBytes = static_cast<vm_size_t> (count) * 4096;
+  const vm_size_t entryBytes = round_page (static_cast<vm_size_t> (count) * sizeof (VrootCacheEntry));
+  vm_offset_t pages = 0, entries = 0;
+  if (!gVrootLock && !(gVrootLock = IOLockAlloc ())) return false;
+  if (kmem_alloc (kernel_map, &pages, pageBytes, static_cast<kma_flags_t> (KMA_KOBJECT | KMA_DATA),
+                  VM_KERN_MEMORY_SECURITY) != KERN_SUCCESS) return false;
+  if (kmem_alloc (kernel_map, &entries, entryBytes, static_cast<kma_flags_t> (KMA_KOBJECT | KMA_ZERO),
+                  VM_KERN_MEMORY_SECURITY) != KERN_SUCCESS) {
+    kmem_free (kernel_map, pages, pageBytes);
+    return false;
+  }
+  gVrootCache.pages = reinterpret_cast<uint8_t *> (pages);
+  gVrootCache.entries = reinterpret_cast<VrootCacheEntry *> (entries);
+  gVrootCache.count = count;
+  __atomic_fetch_add (&native_ufs_vroot_wired_bytes, pageBytes + entryBytes, __ATOMIC_RELAXED);
+  return true;
+}
+
+// Read the table object at `lba` in pieces through `buffer` (kDataMax bytes) and hash it as a whole into `whole` (the digest the
+// signed header carries, as vr_open checks it). Optionally hash each 4096-byte page into `pageHashes` and the policy envelope
+// (signed header `header`, then the table) into `envelope`. Every digest is taken from the same bytes of one read.
+static bool hashPolicyTable (uint64_t lba, uint64_t hashBytes, uint8_t *buffer, uint8_t *pageHashes,
+                             const uint8_t *header, uint8_t whole[32], uint8_t *envelope = nullptr)
+{
+  SHA256_CTX table;
+  SHA384_CTX outer;
+  SHA256_Init (&table);
+  if (envelope) {
+    SHA384_Init (&outer);
+    SHA384_Update (&outer, header, VR_HEADER_BYTES + VR_SIGNATURE_BYTES);
+  }
+  for (uint64_t done = 0, page = 0; done < hashBytes;) {
+    const uint64_t left = hashBytes - done;
+    const uint32_t blocks = static_cast<uint32_t> (left >= kDataMax ? kDataMax / 4096 : (left + 4095) / 4096);
+    if (hostRead4k (0, lba, blocks, buffer) != kIOReturnSuccess) return false;
+    const uint64_t take = left < blocks * 4096ULL ? left : blocks * 4096ULL;
+    SHA256_Update (&table, buffer, take);
+    if (envelope) SHA384_Update (&outer, buffer, take);
+    for (uint64_t at = 0; pageHashes && at < take; at += 4096, ++page) {
+      const uint64_t length = take - at < 4096 ? take - at : 4096;
+      if (!vr_xnu_crypto.sha256 (buffer + at, static_cast<size_t> (length), pageHashes + page * 32)) return false;
+    }
+    done += take;
+    lba += blocks;
+  }
+  SHA256_Final (whole, &table);
+  if (envelope) SHA384_Final (envelope, &outer);
+  return true;
+}
+
+// A header-only policy without its whole table in memory: the signed header is authenticated and the table object is read
+// once, hashed as a whole and page by page; a page hash is kept only if the whole table matches the signed digest.
+bool NativeUfsBlock::configureCachedTable (const uint8_t *manifest, uint64_t hashBytes)
+{
+  constexpr size_t kSigned = VR_HEADER_BYTES + VR_SIGNATURE_BYTES;
+  static_assert (kSigned + VR_KEY_BYTES <= 4096, "header, signature and key share one page");
+  gRootDiagnostic.stage = "policy allocation";
+  verifiedStorageBytes = round_page (static_cast<vm_size_t> (4096));
+  if (kmem_alloc (kernel_map, &verifiedStorage, verifiedStorageBytes,
+                  static_cast<kma_flags_t> (KMA_KOBJECT | KMA_DATA | KMA_ZERO), VM_KERN_MEMORY_SECURITY) != KERN_SUCCESS) {
+    verifiedStorage = 0;
+    return false;
+  }
+  __atomic_fetch_add (&native_ufs_vroot_wired_bytes, verifiedStorageBytes, __ATOMIC_RELAXED);
+  uint8_t *header = reinterpret_cast<uint8_t *> (verifiedStorage);
+  uint8_t *key = header + 4096 - VR_KEY_BYTES;
+  memcpy (header, manifest, kSigned);
+  memcpy (key, verified_root_key, VR_KEY_BYTES);
+  gRootDiagnostic.stage = "policy read-only protection";
+  if (mach_vm_protect (kernel_map, verifiedStorage, verifiedStorageBytes, TRUE, VM_PROT_READ) != KERN_SUCCESS) return false;
+  gRootDiagnostic.stage = "owner signature";
+  int status = vr_open_header (header, kSigned, key, 1, &vr_xnu_crypto, &verified);
+  gRootDiagnostic.verify = static_cast<uint32_t> (status);
+  if (status != VR_OK || verified.image_bytes != bytes || verified.block_count * 32 != hashBytes) return false;
+
+  gRootDiagnostic.stage = "policy table object";
+  uint64_t lba = 0;
+  if (!policyTableLba (label, hashBytes, &lba)) return false;
+  const uint64_t pages = (hashBytes + 4095) / 4096;
+  tableHashBytes = round_page (static_cast<vm_size_t> (pages * 32));
+  tableIndexBytes = round_page (static_cast<vm_size_t> (pages * sizeof (uint32_t)));
+  gRootDiagnostic.stage = "policy page hash allocation";
+  if (kmem_alloc (kernel_map, &tableHashStorage, tableHashBytes, static_cast<kma_flags_t> (KMA_KOBJECT | KMA_DATA),
+                  VM_KERN_MEMORY_SECURITY) != KERN_SUCCESS) {
+    tableHashStorage = 0;
+    return false;
+  }
+  __atomic_fetch_add (&native_ufs_vroot_wired_bytes, tableHashBytes, __ATOMIC_RELAXED);
+  if (kmem_alloc (kernel_map, &tableIndexStorage, tableIndexBytes, static_cast<kma_flags_t> (KMA_KOBJECT | KMA_DATA | KMA_ZERO),
+                  VM_KERN_MEMORY_SECURITY) != KERN_SUCCESS) {
+    tableIndexStorage = 0;
+    return false;
+  }
+  __atomic_fetch_add (&native_ufs_vroot_wired_bytes, tableIndexBytes, __ATOMIC_RELAXED);
+
+  gRootDiagnostic.stage = "policy table object read";
+  uint8_t *pageHashes = reinterpret_cast<uint8_t *> (tableHashStorage);
+  uint8_t digest[32];
+  if (!hashPolicyTable (lba, hashBytes, gScratch, pageHashes, nullptr, digest)) return false;
+  gRootDiagnostic.stage = "owner signature and hash table";
+  if (!vrootSame (digest, header + 88, 32)) {
+    gRootDiagnostic.verify = VR_HASH_TABLE;
+    return false;
+  }
+  gRootDiagnostic.stage = "policy read-only protection";
+  if (mach_vm_protect (kernel_map, tableHashStorage, tableHashBytes, TRUE, VM_PROT_READ) != KERN_SUCCESS) return false;
+  gRootDiagnostic.stage = "policy table cache allocation";
+  if (!vrootCacheReady ()) return false;
+  table.pageHashes = pageHashes;
+  table.where = reinterpret_cast<uint32_t *> (tableIndexStorage);
+  table.tableBytes = hashBytes;
+  table.pages = pages;
+  table.firstLba = lba;
+  verifiedReady = true;
+  return true;
+}
 
 bool NativeUfsBlock::configureVerification ()
 {
@@ -2155,6 +2328,7 @@ bool NativeUfsBlock::configureVerification ()
       return false;
     }
     hashBytes = count * 32;
+    if (vrootCacheWanted ()) return configureCachedTable (manifest, hashBytes);
     manifestBytes += hashBytes;
   }
   gRootDiagnostic.stage = "policy storage";
@@ -2167,8 +2341,10 @@ bool NativeUfsBlock::configureVerification ()
   gRootDiagnostic.stage = "policy allocation";
   if (kmem_alloc (kernel_map, &verifiedStorage, verifiedStorageBytes,
                   static_cast<kma_flags_t> (KMA_KOBJECT | KMA_DATA), VM_KERN_MEMORY_SECURITY) != KERN_SUCCESS) {
+    verifiedStorage = 0;
     return false;
   }
+  __atomic_fetch_add (&native_ufs_vroot_wired_bytes, verifiedStorageBytes, __ATOMIC_RELAXED);
   if (headerOnly) {
     memcpy (reinterpret_cast<void *> (verifiedStorage), manifest, VR_HEADER_BYTES + VR_SIGNATURE_BYTES);
     gRootDiagnostic.stage = "policy table object read";
@@ -2190,12 +2366,32 @@ bool NativeUfsBlock::configureVerification ()
   int status = vr_open (reinterpret_cast<const uint8_t *> (verifiedStorage), manifestBytes, key, 1,
                         &vr_xnu_crypto, &verified);
   gRootDiagnostic.verify = static_cast<uint32_t> (status);
-  return status == VR_OK && verified.image_bytes == bytes;
+  verifiedReady = status == VR_OK && verified.hashes && verified.image_bytes == bytes;
+  return verifiedReady;
 }
 
-bool NativeUfsBlock::authenticatesVolume (const char *uuid, uint8_t *manifestDigest) const
+bool NativeUfsBlock::cachedEnvelopeDigest (uint8_t out[48])
 {
-  if (!uuid || !online || !verifiedStorage || !verified.hashes) {
+  if (!envelopeDigestReady) {
+    // Thread context (the root mount); the buffer is the query's own, not the bring-up scratch.
+    uint8_t *buffer = static_cast<uint8_t *> (IOMallocData (kDataMax));
+    if (!buffer) return false;
+    uint8_t whole[32], envelope[48];
+    const uint8_t *header = reinterpret_cast<const uint8_t *> (verifiedStorage);
+    const bool ok = hashPolicyTable (table.firstLba, table.tableBytes, buffer, nullptr, header, whole, envelope) &&
+                    vrootSame (whole, header + 88, 32);
+    IOFreeData (buffer, kDataMax);
+    if (!ok) return false;
+    memcpy (envelopeDigest, envelope, sizeof (envelope));
+    __atomic_store_n (&envelopeDigestReady, true, __ATOMIC_RELEASE);
+  }
+  memcpy (out, envelopeDigest, sizeof (envelopeDigest));
+  return true;
+}
+
+bool NativeUfsBlock::authenticatesVolume (const char *uuid, uint8_t *manifestDigest)
+{
+  if (!uuid || !online || !verifiedReady) {
     return false;
   }
   static const char hex[] = "0123456789ABCDEF";
@@ -2212,7 +2408,9 @@ bool NativeUfsBlock::authenticatesVolume (const char *uuid, uint8_t *manifestDig
   if (strcmp (uuid, expected)) {
     return false;
   }
-  if (manifestDigest) {
+  if (manifestDigest && !verified.hashes) {
+    if (!cachedEnvelopeDigest (manifestDigest)) return false;
+  } else if (manifestDigest) {
     // Hash only the authenticated envelope, excluding allocation padding and the key.
     const uint64_t envelope = VR_HEADER_BYTES + VR_SIGNATURE_BYTES + verified.block_count * 32;
     SHA384_CTX context;
@@ -2225,7 +2423,7 @@ bool NativeUfsBlock::authenticatesVolume (const char *uuid, uint8_t *manifestDig
 
 bool NativeUfsBlock::signedVolumeUuid (char out[37]) const
 {
-  if (!verifiedStorage || !verified.hashes) {
+  if (!verifiedReady) {
     return false;
   }
   static const char hex[] = "0123456789ABCDEF";
@@ -2289,6 +2487,7 @@ IOReturn NativeUfsBlock::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 bl
     IOMemoryDescriptor *buffer;
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
     const vr_view *view;
+    const VrootTable *table;   // cached table mode when view->hashes is null
 #endif
     void lock () {}     // the request's own bounce buffer holds its snapshot
     void unlock () {}
@@ -2301,7 +2500,13 @@ IOReturn NativeUfsBlock::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 bl
     IOReturn verify (uint64_t index, const void *data, size_t length) {
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
       uint64_t t0 = timerTicks ();
-      int status = vr_verify_block (view, index, data, length, &vr_xnu_crypto);
+      int status;
+      if (view->hashes) {
+        status = vr_verify_block (view, index, data, length, &vr_xnu_crypto);
+      } else {
+        VrootKernelOps ops;
+        status = vrootVerifyBlock (gVrootCache, ops, *table, *view, index, data, length, &vr_xnu_crypto);
+      }
       __atomic_fetch_add (&native_ufs_verify_ticks, timerTicks () - t0, __ATOMIC_RELAXED);
       if (status != VR_OK) {
         gRootDiagnostic.stage = "read block integrity";
@@ -2327,7 +2532,7 @@ IOReturn NativeUfsBlock::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 bl
     }
   } operations = { buffer
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
-    , &verified
+    , &verified, &table
 #endif
   };
   const uint64_t entered = mach_absolute_time ();
@@ -2366,6 +2571,10 @@ IOReturn NativeUfsBlock::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 bl
 //   win n/MiB/ms      root window requests, their bytes and their time (bounce wait, reads, block verification, copy)
 //   wait n/ms         root window requests that waited for a bounce buffer, and the time they waited
 //   vb                integrity blocks verified
+//   vt h/m/r/e/w/f    verified-root table cache: hits, misses, table page reads, evictions, waits for a page or entry being
+//                     filled, refused table pages (read error or hash mismatch); all 0 with native-vroot-cache=0
+//   vtc n/KiB         table cache pages (0 when every whole table is wired) and wired verified-root bytes (policies, tables or
+//                     page hashes and index, cache) in KiB
 extern "C" void native_ufs_stats_text (char *out, size_t size)
 {
   if (!out || !size) return;
@@ -2373,8 +2582,13 @@ extern "C" void native_ufs_stats_text (char *out, size_t size)
   const auto count = [] (const volatile uint64_t &value) { return static_cast<unsigned long long> (__atomic_load_n (&value, __ATOMIC_RELAXED)); };
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
   const unsigned long long verified = count (native_ufs_verified_blocks);
+  const VrootCacheStats &vt = gVrootCache.stats;
+  const unsigned long long vtHits = count (vt.hits), vtMisses = count (vt.misses), vtReads = count (vt.reads),
+                           vtEvictions = count (vt.evictions), vtWaits = count (vt.waits), vtFailures = count (vt.failures),
+                           vtPages = gVrootCache.count, vtWiredKiB = count (native_ufs_vroot_wired_bytes) >> 10;
 #else
-  const unsigned long long verified = 0;
+  const unsigned long long verified = 0, vtHits = 0, vtMisses = 0, vtReads = 0, vtEvictions = 0, vtWaits = 0, vtFailures = 0,
+                           vtPages = 0, vtWiredKiB = 0;
 #endif
   const uint32_t kind = __atomic_load_n (&gStoreMaxKind, __ATOMIC_RELAXED);
   uint64_t spins = 0, spinTicks = 0, oldest = 0;
@@ -2387,7 +2601,7 @@ extern "C" void native_ufs_stats_text (char *out, size_t size)
   }
   snprintf (out, size, "UFS direct=%llu staged=%llu busy=%llu long=%c/%u pauses=%llu/%lluus spins=%llu/%lluus yields=%llu "
             "done=%llu/%llu/%llu/%llu/%llu old=%llu/%x/%u takers=%u poison=%u/%x/%x irqs=%llu sleeps=%llu wakes=%llu/%lluus "
-            "max=%lluus timeouts=%llu win=%llu/%lluM/%llums wait=%llu/%llums vb=%llu",
+            "max=%lluus timeouts=%llu win=%llu/%lluM/%llums wait=%llu/%llums vb=%llu vt=%llu/%llu/%llu/%llu/%llu/%llu vtc=%llu/%llu",
             count (gDirectCommands), count (gStagedCommands), count (gBusyRetries), kind ? static_cast<char> (kind) : '-',
             __atomic_load_n (&gStoreMaxBlocks, __ATOMIC_RELAXED), count (gWaitPauses), us (count (gWaitPauseTicks)),
             static_cast<unsigned long long> (spins), us (spinTicks), count (gWaitYields), count (gWaitRange[0]), count (gWaitRange[1]),
@@ -2396,16 +2610,34 @@ extern "C" void native_ufs_stats_text (char *out, size_t size)
             gHost.poisoned ? gRootDiagnostic.result : 0U, gHost.poisoned ? gRootDiagnostic.opcode : 0U,
             count (native_ufs_irqs), count (native_ufs_irq_sleeps), count (gIrqWakes), us (count (gIrqWakeTicks)),
             us (count (gIrqWakeMaxTicks)), count (gIrqTimeouts), count (gWindowRequests), count (gWindowBytes) >> 20,
-            us (count (gWindowTicks)) / 1000, count (gBounceWaits), us (count (gBounceWaitTicks)) / 1000, verified);
+            us (count (gWindowTicks)) / 1000, count (gBounceWaits), us (count (gBounceWaitTicks)) / 1000, verified,
+            vtHits, vtMisses, vtReads, vtEvictions, vtWaits, vtFailures, vtPages, vtWiredKiB);
 }
 
 void NativeUfsBlock::free ()
 {
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
+  if (table.where) {
+    VrootKernelOps ops;
+    vrootTableDrop (gVrootCache, ops, table);
+    table = {};
+  }
+  if (tableHashStorage) {
+    kmem_free (kernel_map, tableHashStorage, tableHashBytes);
+    __atomic_fetch_sub (&native_ufs_vroot_wired_bytes, tableHashBytes, __ATOMIC_RELAXED);
+    tableHashStorage = 0;
+  }
+  if (tableIndexStorage) {
+    kmem_free (kernel_map, tableIndexStorage, tableIndexBytes);
+    __atomic_fetch_sub (&native_ufs_vroot_wired_bytes, tableIndexBytes, __ATOMIC_RELAXED);
+    tableIndexStorage = 0;
+  }
   if (verifiedStorage) {
     kmem_free (kernel_map, verifiedStorage, verifiedStorageBytes);
+    __atomic_fetch_sub (&native_ufs_vroot_wired_bytes, verifiedStorageBytes, __ATOMIC_RELAXED);
     verifiedStorage = 0;
   }
+  verifiedReady = false;
 #endif
   for (unsigned k = 0; k < kBounces; ++k) {
     if (bounces[k]) IOFree (bounces[k], kDataMax);
