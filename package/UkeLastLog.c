@@ -43,6 +43,7 @@ extern volatile uint32_t native_adreno_sync_audit[6], native_adreno_sync_skips[2
 extern volatile uint32_t native_adreno_bo_owners[24][4], native_adreno_view_owners[24][4];
 extern volatile uint32_t native_adreno_job_time[8], native_adreno_stall_kick[26], native_adreno_pool_views[5];
 extern volatile uint32_t native_adreno_kernel_alloc_fail[6], native_adreno_switch_timeout[2][30], native_adreno_switch_timeouts;
+extern volatile uint32_t native_adreno_mount_fail[4], native_adreno_table_switches[8], native_adreno_table_pages[4];
 extern uint32_t ml_outside_memory_pages, ml_outside_memory_refused;
 extern volatile uint32_t native_touch_irq_stats[4], native_touch_cost[9], native_touch_doze[4];
 extern uint32_t native_gpu_row_count;
@@ -543,6 +544,13 @@ uke_last_log_writer(void *arg, wait_result_t result)
             IOLog("UKE GPU pool views: hook=%u tracked=%u untracked=%u closes=%u returned=%u retiredKiB=%u\n",
                 native_adreno_pool_views[4], native_adreno_pool_views[0], native_adreno_pool_views[1],
                 native_adreno_pool_views[2], native_adreno_pool_views[3], native_adreno_pool_state[9]);
+            IOLog("UKE GPU mount fail: stage=%u status=%x qbase=%u count=%u\n",
+                native_adreno_mount_fail[0], native_adreno_mount_fail[1], native_adreno_mount_fail[2], native_adreno_mount_fail[3]);
+            IOLog("UKE GPU tables: cp=%u cpu=%u made=%u freed=%u live=%u peak=%u failure=%x step=%u pages=%u/%u/%u/%u\n",
+                native_adreno_table_switches[0], native_adreno_table_switches[1], native_adreno_table_switches[2],
+                native_adreno_table_switches[3], native_adreno_table_switches[4], native_adreno_table_switches[5],
+                native_adreno_table_switches[6], native_adreno_table_switches[7], native_adreno_table_pages[0],
+                native_adreno_table_pages[1], native_adreno_table_pages[2], native_adreno_table_pages[3]);
             IOLog("UKE boot memory: addonReleasedPages=%d staticFreedPages=%llu\n",
                 native_gpu_addon_released, ml_static_mfree_pages);
             if (&sheng_edge_cross_type_steals && &sheng_edge_idle_beside_excess && &sheng_edge_idle_beside_queued) {
