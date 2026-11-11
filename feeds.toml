@@ -76,7 +76,7 @@ commit = "795159ef145e1768b27e7fa9c1bf01dcc981e17c"
 name = "DarwinBoot"
 kind = "driver"
 git = "https://github.com/UniXNU/DarwinBoot.git"
-commit = "a4e33b3af7574425da7cc52ba7356b466d084ad7"
+commit = "6b47a02eaa26b35ba24fecc89910721a00fe4f49"
 
 [[source]]
 name = "ArmDTPlatform"
