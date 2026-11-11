@@ -41,6 +41,7 @@ def compile_source(source, record_name, obj):
 sources = [
     ('UkeLastLog.c', STARTUP_RECORD, 'UkeLastLog.o'),
     ('BootWatchdogPolicy.c', KERN_EXEC_RECORD, 'BootWatchdogPolicy.o'),
+    ('BootReset.c', KERN_EXEC_RECORD, 'BootReset.o'),
     ('CrashLogProbe.c', KERN_EXEC_RECORD, 'CrashLogProbe.o'),
 ]
 report = {}

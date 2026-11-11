@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <pexpert/pexpert.h>
 #include <kern/thread.h>
+#include <kern/startup.h>
 #include <kern/clock.h>
 #include <kern/sched_prim.h>
 #include <mach/mach_time.h>
@@ -88,9 +89,10 @@ extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation
 // petting it from a kernel thread even when boot-progress is compiled out.
 static volatile unsigned uke_gunyah_wdt_pets;
 static volatile int uke_gunyah_wdt_last;
+static uint64_t uke_gunyah_wdt_deadline;
 static void uke_gunyah_wdt_pet_thread(void *arg, wait_result_t result) {
  (void)arg;(void)result;
- for (;;) {
+ while (!uke_gunyah_wdt_deadline || mach_absolute_time() < uke_gunyah_wdt_deadline) {
   register uint64_t x0 __asm("x0")=0x86000007;
   register uint64_t x1 __asm("x1")=0;
   register uint64_t x2 __asm("x2")=0;
@@ -118,24 +120,30 @@ static void uke_gunyah_wdt_log_thread(void *arg, wait_result_t result) {
  }
 }
 static int uke_gunyah_wdt_started;
-static void uke_gunyah_wdt_start(void) {
+static void uke_gunyah_wdt_start(uint32_t autoreset) {
  thread_t thread;
  if(uke_gunyah_wdt_started)return;
  uke_gunyah_wdt_started=1;
+ if (autoreset) {
+  const uint64_t ns = ((uint64_t)autoreset + 60) * 1000000000ULL;
+  uint64_t ticks;
+  nanoseconds_to_absolutetime(ns, &ticks);
+  uke_gunyah_wdt_deadline = mach_absolute_time() + ticks;
+ }
  // Raise the hypervisor bite time before petting: a kernel hang then shows as
  // a long freeze instead of a reset 30 s later, which separates a hang from
  // a power/PMIC reset. 0xffff is the cookie UEFI passes for the same call.
  {
   register uint64_t x0 __asm("x0")=0x86000008;
   register uint64_t x1 __asm("x1")=0xffff;
-  register uint64_t x2 __asm("x2")=300000;
+  register uint64_t x2 __asm("x2")=autoreset ? 60000 : 300000;
   register uint64_t x3 __asm("x3")=0;
   register uint64_t x4 __asm("x4")=0;
   register uint64_t x5 __asm("x5")=0;
   register uint64_t x6 __asm("x6")=0;
   register uint64_t x7 __asm("x7")=0;
   __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1) : "r"(x2),"r"(x3),"r"(x4),"r"(x5),"r"(x6),"r"(x7) : "memory");
-  printf("sheng bring-up Gunyah watchdog bite=300000 status=%d\n",(int)x0);
+  printf("sheng bring-up Gunyah watchdog bite=%u status=%d\n", autoreset ? 60000u : 300000u, (int)x0);
  }
  kern_return_t started=kernel_thread_start_priority(uke_gunyah_wdt_pet_thread,0,BASEPRI_PREEMPT,&thread);
  if(started==KERN_SUCCESS){thread_deallocate(thread);printf("sheng bring-up Gunyah watchdog pet thread started\n");}
@@ -145,10 +153,24 @@ static void uke_gunyah_wdt_start(void) {
  else printf("sheng bring-up Gunyah watchdog log thread failed: %d\n",(int)started);
 }
 
+extern int boot_reset_probe(char *, unsigned) __attribute__((weak_import));
+extern int boot_reset_mark_bootloader(char *, unsigned) __attribute__((weak_import));
+extern char boot_log_autoreset_text[200] __attribute__((weak_import));
+
+static void uke_autoreset_arm(void) {
+ uint32_t seconds = 0;
+ if (!PE_parse_boot_argn("autoreset", &seconds, sizeof seconds) || !seconds) return;
+ if (!boot_reset_probe || !boot_reset_mark_bootloader || !&boot_log_autoreset_text) return;
+ if (boot_reset_probe(boot_log_autoreset_text, sizeof boot_log_autoreset_text)) return;
+ if (boot_reset_mark_bootloader(boot_log_autoreset_text, sizeof boot_log_autoreset_text)) return;
+ uke_gunyah_wdt_start(seconds);
+}
+STARTUP(EARLY_BOOT, STARTUP_RANK_FIRST, uke_autoreset_arm);
+
 int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  proc_t p=process;
  int enabled=0,error=0,fd=-1;int32_t result=0;
- uke_gunyah_wdt_start();
+ uke_gunyah_wdt_start(0);
  PE_parse_boot_argn("sheng-disable-watchdogd",&enabled,sizeof(enabled));
  if(!PE_parse_boot_argn("sheng-disable-jobs",jobs,sizeof(jobs)))jobs[0]=0;jobs[sizeof(jobs)-1]=0;
  int lite=0;PE_parse_boot_argn("sheng-lite",&lite,sizeof(lite));if(lite!=1)lite=0;

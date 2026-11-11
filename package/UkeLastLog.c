@@ -44,6 +44,12 @@ extern volatile uint32_t native_adreno_bo_owners[24][4], native_adreno_view_owne
 extern volatile uint32_t native_adreno_job_time[8], native_adreno_stall_kick[26], native_adreno_pool_views[5];
 extern volatile uint32_t native_adreno_kernel_alloc_fail[6], native_adreno_switch_timeout[2][30], native_adreno_switch_timeouts;
 extern uint32_t ml_outside_memory_pages, ml_outside_memory_refused;
+extern volatile uint32_t native_touch_irq_stats[4], native_touch_cost[9], native_touch_doze[4];
+extern uint32_t native_gpu_row_count;
+extern char native_gpu_row_log[40][52];
+extern volatile uint32_t native_gpu_power_stage;
+extern volatile uint64_t native_adreno_pool_scrubbing[16][2];
+extern char boot_log_autoreset_text[200];
 extern char *PE_boot_args(void);
 extern volatile uint64_t native_adreno_long_jobs[8][8], native_adreno_slow_jobs[16][8];
 extern volatile uint32_t native_gpu_dcvs[15], native_gpu_dcvs_level_share[16];
@@ -415,7 +421,18 @@ uke_panic_flush(const char *message)
 	uint32_t *header = (uint32_t *)(uintptr_t)gPanicBase;
 	memcpy((char *)(header + 2), prefix, used);
 	memcpy((char *)(header + 2) + used, message, length);
-	header[1] = (uint32_t)(used + length);
+	used += length;
+	for (unsigned cpu = 0; cpu < 16 && capacity - used > 1; ++cpu) {
+		const uint64_t base = native_adreno_pool_scrubbing[cpu][0];
+		if (!base) continue;
+		char line[96];
+		snprintf(line, sizeof line, "\nUKE GPU pool fill: cpu=%u pa=%llx bytes=%llx",
+		    cpu, base, native_adreno_pool_scrubbing[cpu][1]);
+		const size_t bytes = strnlen(line, capacity - used);
+		memcpy((char *)(header + 2) + used, line, bytes);
+		used += bytes;
+	}
+	header[1] = (uint32_t)used;
 	__asm__ volatile("dsb sy" ::: "memory");
 	header[0] = UKE_PANIC_SAVE_MAGIC;
 	__asm__ volatile("dsb sy" ::: "memory");
@@ -458,6 +475,7 @@ uke_last_log_writer(void *arg, wait_result_t result)
 	}
 
 	unsigned tick = 0;
+	unsigned gpu_rows_logged = 0;
 	for (;;) {
 		// The first seconds of msgbuf are flooded by boot logs; report the
 		// vnode sizing once the window is long past the ring's early noise.
@@ -473,6 +491,7 @@ uke_last_log_writer(void *arg, wait_result_t result)
 			    (unsigned long)length, found, autoreset, (int)tail, args ? args + length - tail : "");
 			IOLog("UkeLastLog: outside memory adopted=%u refused=%u pages\n",
 			    ml_outside_memory_pages, ml_outside_memory_refused);
+			if (boot_log_autoreset_text[0]) IOLog("UkeLastLog: %s\n", boot_log_autoreset_text);
 		}
 #if !defined(UKE_SOURCE_STORAGE_LOG)
 		if (tick == 4) {
@@ -566,6 +585,21 @@ uke_last_log_writer(void *arg, wait_result_t result)
                 IOLog("UKE GPU map conflict: asked=%llx+%llx remap=%u occupant=%llx+%llx handle=%llx jobs=%llu kind=%llx\n",
                     m[0], m[1] & ~(1ull << 63), (unsigned)(m[1] >> 63), m[2], m[3], m[4], m[5], m[6]);
             }
+            const unsigned gpu_rows = __atomic_load_n(&native_gpu_row_count, __ATOMIC_RELAXED);
+            if (gpu_rows_logged < 40 && gpu_rows_logged < gpu_rows) {
+                IOLog("UKE GPU bring-up: stage=%x rows=%u\n", native_gpu_power_stage, gpu_rows);
+                while (gpu_rows_logged < 40 && gpu_rows_logged < gpu_rows) {
+                    const char *row = native_gpu_row_log[gpu_rows_logged];
+                    if (!__atomic_load_n(row, __ATOMIC_ACQUIRE)) break;
+                    IOLog("UKE GPU GB%02u %s\n", gpu_rows_logged, row);
+                    ++gpu_rows_logged;
+                }
+            }
+            const volatile uint32_t *cost = native_touch_cost;
+            IOLog("UKE touch cost: irq=%u/%u/%u wakes=%u peeks=%u stale=%u bad=%u reads=%u frames=%u ms=%u/%u/%u doze=%u/%u/%u type=%u\n",
+                native_touch_irq_stats[0], native_touch_irq_stats[1], native_touch_irq_stats[2],
+                cost[0], cost[1], cost[2], cost[3], cost[4], cost[5], cost[6] / 1000, cost[7] / 1000, cost[8] / 1000,
+                native_touch_doze[0], native_touch_doze[1], native_touch_doze[2], native_touch_doze[3]);
             const volatile uint32_t *alloc = native_adreno_kernel_alloc_fail;
             if (alloc[5]) {
                 IOLog("UKE GPU first allocation failure: stage=%u status=%x bytes=%u bits=%u contiguous=%u total=%u\n",

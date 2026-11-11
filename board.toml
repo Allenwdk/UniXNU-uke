@@ -282,7 +282,8 @@ kernel_args = [
   "adsp=2",
   "battery=1",
   "audio=1",
-  "memory-outside=0", # Opt in explicitly after verifying the Uke firmware memory map.
+  "memory-window-high=1",
+  "gpu-pool=0", # XNU adopts the lower free DRAM through the loader table.
   # Existing upstream detail screen for the next root-preparation failure.
   # Board policy carried over from the 17.7.11 line.
   "sheng-lite=1",
@@ -303,8 +304,7 @@ kernel_args = [
 tool = "scripts/make-uke-adt.py"
 chip_id = "207"
 owned_memory_outside_ranges = 16   # Loader supplies only final-map conventional DRAM outside this window.
-owned_memory_size = "0x130000000"     # 4.75 GiB, sheng's proven value on the same 12 GB RAM class; fits the 9 GiB
-                                      # high-bank run (0x8C0000000..0xB00000000) now mapped in uke's MemoryMapLib
+owned_memory_size = "0x180000000"   # 6 GiB bootstrap window at the top of Uke's 9 GiB bank.
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
 packed_data_ramdisk = true
 persistent_data = true               # sheng-data-persist keeps Data writes, so Data is not ephemeral storage

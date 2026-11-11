@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Reboot-into-fastboot control for the sheng board: one byte of the PMIC's SDAM scratch memory (the cell the stock bootloader reads as the
-// reboot reason) written through the SPMI PMIC arbiter, then a PSCI SYSTEM_RESET. The register facts are the SM8550 devicetree's
+// Reboot-into-fastboot control for sheng and Uke: one byte of the PMIC's SDAM scratch memory (the cell the stock bootloader reads as the
+// reboot reason) written through the SPMI PMIC arbiter, then a PSCI SYSTEM_RESET. The register facts are the boards' stock devicetrees
 // (arbiter "core" 0xc400000, "chnls" 0xc500000, "obsrvr" 0xc440000, "cnfg" 0xc42d000, EE 0; SDAM at PMIC SID 0 register 0x7100, reboot-reason
 // cell at byte 0x48 bits 7:1, bootloader = 2) and the arbiter's version-7 layout as the mainline driver documents it.
 // The core is pure register-pointer code so a host test can drive it against a software model of the arbiter.
