@@ -56,3 +56,8 @@ BacklightMode 本次已加载，系统报告内置屏 `UseSyncBrightnessTransact
 ## 2026-11-11 显示对象参数修正候选授权部署
 
 用户授权刷入 `A6F640C2738F39FE`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。76 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-backlight-display-object/flash-result-20261111-080023.json`。Wi-Fi 首次扫描、列表反复刷新、连接中的扫描与亮度对照待实机验证。
+
+
+## a027ac1c 动画与花屏实机反馈
+
+2026-11-11，用户确认该版熄屏、亮屏动画“非常完美”，且不再花屏。vendor_boot SHA-256 `a027ac1c754b97f52959bca8c942c473cae7ebf34f8713d6fad46d01c9ce1b45`，内核 A6F640C2738F39FE。亮屏仍有可感知延迟，Wi-Fi 仍有问题，继续回读同次日志。此条验收覆盖用户本次观察到的动画与无花屏表现。
