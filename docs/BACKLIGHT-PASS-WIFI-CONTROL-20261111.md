@@ -30,3 +30,8 @@
 ## 2026-11-11 Wi-Fi 控制分发修复候选授权部署
 
 用户授权刷入 `879437D238BB23B0`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。68 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-wifi-control-progress/flash-result-20261111-081548.json`。Wi-Fi 首次扫描、列表反复刷新、连接中的扫描与亮度对照待实机验证。
+
+
+## 8794 同次实机回读
+
+用户确认熄屏、亮屏及 Wi-Fi 恢复，另报开机约四分钟时按电源键亮屏后锁屏卡死。内核尾环去重得 336 个新槽，统一日志 UUID `89DB480B-181F-4CDB-87DC-909E0DD25E4C`。六次 WMI 扫描成功，关联返回 0，有 DHCP ACK 和 en0 双向 TCP。约 198.868 秒 SpringBoard 报 0.35 秒未响应，随后亮屏转换完成，双背光芯片启用。Data 合成命令最后完成于 211.648 秒；2,563 个 phase 3 运行时入口有配对完成。约 220 秒 STExtractionService 的 PAC_EXCEPTION 缺少与卡死的因果证据。固定 GPU 槽与同次围栏序号、合成记录不配对，已排除。原厂四分区、A 槽和 TWRP 留作取证状态。主机未写擦 userdata。[详细回读](../../docs/status/wake-stall-readback-2026-11-11.md)
