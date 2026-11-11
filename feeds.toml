@@ -62,7 +62,7 @@ local = "drivers/NativeNovatekTouch"
 name = "Ath12kWifi"
 kind = "driver"
 git = "https://github.com/UniXNU/Ath12kWifi.git"
-commit = "2ddd4639f56958b13d3af9edf494f548b4beee84"
+commit = "c93d26a75c368ad2c4c85bd4f482aa3807ae2d84"
 
 # Upstream CPU/GPU synchronization, with Uke integration retained.
 [[source]]
