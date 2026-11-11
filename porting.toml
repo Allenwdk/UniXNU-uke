@@ -225,12 +225,12 @@ components = ["RamBlock"]
 paths = ["board.toml", "dts/uke.dts"]
 inputs = ["High DRAM window at 0x8C0000000 sized 0x240000000 (9 GiB) with the owned window at 0x130000000.",
   "GMU pool 0xC8000000/32 MiB reserved in the UEFI map and adopted over IODeviceMemory::withRange."]
-configuration = ["[payload.adt]: owned_memory_size 0x130000000, chip_id 207, cpu_regs 0..0x700, boot-manifest-hash pinned.",
+configuration = ["[payload.adt]: 0x180000000 high bootstrap window, 16 loader outside-memory entries, chip_id 207, cpu_regs 0..0x700, boot-manifest-hash pinned.",
   "dts/uke.dts memory node: one contiguous range, as the ADT hand-off requires."]
 procedure = ["Build the payload and read the UKE MEM counters from the menu and the kernel log."]
 findings = ["owned_memory_size, not dram_size, sizes the XNU VM; the 320 MiB ceiling was lifted by the static high-bank MemoryMapLib entries (UKE MEM ~1.11M 4K pages, free ~645 MiB).",
   "A sheng-style external abort can appear at the 6 GiB top; the full 6 GiB board map is configured in board.toml.",
-  "The optional outside-window VM aperture now uses reserved addresses below the kernel static region. The default boot argument remains memory-outside=0."]
+  "The outside-window VM aperture uses reserved addresses below the kernel static region. The default high-window profile adopts the lower free DRAM listed by DarwinBoot and selects gpu-pool=0."]
 completion = ["The kernel owns the 4.75 GiB window and jetsam no longer fires at the old ceiling."]
 limits = ["Host-only verification of the migrated ADT; the on-device counters come from the pre-migration images."]
 next_action = ["After fresh authorization deploy paired6D31A137E8F25F63,regress first/second boot and>8minStageManager load,GPUretire/job/kick,pool tracked/closed/returned,CPUedges,UFS andbattery/Wi-Fi/display/backlight/touch. Preserve34DE boot reference andD4EFbattery rollback."]
@@ -507,7 +507,7 @@ status = "device-verified"
 components = ["Adreno740", "AdrenoMetal", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "Sm7675Platform", "Sm8550Platform", "AirNir"]
 paths = ["board.toml", "scripts/prepare-uke-gmu.py", "scripts/build-adreno740-kits.py", "package/GpuPowerProbe.cpp", "docs/GPU-IOS27.md"]
 inputs = ["Real 0x43030b00/gen7_11_0, pinned gen71100 firmware, OEM DT and OEM gen7_11_0 source ed4ad0d1ad00.", "Upstream main Adreno740 6fa7bae, Metal 243d63c, GOP e47c1b8; existing 24A446 OS/SystemOS and immutable Data seed."]
-configuration = ["NATIVE_ADRENO enabled; per-process VM, preemption mode2, DCVS, BGRA8/SYSMEM and upstream transient GMEM policy.", "160 MiB raw FAT with standard UEFI compression; paired uke UEFI required."]
+configuration = ["NATIVE_ADRENO enabled; per-process VM, preemption mode2, DCVS, BGRA8 scanout, Turnip render-mode selection and concurrent binning.", "160 MiB raw FAT with standard UEFI compression; paired uke UEFI required."]
 procedure = ["Build kernel, UEFI, Turnip ios27, Metal ios27, addon/trust and payload; pack boot/vendor_boot.", "Only the compression round trip and required artifact/record checks; hardware tests follow delivery."]
 findings = ["Real gen7_11_0 GPU stack preserves upstream features and uses original OS resources. Turnip chained fixups avoids prior dyld stack overflow; scoped CoreImage nil-result library retry is present.", "On CRC90B6BC701210D9DB the user confirms all previously reported boot/icon/widget/Settings/Dock UI-restart symptoms resolved. Device result, not just flash transport."]
 completion = ["Real Metal rendering/presentation and unlock work on uke 24A446.", "Concurrent clients, CP preemption, teardown and persistent warm shader cache work on hardware."]
