@@ -51,3 +51,8 @@ BacklightMode 本次已加载，系统报告内置屏 `UseSyncBrightnessTransact
 修正后调用原方法识别显示对象，将它选中的同步事务改为普通事务。实际查询时增加 `selected direct brightness for ...` 日志，与启动时的 `override installed` 区别。原物理亮度模式适配继续使用上游 BacklightMode。该修改只解决此前候选没有切换路径的问题，唤醒亮度和花屏的修复效果仍待实机。
 
 新候选 vendor_boot SHA-256 为 `a027ac1c754b97f52959bca8c942c473cae7ebf34f8713d6fad46d01c9ce1b45`，内核仍是 `A6F640C2738F39FE`。归档 `uke-port/releases/2026-11-11-backlight-display-object/`，设备源码 `7f053759750b2211c3f81f4b982a01c243fad035`。正式 kernel、payload、bootimg、vendor_boot 和刷前检查通过。实包只更换亮度库及对应的一项信任哈希，83 个平台和 14 个存储输入与基线相同。候选未刷。下一次核对实际 query 日志、开屏后的非零亮度请求、双片启用回读及滑块调光。[构建记录](../../uke-port/releases/2026-11-11-backlight-display-object/build-result.json)
+
+
+## 2026-11-11 显示对象参数修正候选授权部署
+
+用户授权刷入 `A6F640C2738F39FE`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。76 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-backlight-display-object/flash-result-20261111-080023.json`。Wi-Fi 首次扫描、列表反复刷新、连接中的扫描与亮度对照待实机验证。
