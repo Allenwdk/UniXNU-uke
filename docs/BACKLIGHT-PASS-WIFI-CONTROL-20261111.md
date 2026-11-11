@@ -25,3 +25,8 @@
 正式 kernel、payload、bootimg、vendor_boot 通过，105/105 ath11k 对象，83 平台与 14 存储源哈希核验。平台源中仅 `nw_control.c` 与 a027ac1c 基线不同。最终内核的普通控制队列 flags=0，关闭队列 flags=`LX_WQ_TOPLEVEL`。签名运行包与已通过动画的 a027ac1c 逐字节相同，ADT 除随机种子一致，启动参数 721 B，2 missing / 19 stubbed 未增加。候选未刷，设备留 TWRP。[构建记录](../../uke-port/releases/2026-11-11-wifi-control-progress/build-result.json)
 
 下一次先验 Wi-Fi 首次扫描，再改变附近热点并重复刷新，连接后验证流量和列表更新。回归熄屏、亮屏和滑块调光。亮屏约 1 秒的系统状态转换等待另查。
+
+
+## 2026-11-11 Wi-Fi 控制分发修复候选授权部署
+
+用户授权刷入 `879437D238BB23B0`。同包 boot 和 vendor_boot 已写入四分区，A 槽读回，重启命令成功。68 项归档 SHA 与 13 区检查通过。回执 `uke-port/releases/2026-11-11-wifi-control-progress/flash-result-20261111-081548.json`。Wi-Fi 首次扫描、列表反复刷新、连接中的扫描与亮度对照待实机验证。
