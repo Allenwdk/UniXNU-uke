@@ -38,6 +38,7 @@ extern volatile uint32_t native_cpufreq_ramp[9], native_gpu_dcvs_reasons[9], nat
 extern volatile uint32_t native_gpu_pool_board[4], native_adreno_pool_state[12];
 extern volatile uint64_t native_adreno_fence_wake[8], native_adreno_submit_us[8];
 extern volatile uint64_t native_adreno_maint_walk[8];
+extern volatile uint64_t native_adreno_map_met[7] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_sync_audit[6], native_adreno_sync_skips[2];
 extern volatile uint32_t native_adreno_bo_owners[24][4], native_adreno_view_owners[24][4];
 extern volatile uint32_t native_adreno_job_time[8], native_adreno_stall_kick[26], native_adreno_pool_views[5];
@@ -559,6 +560,11 @@ uke_last_log_writer(void *arg, wait_result_t result)
                     k[25], k[0], k[1], k[20], k[21], k[22], k[23] & 0xffff, k[23] >> 16 & 0xff,
                     (int)(k[23] >> 24) - 1, k[24] >> 10,
                     k[3], k[2], k[6], k[7], k[9], k[8], k[12], k[13], k[15], k[14], k[18], k[19]);
+            }
+            if (&native_adreno_map_met && native_adreno_map_met[0]) {
+                const volatile uint64_t *m = native_adreno_map_met;
+                IOLog("UKE GPU map conflict: asked=%llx+%llx remap=%u occupant=%llx+%llx handle=%llx jobs=%llu kind=%llx\n",
+                    m[0], m[1] & ~(1ull << 63), (unsigned)(m[1] >> 63), m[2], m[3], m[4], m[5], m[6]);
             }
             const volatile uint32_t *alloc = native_adreno_kernel_alloc_fail;
             if (alloc[5]) {

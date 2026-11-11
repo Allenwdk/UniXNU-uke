@@ -135,4 +135,5 @@ uke-addon-memory-release.patch
 upstream/window-memory-excluded-ranges.patch
 upstream/platform-error-name-address.patch
 upstream/window-outside-memory-adoption.patch
+upstream/kmem-alloc-failure-report.patch
 upstream/contig-search-report.patch

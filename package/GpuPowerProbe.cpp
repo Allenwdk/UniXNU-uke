@@ -2028,7 +2028,8 @@ void gpuDcvsThread(void *, wait_result_t) {
         lastBusy = busy; lastT = t;
         if (!ns) continue;
         winBusy += busyNs; winNs += ns; atLevel[cur] += ns;
-        const bool active = busyNs > 0 || gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR);
+        // A trace of busy time in an empty ring is rest. Keep the wake boost available after these windows.
+        const bool active = busyNs * 100 >= ns || gpuRd(A740_CP_RB_RPTR) != gpuRd(A740_CP_RB_WPTR);
         ++seen;
         if (busyNs) {
             ++seenBusy;
