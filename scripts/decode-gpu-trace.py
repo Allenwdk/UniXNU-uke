@@ -65,6 +65,7 @@ LATENCY_FIELDS = {
  38: ('gpu_iokit_external','client token phase locking elapsed_us status'),
  39: ('gpu_iokit_map','client token phase locking elapsed_us status'),
  41: ('gpu_level_share','level mhz percent top unused0 unused1'),
+ 42: ('flight_task_identity','shared_cache_slide name0 name1 name2 name3 unused'),
 }
 RUNTIME_STAGES = {40:'memory_begin',41:'memory_pool',42:'memory_kib',43:'available_kib',
  44:'allocated',45:'reused',46:'memory_low',47:'memory_high',48:'cached_kib',49:'deferred_kib',
@@ -224,6 +225,7 @@ def latency_records(blob):
         if kind in (23,24):row['text']=struct.pack('<3Q',*values[3:]).split(b'\0')[0].decode('utf-8',errors='replace')
         if kind in (25,26):row['uuid']=struct.pack('<2Q',*values[2:4]).hex()
         if kind==14:row['text']=struct.pack('<4Q',*values[2:]).split(b'\0')[0].decode('utf-8',errors='replace')
+        if kind==42:row['text']=struct.pack('<4Q',*values[1:5]).split(b'\0')[0].decode('utf-8',errors='replace')
         rows.append(row)
     rows.sort(key=lambda r:r['us'])
     result=dict(total=total,kept=kept,dropped=dropped,overwritten=max(0,total-524288))

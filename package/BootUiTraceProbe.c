@@ -865,3 +865,86 @@ void boot_user_stack_here(struct boot_user_stack *out) {
   out->images[images].base=hit.base;memcpy(out->images[images].uuid,hit.uuid,16);++images;
  }
 }
+
+/* Continuous freeze probe. No vm_map_read_user, Mach-port lookup or page-in:
+ * the independent flight writer must keep running if the detailed sampler
+ * blocks while walking user memory. Process traversal stays on this worker. */
+uint64_t boot_flight_probe_status[6];
+struct flight_thread_row {uint64_t tid,wait,frames[12],kernel[12];unsigned state,switches;};
+static struct flight_thread_row *flight_threads;
+static int flight_selected(proc_t proc,void *arg) {
+ (void)arg;const char *name=proc_best_name(proc);
+ return !strcmp(name,"backboardd") || !strcmp(name,"SpringBoard") || !strcmp(name,"MobileSafari") ||
+  !strncmp(name,"com.apple.WebKit",16) || !strcmp(name,"DockFolderViewService") || !strcmp(name,"Preferences");
+}
+static int flight_task(proc_t proc,void *arg) {
+ (void)arg;task_t task=proc_task(proc);const int pid=proc_pid(proc);
+ __atomic_store_n(&boot_flight_probe_status[4],pid,__ATOMIC_RELAXED);
+ __atomic_store_n(&boot_flight_probe_status[3],2,__ATOMIC_RELAXED);
+ if(!task || !task_lock_try(task)){boot_latency_record(31,pid,0,0,0,1,16);return 0;}
+ uint64_t targets[3]={0};
+ if(&native_gpu_role_thread)for(unsigned i=0;i<3;++i)targets[i]=native_gpu_role_thread(pid,i+1);
+ memset(flight_threads,0,sizeof(*flight_threads)*16);
+ unsigned visited=0,extra=4,busy=0,omitted=0;thread_t thread;
+ const uint64_t slide=task->task_shared_region_slide;
+ queue_iterate(&task->threads,thread,thread_t,task_threads) {
+  if(++visited>256){++omitted;break;}
+  const uint64_t tid=thread->thread_id;
+  __atomic_store_n(&boot_flight_probe_status[5],tid,__ATOMIC_RELAXED);
+  bool irq=ml_set_interrupts_enabled(false);
+  if(!simple_lock_try(&thread->sched_lock,&thread_lck_grp)){++busy;ml_set_interrupts_enabled(irq);continue;}
+  unsigned slot=visited==1?0:16;
+  for(unsigned i=0;i<3;++i)if(targets[i] && targets[i]==tid)slot=i+1;
+  if(slot==16 && (thread->state&TH_WAIT) && extra<16)slot=extra++;
+  if(slot<16) {
+   struct flight_thread_row *r=&flight_threads[slot];
+   r->tid=tid;r->wait=(uint64_t)thread->wait_event;r->state=(unsigned)thread->state|((unsigned)thread->block_hint<<16)|(slot<4?slot<<12:0);r->switches=thread->c_switch;
+   arm_saved_state_t *saved=thread->machine.upcb;
+   if(saved && is_saved_state64(saved)){r->frames[0]=BT_STRIP_USER_PC((uint64_t)get_saved_state_pc(saved));r->frames[1]=BT_STRIP_USER_PC((uint64_t)get_saved_state_lr(saved));}
+   bt_kernel_stack(thread,r->kernel);
+  }else ++omitted;
+  thread_unlock(thread);ml_set_interrupts_enabled(irq);
+ }
+ task_unlock(task);
+ __atomic_store_n(&boot_flight_probe_status[3],3,__ATOMIC_RELAXED);
+ boot_latency_flight_identity(pid,slide,proc_best_name(proc));
+ unsigned recorded=0;
+ for(unsigned i=0;i<16;++i)if(flight_threads[i].tid) {
+  struct flight_thread_row *r=&flight_threads[i];++recorded;
+  /* peer_status/error 0x100 marks register-only user state, not a failed
+   * complete user unwind. Waiting kernel frames are independently captured. */
+  boot_latency_waiter(pid,r->tid,r->state,r->wait,r->switches,-1,0x100,0x100,r->frames,r->kernel);
+ }
+ boot_latency_record(31,pid,visited,recorded,omitted,busy,16);return 0;
+}
+static uint64_t flight_probe_us(void){uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return ns/1000;}
+static void flight_probe_thread(void *arg,wait_result_t wait) {
+ (void)arg;(void)wait;thread_set_thread_name(current_thread(),"frame-probe");
+ for(;;) {
+  __atomic_store_n(&boot_flight_probe_status[1],flight_probe_us(),__ATOMIC_RELAXED);
+  __atomic_store_n(&boot_flight_probe_status[3],1,__ATOMIC_RELAXED);
+  proc_iterate((1U<<0)|(1U<<2),flight_task,NULL,flight_selected,NULL);
+  __atomic_store_n(&boot_flight_probe_status[3],0,__ATOMIC_RELAXED);
+  __atomic_store_n(&boot_flight_probe_status[2],flight_probe_us(),__ATOMIC_RELEASE);
+  __atomic_fetch_add(&boot_flight_probe_status[0],1,__ATOMIC_RELAXED);
+  delay_for_interval(250,NSEC_PER_MSEC);
+ }
+}
+void boot_flight_probe_start(void) {
+ static unsigned started;if(__atomic_exchange_n(&started,1,__ATOMIC_ACQUIRE))return;
+ flight_threads=IOMallocAligned(sizeof(*flight_threads)*16,4096);if(!flight_threads)return;
+ thread_t thread=THREAD_NULL;
+ if(kernel_thread_start(flight_probe_thread,NULL,&thread)==KERN_SUCCESS)thread_deallocate(thread);
+}
+void boot_flight_cpu_status(uint64_t out[32]) {
+ /* Processor objects are permanent. Compare active-thread pointers only;
+  * never dereference a foreign CPU's racing active_thread. No IPI is sent. */
+ for(unsigned i=0;i<8;++i) {
+  processor_t p=cpu_to_processor(i);if(!p)continue;
+  cpu_data_t *cd=processor_to_cpu_datap(p);
+  out[4*i]=(uint64_t)p->state|((uint64_t)(uint32_t)p->current_pri<<32);
+  out[4*i+1]=cd?cd->cpu_signal:0;
+  out[4*i+2]=(uintptr_t)p->active_thread;
+  out[4*i+3]=p->active_thread==p->idle_thread;
+ }
+}

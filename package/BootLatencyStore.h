@@ -26,4 +26,18 @@ static inline int bl_read(struct bl_store *s,uint64_t seq,struct bl_record *r) {
  int found=slot->sequence==seq;if(found)*r=slot->row;
  __atomic_store_n(&slot->busy,0,__ATOMIC_RELEASE);return found;
 }
+/* Independent, bounded cursor; consuming the flight copy never consumes a
+ * diagnostic snapshot. Busy/in-flight and overwritten records are counted. */
+static inline uint32_t bl_since(struct bl_store *s,uint64_t *cursor,struct bl_record *out,uint32_t room,uint64_t *lost) {
+ if(!s->slots || !s->capacity || !room)return 0;
+ const uint64_t end=__atomic_load_n(&s->issued,__ATOMIC_ACQUIRE);
+ uint64_t first=*cursor+1;const uint64_t oldest=end>s->capacity?end-s->capacity+1:1;
+ if(first<oldest){*lost+=oldest-first;first=oldest;}
+ uint32_t count=0;
+ for(uint64_t seq=first;seq<=end && count<room;++seq) {
+  if(bl_read(s,seq,&out[count]))++count;else ++*lost;
+  *cursor=seq;
+ }
+ return count;
+}
 #endif

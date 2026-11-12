@@ -16,6 +16,8 @@ int boot_latency_enabled(void);
 void boot_latency_fault_drain(void);
 void boot_latency_waiter(int pid,uint64_t tid,unsigned state,uint64_t wait,unsigned switches,int peer,unsigned peer_code,unsigned error,const uint64_t frames[12],const uint64_t kernel[12]);
 uint32_t boot_latency_snapshot(void *out,uint32_t bytes);
+uint32_t boot_latency_flight_read(unsigned lane,uint64_t *cursor,void *out,uint32_t bytes,uint64_t *lost);
+void boot_latency_flight_identity(int pid,uint64_t slide,const char *name);
 #ifdef __cplusplus
 }
 #endif

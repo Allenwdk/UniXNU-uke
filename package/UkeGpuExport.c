@@ -96,7 +96,9 @@ static void uke_diag_worker(void *arg,wait_result_t wait) {
   next=(unsigned)(ns/1000000000ull)+repeat;
  }
 }
+#include "UkeFlightRecorder.h"
 void uke_gpu_export_start(void) {
+ flight_start();
  export_lock=IOLockAlloc();
  unsigned diag=0;
  if(!export_lock || !PE_parse_boot_argn("sheng-diag",&diag,sizeof diag) || (diag!=1 && diag!=2 && diag!=4))return;

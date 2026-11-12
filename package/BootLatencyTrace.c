@@ -25,6 +25,7 @@ struct fault_slot {uint32_t state,pid;uint64_t id,us,tid,fp,sp,pc,lr,slide;task_
 static struct fault_slot *faults;
 static uint64_t fault_sequence;
 static struct bl_store store,critical;
+static unsigned latency_starting;
 static void record_as(uint32_t kind,uint32_t pid,uint64_t tid,uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f) {
  if(!__atomic_load_n(&store.slots,__ATOMIC_ACQUIRE))return;
  uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
@@ -36,8 +37,16 @@ void boot_latency_record(uint32_t kind,uint64_t a,uint64_t b,uint64_t c,uint64_t
  record_as(kind,(uint32_t)proc_selfpid(),thread_tid(current_thread()),a,b,c,d,e,f);
 }
 int boot_latency_enabled(void) {return __atomic_load_n(&store.slots,__ATOMIC_ACQUIRE)!=NULL;}
+uint32_t boot_latency_flight_read(unsigned lane,uint64_t *cursor,void *out,uint32_t bytes,uint64_t *lost) {
+ if(!boot_latency_enabled() || lane>1 || !cursor || !out || !lost)return 0;
+ return bl_since(lane?&store:&critical,cursor,out,bytes/sizeof(struct bl_record),lost)*sizeof(struct bl_record);
+}
+void boot_latency_flight_identity(int pid,uint64_t slide,const char *name) {
+ uint64_t words[4]={0};if(name)memcpy(words,name,strnlen(name,31));
+ record_as(42,(uint32_t)pid,0,slide,words[0],words[1],words[2],words[3],0);
+}
 void boot_latency_waiter(int pid,uint64_t tid,unsigned state,uint64_t wait,unsigned switches,int peer,unsigned peer_code,unsigned error,const uint64_t frames[12],const uint64_t kernel[12]) {
- static uint64_t sequence;const uint64_t id=++sequence;
+ static uint64_t sequence;const uint64_t id=__atomic_add_fetch(&sequence,1,__ATOMIC_RELAXED);
  record_as(28,(uint32_t)pid,tid,id,state,wait,frames[0],frames[1],switches);
  record_as(30,(uint32_t)pid,tid,id,(uint32_t)peer,peer_code,error,0,0);
  for(unsigned first=0;first<12;first+=4) {
@@ -140,10 +149,10 @@ void boot_latency_fault_drain(void) {
  }
 }
 void boot_latency_start(void) {
- if(store.slots)return;
- struct bl_slot *slots=IOMallocAligned(sizeof(*slots)*BlCapacity,PAGE_SIZE);if(!slots)return;
+ if(store.slots || __atomic_exchange_n(&latency_starting,1,__ATOMIC_ACQUIRE))return;
+ struct bl_slot *slots=IOMallocAligned(sizeof(*slots)*BlCapacity,PAGE_SIZE);if(!slots){__atomic_store_n(&latency_starting,0,__ATOMIC_RELEASE);return;}
  struct bl_slot *saved=IOMallocAligned(sizeof(*saved)*BlCriticalCapacity,PAGE_SIZE);
- if(!saved){IOFreeAligned(slots,sizeof(*slots)*BlCapacity);return;}
+ if(!saved){IOFreeAligned(slots,sizeof(*slots)*BlCapacity);__atomic_store_n(&latency_starting,0,__ATOMIC_RELEASE);return;}
  memset(slots,0,sizeof(*slots)*BlCapacity);store.capacity=BlCapacity;
  memset(saved,0,sizeof(*saved)*BlCriticalCapacity);critical.slots=saved;critical.capacity=BlCriticalCapacity;
  faults=IOMallocAligned(sizeof(*faults)*FaultSlots,PAGE_SIZE);if(faults)memset(faults,0,sizeof(*faults)*FaultSlots);

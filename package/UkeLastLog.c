@@ -386,7 +386,10 @@ uke_ufs_publish(void)
 			}
 			return;
 		}
-		ukeUfsBlocks = blocks;
+		unsigned flight = 0;
+		PE_parse_boot_argn("uke-flight", &flight, sizeof flight);
+		/* Flight records own the upper 16 MiB only in this opt-in mode. */
+		ukeUfsBlocks = flight == 1 && blocks == 8192 ? blocks / 2 : blocks;
 		ukeUfsCursor = 0;
 		ukeUfsSeq = 0;
 		ukeUfsOpen = true;
