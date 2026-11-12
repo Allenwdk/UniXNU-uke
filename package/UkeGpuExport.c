@@ -50,7 +50,9 @@ static void uke_diag_worker(void *arg,wait_result_t wait) {
  PE_parse_boot_argn("uke-diag-repeat",&repeat,sizeof repeat);
  if(!next)return;
  (void)wait;unsigned elapsed=0;int root_failure_noted=0;
- for(;;){IOSleep(1000);++elapsed;boot_diag_shot_tick(elapsed,diag);
+ for(;;){IOSleep(1000);
+  uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);elapsed=(unsigned)(ns/1000000000ull);
+  boot_diag_shot_tick(elapsed,diag);
   if(!root_failure_noted && &native_ufs_root_failure && native_ufs_root_failure) {
    root_failure_noted=1;
    IOLog("UKE ROOT FAILURE: %s preflight-ready=%u entries=%u\n",native_ufs_root_failure,
