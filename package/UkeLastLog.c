@@ -45,6 +45,7 @@ extern volatile uint32_t native_adreno_job_time[8], native_adreno_stall_kick[26]
 extern volatile uint32_t native_adreno_kernel_alloc_fail[6], native_adreno_switch_timeout[2][30], native_adreno_switch_timeouts;
 extern volatile uint32_t native_adreno_mount_fail[4], native_adreno_table_switches[8], native_adreno_table_pages[4];
 extern volatile uint32_t native_adreno_vm_fail[4], native_adreno_recover_trace[4];
+extern volatile uint32_t native_adreno_global_fault[4];
 extern uint32_t ml_outside_memory_pages, ml_outside_memory_refused;
 extern volatile uint32_t native_touch_irq_stats[4], native_touch_cost[9], native_touch_doze[4];
 extern uint32_t native_gpu_row_count;
@@ -555,6 +556,10 @@ uke_last_log_writer(void *arg, wait_result_t result)
             if (native_adreno_vm_fail[0])
                 IOLog("UKE GPU VM failure: count=%u smmu=%u line=%u process=%u\n",
                       native_adreno_vm_fail[0], native_adreno_vm_fail[1], native_adreno_vm_fail[2], native_adreno_vm_fail[3]);
+            if (native_adreno_global_fault[0] || native_adreno_global_fault[2])
+                IOLog("UKE GPU global fault: seen=%u status=%x cleared=%u status=%x\n",
+                      native_adreno_global_fault[0], native_adreno_global_fault[1],
+                      native_adreno_global_fault[2], native_adreno_global_fault[3]);
             if (native_adreno_recover_trace[0])
                 IOLog("UKE GPU recovery trace: step=%u info=%x fence=%u last=%u\n",
                       native_adreno_recover_trace[0], native_adreno_recover_trace[1], native_adreno_recover_trace[2], native_adreno_recover_trace[3]);
