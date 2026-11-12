@@ -527,8 +527,11 @@ uke_last_log_writer(void *arg, wait_result_t result)
 	unsigned gpu_stall_hang_logged = 0;
 #if defined(UKE_SOURCE_STORAGE_LOG)
 	uint32_t progress_diag = 0;
+	uint32_t progress_only = 0;
 	PE_parse_boot_argn("sheng-diag", &progress_diag, sizeof(progress_diag));
-	const bool progress_on = progress_diag == 1 && &native_data_write_back && &native_data_io_reads &&
+	PE_parse_boot_argn("uke-progress", &progress_only, sizeof(progress_only));
+	const bool progress_on = (progress_diag == 1 || progress_only == 1) &&
+	    &native_data_write_back && &native_data_io_reads &&
 	    &native_data_io_writes && &native_data_flushes && &native_data_timer_flushes && &native_data_fua_requests &&
 	    &native_legacy_swapstat;
 #endif
