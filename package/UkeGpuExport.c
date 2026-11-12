@@ -26,12 +26,16 @@ char boot_log_autoreset_text[200];
 extern void boot_diag_shot_tick(unsigned, unsigned);
 extern uint64_t boot_diag_scan(uint64_t);
 extern int boot_diag_stream(int (*)(const void *,uint32_t,void *),void *);
-struct uke_diag_sink {uint8_t *stage;uint32_t target,filled,limit;};
+struct uke_diag_sink {uint8_t *stage,*head;uint32_t target,filled,limit;};
 static int uke_diag_flush(struct uke_diag_sink *k) {
  const uint32_t stage=LogExportStage*LogBlock,used=k->filled%stage?k->filled%stage:stage;
  const uint32_t blocks=(used+LogBlock-1)/LogBlock;
  if(used%LogBlock)memset(k->stage+used,0,blocks*LogBlock-used);
- return native_ufs_export_write(k->target+(k->filled-used)/LogBlock,blocks,k->stage)?0:-6;
+ const uint32_t first=(k->filled-used)/LogBlock;
+ if(first==0)memcpy(k->head,k->stage,LogBlock);
+ const uint32_t skip=first==0;
+ if(blocks==skip)return 0;
+ return native_ufs_export_write(k->target+first+skip,blocks-skip,k->stage+skip*LogBlock)?0:-6;
 }
 static int uke_diag_emit(const void *data,uint32_t size,void *arg) {
  struct uke_diag_sink *k=arg;const uint8_t *p=data;const uint32_t stage=LogExportStage*LogBlock;
@@ -41,6 +45,10 @@ static int uke_diag_emit(const void *data,uint32_t size,void *arg) {
 }
 static void uke_diag_worker(void *arg,wait_result_t wait) {
  const unsigned diag=(unsigned)(uintptr_t)arg;
+ unsigned next=diag==4?180u:240u,repeat=0;
+ PE_parse_boot_argn("sheng-diag-export",&next,sizeof next);
+ PE_parse_boot_argn("uke-diag-repeat",&repeat,sizeof repeat);
+ if(!next)return;
  (void)wait;unsigned elapsed=0;int root_failure_noted=0;
  for(;;){IOSleep(1000);++elapsed;boot_diag_shot_tick(elapsed,diag);
   if(!root_failure_noted && &native_ufs_root_failure && native_ufs_root_failure) {
@@ -55,22 +63,34 @@ static void uke_diag_worker(void *arg,wait_result_t wait) {
    }
    if(&boot_root_thread_snapshot)boot_root_thread_snapshot();
   }
-  if(elapsed<(diag==4?180u:240u) || !native_ufs_export_blocks())continue;
+  if(elapsed<next || !native_ufs_export_blocks())continue;
   IOLockLock(export_lock);const uint32_t region=(uint32_t)native_ufs_export_blocks(),half=region/2;
-  struct uke_diag_sink k={NULL,export_ready && export_ready_first==0?half:0,0,half*LogBlock};diag_owned=1;IOLockUnlock(export_lock);
+  struct uke_diag_sink k={NULL,NULL,export_ready && export_ready_first==0?half:0,0,half*LogBlock};diag_owned=1;IOLockUnlock(export_lock);
   int status=-4;uint64_t stream=0;
-  if(half && (k.stage=IOMallocAligned(LogExportStage*LogBlock,LogBlock))) {
+  if(half && (k.stage=IOMallocAligned((LogExportStage+1)*LogBlock,LogBlock))) {
+   k.head=k.stage+LogExportStage*LogBlock;
    stream=boot_diag_scan((uint64_t)half*LogBlock-16);
-   if(stream && stream<=UINT32_MAX-16){uint32_t head[2]={(uint32_t)stream,0};status=uke_diag_emit("SHEXR001",8,&k);
+   if(stream && stream<=UINT32_MAX-16){uint32_t head[2]={(uint32_t)stream,elapsed};
+    // Invalidate the target before changing its body. Leave the other half readable.
+    memset(k.head,0,LogBlock);
+    status=native_ufs_export_write(k.target,1,k.head) && native_ufs_log_sync()?0:-8;
+    if(!status)status=uke_diag_emit("SHEXR001",8,&k);
     if(!status)status=uke_diag_emit(head,8,&k);if(!status)status=boot_diag_stream(uke_diag_emit,&k);
     if(!status && k.filled%(LogExportStage*LogBlock))status=uke_diag_flush(&k);
     if(!status && k.filled!=stream+16)status=-9;
     if(!status && !native_ufs_log_sync())status=-8;
+    if(!status && (!native_ufs_export_write(k.target,1,k.head) || !native_ufs_log_sync()))status=-8;
    }else status=-7;
-   IOFreeAligned(k.stage,LogExportStage*LogBlock);
+   IOFreeAligned(k.stage,(LogExportStage+1)*LogBlock);
   }
-  IOLog("UKE DIAG EXPORT: status=%d first=%u bytes=%u region=%u\n",status,k.target,k.filled,region);
-  return;
+  if(!status) {
+   IOLockLock(export_lock);
+   export_ready=1;export_ready_bytes=k.filled;export_ready_first=k.target;
+   IOLockUnlock(export_lock);
+  }
+  IOLog("UKE DIAG EXPORT: status=%d first=%u bytes=%u region=%u uptime=%u\n",status,k.target,k.filled,region,elapsed);
+  if(!repeat)return;
+  next=elapsed+repeat;
  }
 }
 void uke_gpu_export_start(void) {

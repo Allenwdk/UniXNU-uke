@@ -16,7 +16,7 @@
 #include <pexpert/pexpert.h>
 
 enum {DiagMaxFiles = 128, DiagPath = 192, DiagDepth = 0, DiagChunk = 256 * 1024, DiagNote = 32768};
-struct diag_file {char path[DiagPath]; uint64_t size; uint32_t mode, uid, gid, root, keep;};
+struct diag_file {char path[DiagPath]; uint64_t size, fileid; uint32_t mode, uid, gid, root, keep;};
 static struct diag_file *diag_files;
 static uint32_t diag_count, diag_skipped_count;
 static char *diag_note;   // diag-skipped.txt
@@ -34,6 +34,7 @@ static const char *const diag_roots[] = {
   // pipelines-<pid>.log, so an exact path cannot be listed here. bl_latency_file still decides what leaves.
   "/private/var/mobile/Library/Caches/com.apple.backboardd/m2v",
   "/private/var/root/Library/Caches/com.apple.backboardd/m2v",
+  "/private/var/tmp/NativeAdrenoMetal.trace",
   "/private/var/mobile/Library/Logs/CrashReporter",
   "/private/var/root/Library/Logs/CrashReporter",
 };
@@ -81,6 +82,7 @@ static void add(const char *path, uint32_t root, vfs_context_t ctx) {
   VATTR_WANTED(&va, va_mode);
   VATTR_WANTED(&va, va_uid);
   VATTR_WANTED(&va, va_gid);
+  VATTR_WANTED(&va, va_fileid);
   error = vnode_getattr(file, &va, ctx);
   vnode_put(file);
   if (error) {note("getattr", path, error); ++boot_diag_errors; return;}
@@ -88,6 +90,7 @@ static void add(const char *path, uint32_t root, vfs_context_t ctx) {
   struct diag_file *f = &diag_files[diag_count++];
   strlcpy(f->path, path, sizeof f->path);
   f->size = va.va_data_size; f->mode = va.va_mode; f->uid = va.va_uid; f->gid = va.va_gid; f->root = root; f->keep = 0;
+  f->fileid = VATTR_IS_SUPPORTED(&va, va_fileid) ? va.va_fileid : 0;
 }
 
 static void scan(const char *path, unsigned depth, uint32_t root, vfs_context_t ctx) {
@@ -133,6 +136,10 @@ static void scan(const char *path, unsigned depth, uint32_t root, vfs_context_t 
 // Root order first; inside a root the later name first (log files are numbered upward, so the newest comes first).
 static int worth(const void *a, const void *b) {
   const struct diag_file *x = a, *y = b;
+  const int x_frame = bl_frame_trace(x->path), y_frame = bl_frame_trace(y->path);
+  if (x_frame != y_frame) return y_frame - x_frame;
+  const int x_crash = bl_crash_process(x->path) >= 0, y_crash = bl_crash_process(y->path) >= 0;
+  if (x_crash != y_crash) return y_crash - x_crash;
   if (x->root != y->root) return x->root < y->root ? -1 : 1;
   return -strcmp(x->path, y->path);
 }
@@ -403,7 +410,7 @@ uint64_t boot_diag_scan(uint64_t budget) {
   }
   for(unsigned i=0;i<sizeof diag_roots/sizeof diag_roots[0];++i)scan(diag_roots[i],0,i,ctx);
   qsort(diag_files,diag_count,sizeof diag_files[0],worth);
-  unsigned crash_count[5]={0};uint64_t crash_bytes=0;uint32_t files_kept=0;
+  unsigned crash_count[sizeof bl_crash_processes/sizeof bl_crash_processes[0]]={0};uint64_t crash_bytes=0;uint32_t files_kept=0;
   for(uint32_t i=0;i<diag_count;++i) {
     struct diag_file *f=&diag_files[i];int process=bl_crash_process(f->path);
     uint64_t cost=24+strlen(f->path)-1+f->size;
@@ -630,6 +637,15 @@ int boot_diag_stream(boot_diag_emit_t emit, void *arg) {
     vnode_t vp = NULLVP;
     int error = rc ? 0 : vnode_open(f->path, FREAD, 0, 0, &vp, ctx);
     if (error) {note("open", f->path, error); ++boot_diag_errors; vp = NULLVP;}
+    if (vp && f->fileid && bl_frame_trace(f->path)) {
+      struct vnode_attr va;
+      VATTR_INIT(&va);
+      VATTR_WANTED(&va, va_fileid);
+      if (vnode_getattr(vp, &va, ctx) || !VATTR_IS_SUPPORTED(&va, va_fileid) || va.va_fileid != f->fileid) {
+        note("rotated", f->path, 0);
+        vnode_close(vp, FREAD, ctx); vp = NULLVP;
+      }
+    }
     for (uint64_t at = 0; !rc && at < f->size;) {
       const uint32_t want = f->size - at < DiagChunk ? (uint32_t)(f->size - at) : DiagChunk;
       int resid = (int)want;
