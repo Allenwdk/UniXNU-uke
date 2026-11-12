@@ -92,7 +92,8 @@ static void uke_diag_worker(void *arg,wait_result_t wait) {
   }
   IOLog("UKE DIAG EXPORT: status=%d first=%u bytes=%u region=%u uptime=%u\n",status,k.target,k.filled,region,elapsed);
   if(!repeat)return;
-  next=elapsed+repeat;
+  absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+  next=(unsigned)(ns/1000000000ull)+repeat;
  }
 }
 void uke_gpu_export_start(void) {
