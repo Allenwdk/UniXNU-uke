@@ -8,7 +8,7 @@ userdata partition. Each record starts with
     [ 8] sequence number, little endian u64
     [16] payload length, u32
     [20] payload crc32, u32
-    [32] payload: the newest bytes of the kernel message buffer
+    [32] payload: incremental message bytes or a tail snapshot
 
 Usage:
     # On the device (recovery / TWRP adb shell), dump the window:
@@ -21,6 +21,8 @@ Usage:
 
 The decoder keeps every record whose magic and CRC are valid, sorts them by
 sequence number, and writes the newest contiguous run to the output file.
+Only the declared payload participates in the CRC. Unwritten blocks at the
+end of a short record may contain bytes from an older record.
 """
 import argparse
 import struct

@@ -4,8 +4,8 @@
 // prints; the high half is a ramoops-compatible console ring
 // (persistent_ram_buffer, sig 0x43474244) that a reader can expose at
 // /sys/fs/pstore/console-ramoops-0. Enabled with sheng-log=1. The pram half is
-// the only thing written directly: the same snapshot is also appended to the
-// userdata log window through NativeUfs, which is what makes it readable from
+// the only thing written directly. New message bytes are also appended to the
+// userdata log window through NativeUfs, which makes them readable from
 // recovery. Apart from those two the writer never allocates, changes
 // translation, or touches a device register.
 #include <stdint.h>
@@ -258,7 +258,7 @@ uke_last_log_write(void)
 // ---- userdata copy --------------------------------------------------------------------------
 //
 // The pram ring above survives only until the next reset and cannot be read
-// from outside the device. The same snapshot is therefore also appended to the
+// from outside the device. New bytes are therefore also appended to the
 // log window NativeUfs keeps at the end of userdata, which a recovery image or
 // a host can read directly with dd.
 //
@@ -269,17 +269,18 @@ uke_last_log_write(void)
 //   [16] payload length (u32)
 //   [20] payload crc32 (u32)
 //   [24] reserved
-//   [32] payload (the newest bytes of the kernel message buffer)
+//   [32] payload (new bytes since the last write, or the tail on resync)
 //
 // A reader sorts by sequence and concatenates the contiguous run it finds.
 #define UKE_UFS_RECORD_BYTES   (16 * 1024)
-#define UKE_UFS_RECORD_BLOCKS  (UKE_UFS_RECORD_BYTES / 4096)
-#define UKE_UFS_PAYLOAD_BYTES  (UKE_UFS_RECORD_BYTES - 32)
+#define UKE_UFS_BLOCK_BYTES    4096u
+#define UKE_UFS_RECORD_BLOCKS  (UKE_UFS_RECORD_BYTES / UKE_UFS_BLOCK_BYTES)
+#define UKE_UFS_HEADER_BYTES   32u
+#define UKE_UFS_PAYLOAD_BYTES  (UKE_UFS_RECORD_BYTES - UKE_UFS_HEADER_BYTES)
 #define UKE_UFS_INTERVAL_MS    500  /* diagnostic: keep the tail of a hang */
 
 int native_ufs_log_open(uint64_t *firstLba, uint64_t *blocks, const char **why);
 int native_ufs_log_write(uint64_t rel, uint32_t blocks, const void *src);
-int native_ufs_log_sync(void);
 
 static uint32_t
 uke_crc32(const uint8_t *data, size_t length)
@@ -301,33 +302,62 @@ static uint64_t ukeUfsBlocks;
 static uint64_t ukeUfsSeq;
 static uint64_t ukeUfsCursor;
 
-// One record: the newest UKE_UFS_PAYLOAD_BYTES of the message buffer.
+struct uke_ufs_msg_cursor {
+	const char *buffer;
+	size_t size;
+	size_t end;
+	uint8_t boundary[32];
+};
+static struct uke_ufs_msg_cursor ukeUfsMsgCursor;
+
+static void
+uke_copy_msg_tail(const char *buffer, size_t size, size_t end, uint8_t *out, size_t length)
+{
+	const size_t start = (end + size - length) % size;
+	const size_t first = length < size - start ? length : size - start;
+	memcpy(out, buffer + start, first);
+	if (length > first) {
+		memcpy(out + first, buffer, length - first);
+	}
+}
+
+// The XNU cursor wraps. Check the bytes before the previous endpoint to catch
+// an overwrite or ring replacement, then fall back to the newest full tail.
 static size_t
-uke_snapshot(uint8_t *out, size_t capacity)
+uke_ufs_snapshot(uint8_t *out, size_t capacity, struct uke_ufs_msg_cursor *next)
 {
 	struct msgbuf *m = msgbufp;
 	if (m == NULL || m->msg_bufc == NULL || m->msg_size <= 1 || m->msg_magic != MSG_MAGIC) {
 		return 0;
 	}
-	const int write = m->msg_bufx;
-	if (write <= 0) {
+	const char *buffer = m->msg_bufc;
+	const size_t size = (size_t)m->msg_size;
+	const int write = __atomic_load_n(&m->msg_bufx, __ATOMIC_RELAXED);
+	if (write < 0 || (size_t)write >= size) {
 		return 0;
 	}
-	size_t size = (size_t)m->msg_size;
-	size_t cap = capacity;
-	if (cap > size) {
-		cap = size;
+	const size_t end = (size_t)write;
+	const size_t boundarySize = sizeof(next->boundary) < size ? sizeof(next->boundary) : size;
+	size_t length = capacity < size ? capacity : size;
+	if (buffer == ukeUfsMsgCursor.buffer && size == ukeUfsMsgCursor.size) {
+		uint8_t previous[sizeof(next->boundary)];
+		uke_copy_msg_tail(buffer, size, ukeUfsMsgCursor.end, previous, boundarySize);
+		if (memcmp(previous, ukeUfsMsgCursor.boundary, boundarySize) == 0) {
+			const size_t pending = (end + size - ukeUfsMsgCursor.end) % size;
+			if (pending < length) {
+				length = pending;
+			}
+		}
 	}
-	size_t start = ((size_t)write + size - cap) % size;
-	size_t first = size - start;
-	if (first > cap) {
-		first = cap;
+	if (length == 0) {
+		return 0;
 	}
-	memcpy(out, m->msg_bufc + start, first);
-	if (cap > first) {
-		memcpy(out + first, m->msg_bufc, cap - first);
-	}
-	return cap;
+	next->buffer = buffer;
+	next->size = size;
+	next->end = end;
+	uke_copy_msg_tail(buffer, size, end, out, length);
+	uke_copy_msg_tail(buffer, size, end, next->boundary, boundarySize);
+	return length;
 }
 
 static void
@@ -357,26 +387,33 @@ uke_ufs_publish(void)
 		    (unsigned long long)first, (unsigned long long)blocks);
 	}
 
-	bzero(ukeUfsBuffer, sizeof(ukeUfsBuffer));
-	const size_t length = uke_snapshot(ukeUfsBuffer + 32, UKE_UFS_PAYLOAD_BYTES);
+	struct uke_ufs_msg_cursor next = {0};
+	const size_t length = uke_ufs_snapshot(ukeUfsBuffer + UKE_UFS_HEADER_BYTES,
+	    UKE_UFS_PAYLOAD_BYTES, &next);
 	if (length == 0) {
 		return;
 	}
+	const size_t used = UKE_UFS_HEADER_BYTES + length;
+	const uint32_t blocks = (uint32_t)((used + UKE_UFS_BLOCK_BYTES - 1) / UKE_UFS_BLOCK_BYTES);
+	bzero(ukeUfsBuffer + 24, UKE_UFS_HEADER_BYTES - 24);
+	bzero(ukeUfsBuffer + used, blocks * UKE_UFS_BLOCK_BYTES - used);
 	memcpy(ukeUfsBuffer, "UKELLOG1", 8);
 	uint64_t *seq = (uint64_t *)(ukeUfsBuffer + 8);
 	*seq = ukeUfsSeq;                       // little-endian AArch64
 	uint32_t *len = (uint32_t *)(ukeUfsBuffer + 16);
 	*len = (uint32_t)length;
 	uint32_t *crc = (uint32_t *)(ukeUfsBuffer + 20);
-	*crc = uke_crc32(ukeUfsBuffer + 32, length);
+	*crc = uke_crc32(ukeUfsBuffer + UKE_UFS_HEADER_BYTES, length);
 	__asm__ volatile("dsb sy" ::: "memory");
 
-	if (!native_ufs_log_write(ukeUfsCursor, UKE_UFS_RECORD_BLOCKS, ukeUfsBuffer)) {
+	// NativeUfs writes the log with FUA. A whole-device cache flush here
+	// would also flush unrelated Data write-back traffic on every log tick.
+	if (!native_ufs_log_write(ukeUfsCursor, blocks, ukeUfsBuffer)) {
 		IOLog("UkeLastLog: userdata log write failed at record %llu\n",
 		    (unsigned long long)ukeUfsSeq);
 		return;
 	}
-	(void)native_ufs_log_sync();
+	ukeUfsMsgCursor = next;
 	ukeUfsSeq++;
 #if defined(UKE_SOURCE_STORAGE_LOG)
 	boot_log_rounds++;
@@ -663,11 +700,7 @@ uke_last_log_writer(void *arg, wait_result_t result)
 
 #endif
 		uke_last_log_write();
-		// The userdata copy is paced separately: the 32 MiB window only holds
-		// 2048 records, so at the pram writer's 500 ms rate it would wrap every
-		// seventeen minutes and discard the start of the boot, which is what
-		// this copy exists to keep. Two seconds stretches the ring to about an
-		// hour.
+		// Pace the userdata copy separately. A quiet interval uses no slot.
 		if ((tick++ % (UKE_UFS_INTERVAL_MS / UKE_LAST_LOG_INTERVAL_MS)) == 0) {
 			uke_ufs_publish();
 		}

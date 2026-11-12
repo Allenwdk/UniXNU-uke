@@ -1839,7 +1839,8 @@ extern "C" int native_ufs_log_write (uint64_t rel, uint32_t blocks, const void *
   if (!gLogRegionBlocks || !src || !blocks || rel >= gLogRegionBlocks || blocks > gLogRegionBlocks - rel) return 0;
   while (blocks) {
     uint32_t chunk = blocks > kDataMax / 4096 ? static_cast<uint32_t> (kDataMax / 4096) : blocks;
-    if (hostWrite4k (0, gLogRegionFirst + rel, chunk, src) != kIOReturnSuccess) return 0;
+    // Make log blocks durable without flushing the Data store's write cache.
+    if (hostWrite4k (0, gLogRegionFirst + rel, chunk, src, true) != kIOReturnSuccess) return 0;
     src = static_cast<const uint8_t *> (src) + chunk * 4096ULL;
     rel += chunk;
     blocks -= chunk;
