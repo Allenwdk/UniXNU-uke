@@ -79,6 +79,12 @@ def frontend_details(blob):
     rows=[]
     for at in range(0,len(blob),FRAME_RECORD.size):
         kind,seq,t0,t1,t2,t3,a,b,c,d,tid,cpu0,cpu1,tid2=FRAME_RECORD.unpack_from(blob,at)
+        if kind==0 and d!=2:
+            reason='zero-filled' if not any(FRAME_RECORD.unpack_from(blob,at)) else 'invalid-segment-header'
+            if rows and rows[-1]['name']=='trace_gap' and rows[-1]['reason']==reason and rows[-1]['offset_bytes']+rows[-1]['bytes']==at:
+                rows[-1]['bytes']+=FRAME_RECORD.size
+            else:rows.append(dict(name='trace_gap',offset_bytes=at,bytes=FRAME_RECORD.size,reason=reason))
+            continue
         if kind==0:
             rows.append(dict(name='frame_segment',us=t0,wall_us=t1,pid=b,version=d,
                              next_record=t2,overwritten_records=t3))
