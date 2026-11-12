@@ -281,6 +281,8 @@ uke_last_log_write(void)
 
 int native_ufs_log_open(uint64_t *firstLba, uint64_t *blocks, const char **why);
 int native_ufs_log_write(uint64_t rel, uint32_t blocks, const void *src);
+extern void bsd_log_lock_safe(void);
+extern void bsd_log_unlock(void);
 
 static uint32_t
 uke_crc32(const uint8_t *data, size_t length)
@@ -326,17 +328,17 @@ uke_copy_msg_tail(const char *buffer, size_t size, size_t end, uint8_t *out, siz
 static size_t
 uke_ufs_snapshot(uint8_t *out, size_t capacity, struct uke_ufs_msg_cursor *next)
 {
+	// log_setsize can replace and free the ring while this thread is sampling.
+	bsd_log_lock_safe();
 	struct msgbuf *m = msgbufp;
-	if (m == NULL || m->msg_bufc == NULL || m->msg_size <= 1 || m->msg_magic != MSG_MAGIC) {
+	if (m == NULL || m->msg_bufc == NULL || m->msg_size <= 1 || m->msg_magic != MSG_MAGIC ||
+	    m->msg_bufx < 0 || m->msg_bufx >= m->msg_size) {
+		bsd_log_unlock();
 		return 0;
 	}
 	const char *buffer = m->msg_bufc;
 	const size_t size = (size_t)m->msg_size;
-	const int write = __atomic_load_n(&m->msg_bufx, __ATOMIC_RELAXED);
-	if (write < 0 || (size_t)write >= size) {
-		return 0;
-	}
-	const size_t end = (size_t)write;
+	const size_t end = (size_t)m->msg_bufx;
 	const size_t boundarySize = sizeof(next->boundary) < size ? sizeof(next->boundary) : size;
 	size_t length = capacity < size ? capacity : size;
 	if (buffer == ukeUfsMsgCursor.buffer && size == ukeUfsMsgCursor.size) {
@@ -349,14 +351,14 @@ uke_ufs_snapshot(uint8_t *out, size_t capacity, struct uke_ufs_msg_cursor *next)
 			}
 		}
 	}
-	if (length == 0) {
-		return 0;
+	if (length != 0) {
+		next->buffer = buffer;
+		next->size = size;
+		next->end = end;
+		uke_copy_msg_tail(buffer, size, end, out, length);
+		uke_copy_msg_tail(buffer, size, end, next->boundary, boundarySize);
 	}
-	next->buffer = buffer;
-	next->size = size;
-	next->end = end;
-	uke_copy_msg_tail(buffer, size, end, out, length);
-	uke_copy_msg_tail(buffer, size, end, next->boundary, boundarySize);
+	bsd_log_unlock();
 	return length;
 }
 
