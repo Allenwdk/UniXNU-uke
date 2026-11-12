@@ -753,9 +753,12 @@ static void cs_waiters(void) {
   cs_wait_task(task,peers[i]);task_deallocate(task);
  }
 }
+static thread_t cs_worker;
+static uint64_t cs_worker_progress;
 static void cs_thread(void *arg,wait_result_t result) {
  (void)arg;(void)result;
  for(unsigned tick=0;;++tick) {
+  if(tick%25==0)__atomic_store_n(&cs_worker_progress,mach_absolute_time(),__ATOMIC_RELAXED);
   boot_latency_fault_drain();
   if(tick%25==0){cs_refresh();cs_ptime_pass();cs_hot_samples();cs_waiters();}   // every 100 ms: an app's launch shows within that
   cs_tick=tick;
@@ -790,7 +793,10 @@ void boot_client_sampler_start(void) {
  cs_wait_seen=(struct cs_wait_seen *)IOMallocAligned(sizeof(struct cs_wait_seen)*CS_WAITER_SEEN,4096);
  if(cs_wait_seen)memset(cs_wait_seen,0,sizeof(struct cs_wait_seen)*CS_WAITER_SEEN);
  thread_t thread=THREAD_NULL;
- if(kernel_thread_start_priority(cs_thread,NULL,BASEPRI_KERNEL,&thread)==KERN_SUCCESS)thread_deallocate(thread);
+ // Both samplers run for the rest of this boot. Keep the returned reference
+ // so the independent writer can inspect the threads without a task lookup.
+ if(kernel_thread_start_priority(cs_thread,NULL,BASEPRI_KERNEL,&thread)==KERN_SUCCESS)
+  __atomic_store_n(&cs_worker,thread,__ATOMIC_RELEASE);
 }
 // The calling thread's user stack and the images its frames lie in, for the GPU allocation trace (BootDiagExport.c, kernel.boalloc.bin):
 // frames[0] pc, [1] lr, then the frame-pointer chain; slide: the task's shared cache slide (frames in the shared cache symbolize with it).
@@ -870,6 +876,7 @@ void boot_user_stack_here(struct boot_user_stack *out) {
  * the independent flight writer must keep running if the detailed sampler
  * blocks while walking user memory. Process traversal stays on this worker. */
 uint64_t boot_flight_probe_status[6];
+static thread_t flight_probe_worker;
 struct flight_thread_row {uint64_t tid,wait,frames[12],kernel[12];unsigned state,switches;};
 static struct flight_thread_row *flight_threads;
 static int flight_selected(proc_t proc,void *arg) {
@@ -934,8 +941,44 @@ void boot_flight_probe_start(void) {
  static unsigned started;if(__atomic_exchange_n(&started,1,__ATOMIC_ACQUIRE))return;
  flight_threads=IOMallocAligned(sizeof(*flight_threads)*16,4096);if(!flight_threads)return;
  thread_t thread=THREAD_NULL;
- if(kernel_thread_start(flight_probe_thread,NULL,&thread)==KERN_SUCCESS)thread_deallocate(thread);
+ if(kernel_thread_start(flight_probe_thread,NULL,&thread)==KERN_SUCCESS)
+  __atomic_store_n(&flight_probe_worker,thread,__ATOMIC_RELEASE);
 }
+
+static void flight_sample_stale_worker(thread_t thread,unsigned worker,uint64_t age_us)
+{
+ if(!thread || age_us<1000000)return;
+ uint64_t frames[12]={0},kernel[12]={0};
+ uint64_t tid=thread_tid(thread),wait=0;
+ unsigned state=0,switches=0;
+ bool irq=ml_set_interrupts_enabled(false);
+ const bool locked=simple_lock_try(&thread->sched_lock,&thread_lck_grp);
+ if(locked){
+  state=(unsigned)thread->state|((unsigned)thread->block_hint<<16);
+  wait=(uint64_t)thread->wait_event;
+  switches=thread->c_switch;
+  bt_kernel_stack(thread,kernel);
+  thread_unlock(thread);
+ }
+ ml_set_interrupts_enabled(irq);
+ boot_latency_record(43,worker,tid,age_us,locked,state,wait);
+ if(locked)boot_latency_waiter(0,tid,state,wait,switches,-1,0x101,0,frames,kernel);
+}
+
+void boot_flight_sample_stale_workers(uint64_t now_us)
+{
+ const uint64_t done=__atomic_load_n(&boot_flight_probe_status[2],__ATOMIC_ACQUIRE);
+ const uint64_t start=__atomic_load_n(&boot_flight_probe_status[1],__ATOMIC_RELAXED);
+ const uint64_t probe_us=done?done:start;
+ if(probe_us && now_us>probe_us)
+  flight_sample_stale_worker(__atomic_load_n(&flight_probe_worker,__ATOMIC_ACQUIRE),1,now_us-probe_us);
+ const uint64_t ticks=__atomic_load_n(&cs_worker_progress,__ATOMIC_RELAXED);
+ uint64_t ns=0;
+ if(ticks)absolutetime_to_nanoseconds(ticks,&ns);
+ if(ns && now_us>ns/1000)
+  flight_sample_stale_worker(__atomic_load_n(&cs_worker,__ATOMIC_ACQUIRE),2,now_us-ns/1000);
+}
+
 void boot_flight_cpu_status(uint64_t out[32]) {
  /* Processor objects are permanent. Compare active-thread pointers only;
   * never dereference a foreign CPU's racing active_thread. No IPI is sent. */

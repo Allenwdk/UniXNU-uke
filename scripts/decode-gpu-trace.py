@@ -66,6 +66,7 @@ LATENCY_FIELDS = {
  39: ('gpu_iokit_map','client token phase locking elapsed_us status'),
  41: ('gpu_level_share','level mhz percent top unused0 unused1'),
  42: ('flight_task_identity','shared_cache_slide name0 name1 name2 name3 unused'),
+ 43: ('flight_worker_wait','worker tid age_us lock_acquired state wait'),
 }
 RUNTIME_STAGES = {40:'memory_begin',41:'memory_pool',42:'memory_kib',43:'available_kib',
  44:'allocated',45:'reused',46:'memory_low',47:'memory_high',48:'cached_kib',49:'deferred_kib',

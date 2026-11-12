@@ -9,6 +9,7 @@ extern uint32_t native_gpu_trace_since(uint64_t *,void *,uint32_t,uint64_t *) __
 extern void boot_flight_probe_start(void);
 extern uint64_t boot_flight_probe_status[6];
 extern void boot_flight_cpu_status(uint64_t [32]);
+extern void boot_flight_sample_stale_workers(uint64_t);
 extern volatile uint64_t native_adreno_submit_us[8],native_adreno_fence_wake[8];
 extern volatile uint64_t native_data_io_reads,native_data_io_writes,native_data_flushes,native_data_persist_errors;
 extern volatile uint32_t native_legacy_swapstat[16],native_adreno_stall_hang,native_adreno_global_fault[4],native_adreno_recover_trace[4];
@@ -42,6 +43,7 @@ static void flight_worker(void *arg,wait_result_t wait) {
   if(!fl_emit(&writer,4,ticks,beat,sizeof beat,now)){++errors;IOSleep(250);continue;}
   uint64_t cpus[32]={0};boot_flight_cpu_status(cpus);
   if(!fl_emit(&writer,5,ticks,cpus,sizeof cpus,now)){++errors;IOSleep(250);continue;}
+  if(ticks%4==0)boot_flight_sample_stale_workers(now);
   /* Per-source quotas prevent a busy IPC producer from starving GPU events,
    * critical faults, the independent probe or the writer heartbeat. */
   for(unsigned source=0;source<3;++source)for(unsigned turn=0;turn<8;++turn) {
