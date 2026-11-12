@@ -46,6 +46,7 @@ extern volatile uint32_t native_adreno_kernel_alloc_fail[6], native_adreno_switc
 extern volatile uint32_t native_adreno_mount_fail[4], native_adreno_table_switches[8], native_adreno_table_pages[4];
 extern volatile uint32_t native_adreno_vm_fail[4], native_adreno_recover_trace[4];
 extern volatile uint32_t native_adreno_global_fault[4];
+extern volatile uint32_t native_adreno_stall_hang, native_adreno_stall_fault[32];
 extern uint32_t ml_outside_memory_pages, ml_outside_memory_refused;
 extern volatile uint32_t native_touch_irq_stats[4], native_touch_cost[9], native_touch_doze[4];
 extern uint32_t native_gpu_row_count;
@@ -479,6 +480,7 @@ uke_last_log_writer(void *arg, wait_result_t result)
 
 	unsigned tick = 0;
 	unsigned gpu_rows_logged = 0;
+	unsigned gpu_stall_hang_logged = 0;
 	for (;;) {
 		// The first seconds of msgbuf are flooded by boot logs; report the
 		// vnode sizing once the window is long past the ring's early noise.
@@ -632,6 +634,18 @@ uke_last_log_writer(void *arg, wait_result_t result)
                     IOLog("UKE GPU switch timeout %u/%u words %u: %08x %08x %08x %08x %08x %08x\n",
                         i + 1, timeouts, j, words[j], words[j + 1], words[j + 2], words[j + 3], words[j + 4], words[j + 5]);
                 }
+            }
+            const unsigned stall_hang = native_adreno_stall_hang;
+            if (stall_hang && stall_hang != gpu_stall_hang_logged) {
+                const volatile uint32_t *f = native_adreno_stall_fault;
+                IOLog("UKE GPU stall snapshot: hang=%u\n", stall_hang);
+                if (f[30]) {
+                    IOLog("UKE GPU stall FAR candidates: matches=%u hiZero=%u level=%u ib=%x:%x word=%u read=%u dwords=%u\n",
+                          f[0], f[1], f[2], f[4], f[3], f[5], f[30], f[31]);
+                    IOLog("UKE GPU stall FAR base candidate: base=%x distance=%x level=%u ib=%x:%x word=%u\n",
+                          f[16], f[17], f[18], f[20], f[19], f[21]);
+                }
+                gpu_stall_hang_logged = stall_hang;
             }
             IOLog("UKE GPU maintenance: walk=%llu/%llu/%llu/%llu/%llu skip=%u/%u audit=%u dirty=%u submit=%llu totalUs=%llu\n",
                 native_adreno_maint_walk[0], native_adreno_maint_walk[1], native_adreno_maint_walk[2],
