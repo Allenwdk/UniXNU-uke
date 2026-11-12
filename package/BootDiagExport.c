@@ -410,13 +410,20 @@ uint64_t boot_diag_scan(uint64_t budget) {
   }
   for(unsigned i=0;i<sizeof diag_roots/sizeof diag_roots[0];++i)scan(diag_roots[i],0,i,ctx);
   qsort(diag_files,diag_count,sizeof diag_files[0],worth);
-  unsigned crash_count[sizeof bl_crash_processes/sizeof bl_crash_processes[0]]={0};uint64_t crash_bytes=0;uint32_t files_kept=0;
+  unsigned crash_count[sizeof bl_crash_processes/sizeof bl_crash_processes[0]]={0};uint64_t crash_bytes=0,journal_bytes=0;uint32_t files_kept=0;
   for(uint32_t i=0;i<diag_count;++i) {
     struct diag_file *f=&diag_files[i];int process=bl_crash_process(f->path);
     uint64_t cost=24+strlen(f->path)-1+f->size;
     if(process>=0 && (crash_count[process]>=2 || f->size>4*1024*1024 || crash_bytes+f->size>8*1024*1024))continue;
+    // Leave room for saturated thread and CPU rings as well as both frame
+    // segments. Pipeline journals have a separate optional-file allowance.
+    const int journal = process<0 && !bl_frame_trace(f->path);
+    if(journal && f->size>2*1024*1024-journal_bytes) {
+      note("journal-budget",f->path,(int)(f->size>>10));++diag_skipped_count;continue;
+    }
     if(used+cost>budget){note("skipped",f->path,(int)(f->size>>10));++diag_skipped_count;continue;}
     f->keep=1;used+=cost;++files_kept;
+    if(journal)journal_bytes+=f->size;
     if(process>=0){++crash_count[process];crash_bytes+=f->size;}
   }
   boot_diag_files=files_kept;
