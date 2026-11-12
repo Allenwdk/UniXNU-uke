@@ -8,7 +8,8 @@ static inline int bl_latency_contains(const char *text,size_t size,const char *t
  return 0;
 }
 static const char *const bl_crash_processes[]={"STExtractionService","dasd","WidgetRenderer","FitnessWidget","CalendarWidget",
- "MobileSafari","com.apple.WebKit.WebContent","com.apple.WebKit.Networking","com.apple.WebKit.GPU","backboardd","SpringBoard"};
+ "MobileSafari","com.apple.WebKit.WebContent","com.apple.WebKit.Networking","com.apple.WebKit.GPU","backboardd","SpringBoard",
+ "DockFolderViewService","Preferences"};
 static inline int bl_crash_process(const char *path) {
  const char *name=path;for(const char *at=path;*at;++at)if(*at=='/')name=at+1;
  for(unsigned i=0;i<sizeof bl_crash_processes/sizeof bl_crash_processes[0];++i) {
