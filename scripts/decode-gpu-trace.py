@@ -78,7 +78,10 @@ def frontend_details(blob):
     rows=[]
     for at in range(0,len(blob),FRAME_RECORD.size):
         kind,seq,t0,t1,t2,t3,a,b,c,d,tid,cpu0,cpu1,tid2=FRAME_RECORD.unpack_from(blob,at)
-        if kind==1:
+        if kind==0:
+            rows.append(dict(name='frame_segment',us=t0,wall_us=t1,pid=b,version=d,
+                             next_record=t2,overwritten_records=t3))
+        elif kind==1:
             rows.append(dict(name='command_summary',sequence=seq,created_us=t0,committed_us=t1,scheduled_us=t2,completed_us=t3,
                              passes=a,draws=b,kpx=c,blits=d,creator_thread=tid,creator_cpu_begin=cpu0,creator_cpu_commit=cpu1,commit_thread=tid2))
         elif kind==7:
@@ -91,7 +94,8 @@ def frontend_details(blob):
         elif kind==12:
             rows.append(dict(name='runtime_stage',us=t0,runtime=t1,stage=a,argument=b,stage_sequence=c))
         elif kind==14:
-            rows.append(dict(name='encode_batch',us=t0,batch=t1,queued_us=t2,phase=a,tasks=b,depth=c,thread=tid))
+            rows.append(dict(name='encode_batch',us=t0,batch=t1,queued_us=t2,phase=a,tasks=b,depth=c,thread=tid,
+                             cpu_us=d if a==3 else None))
         elif kind==15:
             rows.append(dict(name='frontend_stage',us=t0,command=t1,commit=t2,batch=t3,phase=a,thread=b,surfaces=c,kib=d))
         elif kind==17:
