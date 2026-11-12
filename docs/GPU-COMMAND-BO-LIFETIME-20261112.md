@@ -1,0 +1,7 @@
+# GPU command recording and BO reuse, 2026-11-12
+
+On boot `34ADA08C-5F4A-41D0-A9D4-C6A62D0BD005` of vendor_boot `41162750…`, backboardd PID 62 took a write fault at Turnip offset `0x86e24` around 176.659 s. The signed image matches the window-offset packet writer. BoMap returned `0xe00002ca` about 3 ms earlier. While Settings animated at 226.344 s, backboardd PID 408 submitted an IB with zero handle and IOVA. The kernel refused it and backboardd exited. An iconservicesagent translation fault between the two events used matching job and hardware TTBR0 values. The shared fault subsequently invalidated process VMs in the SMMU checks.
+
+The new candidate checks the window-offset packet reservation and returns its recording error. It invalidates a retired BO's sparse-array entry under the retire lock before the cache can reissue that handle. Host checks reproduced both old failure paths. It also includes upstream Adreno740 `031f35c`, sheng global SMMU fault counters and UniXNU `c72a8a5` for keeping the Vulkan device after handled restarts. The first GPU address fault and the actual device-side cache interleaving remain unverified.
+
+Formal kernel, prelink, arm64e runtime, signatures, payload and paired boot images passed host verification. Candidate vendor_boot `408727678f042da845ba4d001c2b051c275dc220afb0f2f559915c4826aec9ac` awaits real-device tests. Recovery collection left the device at stock boot partitions, slot A and TWRP. No userdata was written by the host.
