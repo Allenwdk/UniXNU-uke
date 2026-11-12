@@ -32,3 +32,7 @@ interface compatibility. The previous iOS 17 qualification does not apply.
 At boot the driver authenticates the full tables. It keeps per-page hashes and
 a wired cache for authenticated table pages read on demand. Set
 `native-vroot-cache=0` to keep the whole tables wired instead.
+
+## Persistent Data and logs
+
+RamBlock can write Data through `native_ufs_store_write_cached` and make it durable through `native_ufs_store_sync`. Uke's log writer sets FUA on its own writes, keeping log durability independent of the Data cache flush schedule.
