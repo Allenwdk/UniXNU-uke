@@ -34,14 +34,14 @@ def scan(blob):
         if zlib.crc32(checked)!=crc:rejected['crc']+=1;continue
         try:boot=str(uuid.UUID(boot.split(b'\0')[0].decode()))
         except (ValueError,UnicodeError):rejected['boot_uuid']+=1;continue
-        pieces=[];at=head
+        pieces=[];at=head;valid=True
         while at<len(checked):
-            if at+PIECE.size>len(checked):break
+            if at+PIECE.size>len(checked):valid=False;break
             kind,n,cursor=PIECE.unpack_from(checked,at);at+=PIECE.size
-            if not n or at+n>len(checked) or kind not in range(1,6):break
-            if (kind==1 and n%120) or (kind in (2,3) and n%72) or (kind in (4,5) and n!=256):break
+            if not n or at+n>len(checked) or kind not in range(1,6):valid=False;break
+            if (kind==1 and n%120) or (kind in (2,3) and n%72) or (kind in (4,5) and n!=256):valid=False;break
             pieces.append((kind,cursor,bytes(checked[at:at+n])));at+=n
-        if at!=len(checked) or len(pieces)!=count:rejected['pieces']+=1;continue
+        if not valid or at!=len(checked) or len(pieces)!=count:rejected['pieces']+=1;continue
         groups[(boot,started)].append(dict(sequence=seq,us=us,previous_us=previous,pieces=pieces,slot=index,flags=flags))
     for rows in groups.values():rows.sort(key=lambda x:x['sequence'])
     return groups,dict(rejected)
