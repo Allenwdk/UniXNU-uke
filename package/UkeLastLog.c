@@ -37,6 +37,11 @@ extern char native_cpufreq_row[120];
 extern volatile uint32_t native_cpufreq_ramp[9], native_gpu_dcvs_reasons[9], native_gpu_dcvs_windows[8];
 extern volatile uint32_t native_gpu_pool_board[4], native_adreno_pool_state[12];
 extern volatile uint64_t native_adreno_fence_wake[8], native_adreno_submit_us[8];
+extern volatile uint32_t native_data_write_back __attribute__((weak_import)), native_data_persist_state;
+extern volatile uint64_t native_data_io_reads __attribute__((weak_import)), native_data_io_writes __attribute__((weak_import)),
+    native_data_flushes __attribute__((weak_import)), native_data_timer_flushes __attribute__((weak_import)),
+    native_data_fua_requests __attribute__((weak_import)), native_data_persist_errors;
+extern volatile uint32_t native_legacy_swapstat[16] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_maint_walk[8];
 extern volatile uint64_t native_adreno_map_met[7] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_sync_audit[6], native_adreno_sync_skips[2];
@@ -520,6 +525,13 @@ uke_last_log_writer(void *arg, wait_result_t result)
 	unsigned tick = 0;
 	unsigned gpu_rows_logged = 0;
 	unsigned gpu_stall_hang_logged = 0;
+#if defined(UKE_SOURCE_STORAGE_LOG)
+	uint32_t progress_diag = 0;
+	PE_parse_boot_argn("sheng-diag", &progress_diag, sizeof(progress_diag));
+	const bool progress_on = progress_diag == 1 && &native_data_write_back && &native_data_io_reads &&
+	    &native_data_io_writes && &native_data_flushes && &native_data_timer_flushes && &native_data_fua_requests &&
+	    &native_legacy_swapstat;
+#endif
 	for (;;) {
 		// The first seconds of msgbuf are flooded by boot logs; report the
 		// vnode sizing once the window is long past the ring's early noise.
@@ -557,7 +569,16 @@ uke_last_log_writer(void *arg, wait_result_t result)
         }
         // Upstream's regular log round retries the L3 vote until firmware enables
         // that domain. Keep its existing one-shot guard; no new worker is needed.
-        if ((tick % 4) == 0) sheng_cpufreq_poll();
+        if ((tick % 4) == 0) {
+            sheng_cpufreq_poll();
+            if (progress_on) {
+                IOLog("UKE progress: data state=%u wb=%u read=%llu write=%llu flush=%llu timer=%llu fua=%llu errors=%llu gpu submit=%llu fence=%llu display offer=%u flip=%u latch=%u retire=%u\n",
+                    native_data_persist_state, native_data_write_back, native_data_io_reads, native_data_io_writes,
+                    native_data_flushes, native_data_timer_flushes, native_data_fua_requests, native_data_persist_errors,
+                    native_adreno_submit_us[0], native_adreno_fence_wake[1], native_legacy_swapstat[0],
+                    native_legacy_swapstat[9], native_legacy_swapstat[10], native_legacy_swapstat[11]);
+            }
+        }
         if ((tick % 40) == 0) {
             IOLog("UKE %s\n", native_cpufreq_row);
             char row[512];
