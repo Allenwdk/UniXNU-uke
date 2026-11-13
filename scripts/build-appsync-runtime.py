@@ -117,6 +117,9 @@ os.execv('/usr/bin/llvm-' + name, ['llvm-' + name, *args])
             os.environ.update(old)
 
     report = json.loads((out / 'report.json').read_text())
+    load('uke_appsync_macho_contract', core / 'scripts/appsync/macho.py').require_reexport(
+        (out / 'lib/UniXNUAppSync.dylib').read_bytes(),
+        '/System/Library/Frameworks/Foundation.framework/Foundation')
     # Include the adaptation license alongside the signer's dependency licenses.
     shutil.copyfile(core / 'scripts/appsync/LICENSE', out / 'libexec/appsync-licenses/AppSync-COPYING')
     directories = [str(value) for prefix, directory in report['directories'].items()
@@ -147,6 +150,7 @@ os.execv('/usr/bin/llvm-' + name, ['llvm-' + name, *args])
         raise ValueError('original trust modules changed')
     (out / 'owner-trust.bundle').write_bytes(bundle)
     report.update(signatures=signatures, original_trust_modules_preserved=True,
+                  foundation_reexport_verified=True,
                   service_constraint_category=5, library_constraint_category=0,
                   uke_direct_brightness_transactions=True, hardware_verified=False,
                   upstream_commits=['c3c7468ad9f719b54f1011bd3bb01eea25a5ed5a',
