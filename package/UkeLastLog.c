@@ -28,6 +28,9 @@ extern int desiredvnodes;
 extern uint64_t sane_size;
 extern void uke_crash_log_start(void);
 #if defined(UKE_SOURCE_STORAGE_LOG)
+extern void uke_trace_worker_status(void);
+extern char bootsessionuuid_string[37];
+extern unsigned int vm_page_free_count,vm_page_active_count,vm_page_inactive_count,vm_page_wire_count,vm_page_speculative_count;
 extern volatile uint32_t boot_log_rounds;
 extern volatile int32_t native_battery_stats[16];
 extern volatile uint32_t native_battery_dispatch[6];
@@ -586,6 +589,12 @@ uke_last_log_writer(void *arg, wait_result_t result)
             }
         }
         if ((tick % 40) == 0) {
+            if (progress_on) {
+                uke_trace_worker_status();
+                IOLog("UKE VM: boot=%.36s free=%u active=%u inactive=%u wired=%u speculative=%u\n",
+                    bootsessionuuid_string, vm_page_free_count, vm_page_active_count,
+                    vm_page_inactive_count, vm_page_wire_count, vm_page_speculative_count);
+            }
             IOLog("UKE %s\n", native_cpufreq_row);
             char row[512];
             for (unsigned i = 0; i < 17 && armcpu_stats_row(i, row, sizeof row); ++i)

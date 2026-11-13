@@ -979,6 +979,26 @@ void boot_flight_sample_stale_workers(uint64_t now_us)
   flight_sample_stale_worker(__atomic_load_n(&cs_worker,__ATOMIC_ACQUIRE),2,now_us-ns/1000);
 }
 
+// Use a retained worker reference. The caller must not depend on process
+// enumeration or on the binary recorder to persist this report.
+int boot_flight_worker_stack(thread_t thread,uint64_t *tid,unsigned *state,
+    uint64_t *event,uint64_t frames[12])
+{
+ *tid=thread_tid(thread);
+ const bool irq=ml_set_interrupts_enabled(false);
+ const bool locked=simple_lock_try(&thread->sched_lock,&thread_lck_grp);
+ if(locked){
+  *state=(unsigned)thread->state|((unsigned)thread->block_hint<<16);
+  *event=VM_KERNEL_UNSLIDE_OR_PERM((uint64_t)thread->wait_event);
+  bt_kernel_stack(thread,frames);
+  thread_unlock(thread);
+ }
+ ml_set_interrupts_enabled(irq);
+ if(locked)for(unsigned i=0;i<BT_KFRAMES && frames[i];++i)
+  frames[i]=VM_KERNEL_UNSLIDE((uint64_t)ptrauth_strip((void *)(uintptr_t)frames[i],ptrauth_key_return_address));
+ return locked;
+}
+
 void boot_flight_cpu_status(uint64_t out[32]) {
  /* Processor objects are permanent. Compare active-thread pointers only;
   * never dereference a foreign CPU's racing active_thread. No IPI is sent. */

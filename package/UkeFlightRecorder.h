@@ -15,8 +15,13 @@ extern volatile uint64_t native_data_io_reads,native_data_io_writes,native_data_
 extern volatile uint32_t native_legacy_swapstat[16],native_adreno_stall_hang,native_adreno_global_fault[4],native_adreno_recover_trace[4];
 extern volatile uint32_t native_gpu_dcvs[15];
 extern uint32_t native_gpu_perf_vote[2];
-static uint64_t flight_us(void){uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return ns/1000;}
-static int flight_write(uint64_t first,uint32_t blocks,const void *data,void *context){(void)context;return native_ufs_log_write(first,blocks,data);}
+static int flight_write(uint64_t first,uint32_t blocks,const void *data,void *context){
+ (void)context;
+ trace_worker_progress(&flight_progress,&flight_phase,3);
+ const int result=native_ufs_log_write(first,blocks,data);
+ trace_worker_progress(&flight_progress,&flight_phase,2);
+ return result;
+}
 static void flight_worker(void *arg,wait_result_t wait) {
  (void)arg;(void)wait;thread_set_thread_name(current_thread(),"frame-flight");
  uint8_t *memory=IOMallocAligned(2*FlSlotBytes,FlBlock);
@@ -26,10 +31,12 @@ static void flight_worker(void *arg,wait_result_t wait) {
  uint64_t cursor[3]={0},lost[3]={0},errors=0,ticks=0;
  uint8_t *scratch=memory+FlSlotBytes;
  while(!native_ufs_export_blocks() || !bootsessionuuid_string[0])IOSleep(250);
+ trace_worker_progress(&flight_progress,&flight_phase,1);
  memcpy(writer.boot,bootsessionuuid_string,36);writer.started_us=flight_us();
  boot_latency_start();boot_flight_probe_start();
  IOLog("UKE FLIGHT: start=%llu boot=%s first=%u blocks=%u tick-ms=250 FUA=1\n",writer.started_us,writer.boot,FlFirstBlock,FlRegionBlocks);
  for(;;){
+  trace_worker_progress(&flight_progress,&flight_phase,2);
   const uint64_t now=flight_us();
   /* A previous failed FUA keeps its staged bytes and retries before reading
    * more. Source cursors advance only after their bytes enter this buffer. */
@@ -56,11 +63,13 @@ static void flight_worker(void *arg,wait_result_t wait) {
   }
   if(!fl_flush(&writer,flight_us()))++errors;
   if(ticks%40==0)IOLog("UKE FLIGHT: slots=%llu us=%llu dropped=%llu/%llu/%llu errors=%llu\n",writer.sequence,writer.last_us,lost[0],lost[1],lost[2],errors);
+  trace_worker_progress(&flight_progress,&flight_phase,0);
   IOSleep(250);
  }
 }
 static void flight_start(void) {
  unsigned enabled=0;if(!PE_parse_boot_argn("uke-flight",&enabled,sizeof enabled) || enabled!=1)return;
  thread_t thread=THREAD_NULL;
- if(kernel_thread_start(flight_worker,NULL,&thread)==KERN_SUCCESS)thread_deallocate(thread);
+ if(kernel_thread_start(flight_worker,NULL,&thread)==KERN_SUCCESS)
+  __atomic_store_n(&flight_writer_thread,thread,__ATOMIC_RELEASE);
 }
