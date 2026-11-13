@@ -19,8 +19,8 @@
 // over recount), a domain's the share of its busiest CPU. The domain gets the lowest LUT level at or above 1.25 x busy x its current
 // frequency (schedutil's margin), the highest allowed level once a CPU is 90 % busy (a hispeed jump); it goes up at once and down only
 // after 4 windows in a row that asked for less. Levels stay between `cpufreq-min=<MHz>` (default 0) and mode 3's highest
-// non-turbo level (or the cap). The XNU CPU numbers follow the DTS cpu order: cpus 0-2 are the A520 cores (domain 0, the E cluster),
-// cpus 3-6 the A720 cores (domain 1), cpu 7 the X4 (domain 2).
+// non-turbo level (or the cap). Physical affinities 0x000–0x200 belong to the
+// A520 domain, 0x300–0x600 to the A720 domain, and 0x700 to the X4 domain.
 // Touch boost: when the touch report count moves, the P domains (1, 2) hold their highest allowed level until
 // `cpufreq-boost-ms=<ms>` (default 1000, 0 = off) after the last report, so an app launch or a scroll starts at full speed
 // instead of ramping by 1.25x per window. Outside a boost the P domains stop at the lowest level at or above half their highest
@@ -68,6 +68,7 @@ volatile uint32_t native_cpufreq_count;
 extern volatile uint32_t native_adreno_method_stats[20][4] __attribute__((weak_import));
 extern volatile uint32_t native_hid_input_events[8] __attribute__((weak_import));
 uint64_t sheng_cpu_idle_mach(int cpu);
+int ml_get_cpu_number(uint32_t phys_id);
 vm_offset_t ml_io_map_unmappable(vm_offset_t, vm_size_t, unsigned int);
 }
 static_assert(sizeof(native_cpufreq_rec) == 32, "cpufreq record");
@@ -218,8 +219,12 @@ void setLevel(unsigned d, unsigned at) {
 }
 
 void governorThread(void *, wait_result_t) {
+    int logicalCpu[kCpus];
     uint64_t lastIdle[kCpus] = {}, lastT = mach_absolute_time();
-    for (unsigned c = 0; c < kCpus; ++c) lastIdle[c] = sheng_cpu_idle_mach((int)c);
+    for (unsigned c = 0; c < kCpus; ++c) {
+        logicalCpu[c] = ml_get_cpu_number(c << 8);
+        if (logicalCpu[c] >= 0) lastIdle[c] = sheng_cpu_idle_mach(logicalCpu[c]);
+    }
     unsigned cur[3] = {}, down[3] = {}, quiet[3] = {};
     bool ready[3] = {};
     uint64_t boostAbs = 0, boostEnd = 0;
@@ -256,7 +261,8 @@ void governorThread(void *, wait_result_t) {
         const bool boost = t < boostEnd;
         uint64_t busy[3] = {};   // per mille of the busiest CPU
         for (unsigned c = 0; c < kCpus; ++c) {
-            const uint64_t idle = sheng_cpu_idle_mach((int)c), di = idle - lastIdle[c];
+            if (logicalCpu[c] < 0) continue;
+            const uint64_t idle = sheng_cpu_idle_mach(logicalCpu[c]), di = idle - lastIdle[c];
             lastIdle[c] = idle;
             const uint64_t b = di >= dt ? 0 : (dt - di) * 1000 / dt;
             const int d = kCpuDomain[c];

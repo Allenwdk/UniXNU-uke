@@ -138,6 +138,7 @@ extern "C" volatile uint64_t armcpu_ipi_interrupts __attribute__((weak));
 extern "C" volatile uint64_t armcpu_ipi_sent __attribute__((weak));
 extern "C" volatile uint64_t armcpu_ipi_selftest_sent __attribute__((weak));
 extern "C" void armcpu_ipi_selftest(uint64_t aff) __attribute__((weak));
+extern "C" int ml_get_cpu_number(uint32_t phys_id);
 extern "C" void armcpu_gic_diag(uint64_t aff, uint32_t *out) __attribute__((weak));
 extern "C" volatile uint32_t armcpu_gic_diag_stage __attribute__((weak));
 extern "C" void armcpu_sgi_selfprobe(uint64_t *out) __attribute__((weak));
@@ -1576,10 +1577,13 @@ void ipiSelfTest() {
     if (!armcpu_ipi_selftest || !&armcpu_ipi_interrupts) {setRow(2, "IPI nolink"); return;}
     unsigned mask = 0;
     for (unsigned cpu = 0; cpu < 8; ++cpu) {
-        const uint64_t received = armcpu_ipi_interrupts;
-        armcpu_ipi_selftest(uint64_t(cpu) << 8);
-        for (unsigned wait = 0; wait < 20 && armcpu_ipi_interrupts == received; ++wait) IOSleep(1);
-        if (armcpu_ipi_interrupts != received) mask |= 1u << cpu;
+        const uint32_t affinity = cpu << 8;
+        const int logical = ml_get_cpu_number(affinity);
+        if (logical < 0 || logical >= 8) continue;
+        const uint32_t received = armcpu_core_sgi[logical];
+        armcpu_ipi_selftest(affinity);
+        for (unsigned wait = 0; wait < 20 && armcpu_core_sgi[logical] == received; ++wait) IOSleep(1);
+        if (armcpu_core_sgi[logical] != received) mask |= 1u << cpu;
     }
     char row[64];
     gIpiRuns = gIpiRuns + 1;
