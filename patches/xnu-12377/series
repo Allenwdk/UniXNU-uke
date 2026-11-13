@@ -141,3 +141,7 @@ upstream/platform-error-name-address.patch
 upstream/window-outside-memory-adoption.patch
 upstream/kmem-alloc-failure-report.patch
 upstream/contig-search-report.patch
+
+# sheng c3c7468 + 20cf25d: all-user AppSync, preserving third-party process identity.
+sheng-appsync-runtime.patch
+sheng-appsync-user-trust.patch

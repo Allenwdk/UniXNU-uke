@@ -4,6 +4,8 @@ schema_version = 2
 # Uke prepares signed runtime assets explicitly, reusing its preserved Data seed.
 [payload.runtime]
 enabled = false
+# Prepared explicitly by scripts/build-appsync-runtime.py on Linux.
+appsync = true
 
 [payload.runtime.launchd_job_environment."com.apple.iconservices.iconservicesagent"]
 FORCE_SOFTWARE_RENDERER = "0"
@@ -244,6 +246,7 @@ kernel_args = [
   "boot-progress=2",
   "sheng-gpu-preempt=2",
   "uke-backlight-runtime=1",
+  "appsync=1",
   "uke-backlight-irq=1",
   "debug=334",
   "-uketextconsole",
