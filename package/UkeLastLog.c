@@ -8,6 +8,9 @@
 // userdata log window through NativeUfs, which makes them readable from
 // recovery. Apart from those two the writer never allocates, changes
 // translation, or touches a device register.
+#if __has_include(<arm/uke_cpu_stall.h>)
+#include <arm/uke_cpu_stall.h>
+#endif
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
@@ -605,6 +608,36 @@ uke_last_log_writer(void *arg, wait_result_t result)
                 IOLog("UKE VM: boot=%.36s free=%u active=%u inactive=%u wired=%u speculative=%u\n",
                     bootsessionuuid_string, vm_page_free_count, vm_page_active_count,
                     vm_page_inactive_count, vm_page_wire_count, vm_page_speculative_count);
+#if defined(UKE_CPU_STALL_H)
+                if (uke_cpu_stall_enabled) {
+                    const uint64_t now = mach_absolute_time();
+                    for (unsigned cpu = 0; cpu < 8; ++cpu) {
+                        struct uke_cpu_stall_record row = {0};
+                        if (!uke_cpu_stall_snapshot(cpu, &row)) {
+                            IOLog("UKE CPU IRQ: cpu=%u snapshot busy\n", cpu);
+                            continue;
+                        }
+                        uint64_t irq_ns = 0, mask_ns = 0;
+                        if (now >= row.entered_at)
+                            absolutetime_to_nanoseconds(now - row.entered_at, &irq_ns);
+                        if (row.masked_at && now >= row.masked_at)
+                            absolutetime_to_nanoseconds(now - row.masked_at, &mask_ns);
+                        const bool kernel = (row.cpsr & 0x1f) != 0;
+                        IOLog("UKE CPU IRQ: cpu=%u seq=%llu enter=%llu exit=%llu phase=%llu irqAgeUs=%llu maskOpen=%u maskAgeUs=%llu\n",
+                            cpu, row.sequence, row.irq_entries, row.irq_exits, row.phase,
+                            irq_ns / 1000, row.masked_at != 0, mask_ns / 1000);
+                        IOLog("UKE CPU site: cpu=%u pc=%llx psr=%llx sp=%llx fp=%llx thread=%llx\n",
+                            cpu, kernel ? VM_KERNEL_UNSLIDE(row.pc) : row.pc, row.cpsr,
+                            kernel ? VM_KERNEL_UNSLIDE(row.sp) : row.sp,
+                            kernel ? VM_KERNEL_UNSLIDE(row.fp) : row.fp,
+                            (uint64_t)VM_KERNEL_UNSLIDE_OR_PERM(row.thread));
+                        IOLog("UKE CPU mask: cpu=%u caller=%llx sp=%llx thread=%llx\n",
+                            cpu, (uint64_t)VM_KERNEL_UNSLIDE(row.masked_caller),
+                            (uint64_t)VM_KERNEL_UNSLIDE(row.masked_sp),
+                            (uint64_t)VM_KERNEL_UNSLIDE_OR_PERM(row.masked_thread));
+                    }
+                }
+#endif
                 if (&uke_idle_timer_waits && &uke_idle_timer_returns && &uke_idle_timer_rearms) {
                     uint64_t cpus[32] = {0};
                     boot_flight_cpu_status(cpus);

@@ -1,0 +1,324 @@
+--- /dev/null
++++ b/osfmk/arm/uke_cpu_stall.h
+@@ -0,0 +1,33 @@
++/* SPDX-License-Identifier: BSD-3-Clause */
++#ifndef UKE_CPU_STALL_H
++#define UKE_CPU_STALL_H
++
++#include <stdint.h>
++
++/* Fixed storage only. A row is written by its own CPU with IRQs masked. */
++struct uke_cpu_stall_record {
++    uint64_t sequence;
++    uint64_t irq_entries;
++    uint64_t irq_exits;
++    uint64_t entered_at;
++    uint64_t pc;
++    uint64_t cpsr;
++    uint64_t sp;
++    uint64_t fp;
++    uint64_t thread;
++    uint64_t phase;
++    uint64_t masked_at;
++    uint64_t masked_caller;
++    uint64_t masked_sp;
++    uint64_t masked_thread;
++} __attribute__((aligned(128)));
++
++extern unsigned int uke_cpu_stall_enabled;
++void uke_cpu_stall_irq_enter(uint64_t pc, uint64_t cpsr, uint64_t sp, uint64_t fp);
++void uke_cpu_stall_irq_exit(void);
++void uke_cpu_stall_phase(uint64_t phase);
++void uke_cpu_stall_mask_begin(uint64_t caller, uint64_t sp);
++void uke_cpu_stall_mask_end(void);
++int uke_cpu_stall_snapshot(unsigned int cpu, struct uke_cpu_stall_record *out);
++
++#endif
+--- a/osfmk/arm/cpu_common.c
++++ b/osfmk/arm/cpu_common.c
+@@ -31,6 +31,9 @@
+  *	cpu routines common to all supported arm variants
+  */
+ 
++#include <arm/uke_cpu_stall.h>
++#include <kern/startup.h>
++#include <pexpert/pexpert.h>
+ #include <kern/machine.h>
+ #include <kern/cpu_number.h>
+ #include <kern/thread.h>
+@@ -63,6 +66,117 @@
+ cpu_data_t       PERCPU_DATA(cpu_data);
+ cpu_data_entry_t CpuDataEntries[MAX_CPUS];
+ 
++
++/* CPU-only freeze observations, independent of the optional GPU recorder. */
++unsigned int uke_cpu_stall_enabled;
++static struct uke_cpu_stall_record uke_cpu_stall_records[8];
++
++static void
++uke_cpu_stall_init(void)
++{
++    unsigned int enabled = 0;
++    PE_parse_boot_argn("uke-cpu-stall", &enabled, sizeof(enabled));
++    uke_cpu_stall_enabled = enabled == 1;
++}
++STARTUP(TUNABLES, STARTUP_RANK_LAST, uke_cpu_stall_init);
++
++static struct uke_cpu_stall_record *
++uke_cpu_stall_begin(void)
++{
++    struct uke_cpu_stall_record *row =
++        &uke_cpu_stall_records[getCpuDatap()->cpu_number & 7];
++    __atomic_fetch_add(&row->sequence, 1ULL, __ATOMIC_ACQ_REL);
++    return row;
++}
++
++static void
++uke_cpu_stall_end(struct uke_cpu_stall_record *row)
++{
++    __atomic_fetch_add(&row->sequence, 1ULL, __ATOMIC_RELEASE);
++}
++
++void
++uke_cpu_stall_irq_enter(uint64_t pc, uint64_t cpsr, uint64_t sp, uint64_t fp)
++{
++    struct uke_cpu_stall_record *row = uke_cpu_stall_begin();
++    __atomic_fetch_add(&row->irq_entries, 1ULL, __ATOMIC_RELAXED);
++    __atomic_store_n(&row->entered_at, mach_absolute_time(), __ATOMIC_RELAXED);
++    __atomic_store_n(&row->pc, pc, __ATOMIC_RELAXED);
++    __atomic_store_n(&row->cpsr, cpsr, __ATOMIC_RELAXED);
++    __atomic_store_n(&row->sp, sp, __ATOMIC_RELAXED);
++    __atomic_store_n(&row->fp, fp, __ATOMIC_RELAXED);
++    __atomic_store_n(&row->thread, (uintptr_t)current_thread(), __ATOMIC_RELAXED);
++    __atomic_store_n(&row->phase, 1ULL, __ATOMIC_RELAXED);
++    uke_cpu_stall_end(row);
++}
++
++void
++uke_cpu_stall_irq_exit(void)
++{
++    struct uke_cpu_stall_record *row = uke_cpu_stall_begin();
++    __atomic_fetch_add(&row->irq_exits, 1ULL, __ATOMIC_RELAXED);
++    __atomic_store_n(&row->phase, 0ULL, __ATOMIC_RELAXED);
++    uke_cpu_stall_end(row);
++}
++
++void
++uke_cpu_stall_phase(uint64_t phase)
++{
++    struct uke_cpu_stall_record *row = uke_cpu_stall_begin();
++    __atomic_store_n(&row->phase, phase, __ATOMIC_RELAXED);
++    uke_cpu_stall_end(row);
++}
++
++void
++uke_cpu_stall_mask_begin(uint64_t caller, uint64_t sp)
++{
++    struct uke_cpu_stall_record *row = uke_cpu_stall_begin();
++    __atomic_store_n(&row->masked_at, mach_absolute_time(), __ATOMIC_RELAXED);
++    __atomic_store_n(&row->masked_caller, caller, __ATOMIC_RELAXED);
++    __atomic_store_n(&row->masked_sp, sp, __ATOMIC_RELAXED);
++    __atomic_store_n(&row->masked_thread, (uintptr_t)current_thread(), __ATOMIC_RELAXED);
++    uke_cpu_stall_end(row);
++}
++
++void
++uke_cpu_stall_mask_end(void)
++{
++    struct uke_cpu_stall_record *row = uke_cpu_stall_begin();
++    __atomic_store_n(&row->masked_at, 0ULL, __ATOMIC_RELAXED);
++    uke_cpu_stall_end(row);
++}
++
++int
++uke_cpu_stall_snapshot(unsigned int cpu, struct uke_cpu_stall_record *out)
++{
++    if (!uke_cpu_stall_enabled || cpu >= 8 || out == NULL) {
++        return 0;
++    }
++    const struct uke_cpu_stall_record *row = &uke_cpu_stall_records[cpu];
++    const uint64_t before = __atomic_load_n(&row->sequence, __ATOMIC_ACQUIRE);
++    if (before & 1) {
++        return 0;
++    }
++#define UKE_STALL_COPY(field) out->field = __atomic_load_n(&row->field, __ATOMIC_RELAXED)
++    UKE_STALL_COPY(irq_entries);
++    UKE_STALL_COPY(irq_exits);
++    UKE_STALL_COPY(entered_at);
++    UKE_STALL_COPY(pc);
++    UKE_STALL_COPY(cpsr);
++    UKE_STALL_COPY(sp);
++    UKE_STALL_COPY(fp);
++    UKE_STALL_COPY(thread);
++    UKE_STALL_COPY(phase);
++    UKE_STALL_COPY(masked_at);
++    UKE_STALL_COPY(masked_caller);
++    UKE_STALL_COPY(masked_sp);
++    UKE_STALL_COPY(masked_thread);
++#undef UKE_STALL_COPY
++    __atomic_thread_fence(__ATOMIC_ACQUIRE);
++    out->sequence = __atomic_load_n(&row->sequence, __ATOMIC_ACQUIRE);
++    return before == out->sequence;
++}
++
+ static LCK_GRP_DECLARE(cpu_lck_grp, "cpu_lck_grp");
+ static LCK_RW_DECLARE(cpu_state_lock, &cpu_lck_grp);
+ static LCK_MTX_DECLARE(cpu_xcall_mtx, &cpu_lck_grp);
+@@ -632,6 +746,7 @@
+ cpu_signal_handler_internal(boolean_t disable_signal)
+ {
+ 	cpu_data_t     *cpu_data_ptr = getCpuDatap();
++	if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(20); }
+ 
+ 	cpu_data_ptr->cpu_stat.ipi_cnt++;
+ 	cpu_data_ptr->cpu_stat.ipi_cnt_wake++;
+@@ -669,7 +784,9 @@
+ 		if (cpu_signal & SIGPdebug) {
+ 			os_atomic_andnot(&cpu_data_ptr->cpu_signal, SIGPdebug, acquire);
+ 			ml_interrupt_masked_debug_start(DebuggerXCall, DBG_INTR_TYPE_IPI);
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(25); }
+ 			DebuggerXCall(cpu_data_ptr->cpu_int_state);
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(20); }
+ 			ml_interrupt_masked_debug_end();
+ 		}
+ #if KPERF
+@@ -677,29 +794,39 @@
+ 			os_atomic_andnot(&cpu_data_ptr->cpu_signal, SIGPkppet, acquire);
+ 			extern void kperf_signal_handler(void);
+ 			ml_interrupt_masked_debug_start(kperf_signal_handler, DBG_INTR_TYPE_IPI);
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(26); }
+ 			kperf_signal_handler();
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(20); }
+ 			ml_interrupt_masked_debug_end();
+ 		}
+ #endif /* KPERF */
+ 		if (cpu_signal & (SIGPxcall | SIGPxcallImm)) {
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(21); }
+ 			cpu_handle_xcall(cpu_data_ptr);
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(20); }
+ 		}
+ 		if (cpu_signal & SIGPMaintenance) {
+ 			os_atomic_andnot(&cpu_data_ptr->cpu_signal, SIGPMaintenance, acquire);
+ 			ml_interrupt_masked_debug_start(maintenance_ack_ipi, DBG_INTR_TYPE_IPI);
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(22); }
+ 			maintenance_ack_ipi(cpu_data_ptr->cpu_number);
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(20); }
+ 			ml_interrupt_masked_debug_end();
+ 		}
+ 		if (cpu_signal & SIGPast) {
+ 			os_atomic_andnot(&cpu_data_ptr->cpu_signal, SIGPast, acquire);
+ 			ml_interrupt_masked_debug_start(ast_check, DBG_INTR_TYPE_IPI);
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(23); }
+ 			ast_check(current_processor());
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(20); }
+ 			ml_interrupt_masked_debug_end();
+ 		}
+ 		if (cpu_signal & SIGPTimerLocal) {
+ 			os_atomic_andnot(&cpu_data_ptr->cpu_signal, SIGPTimerLocal, acquire);
+ 			ml_interrupt_masked_debug_start(timer_queue_expire_local, DBG_INTR_TYPE_IPI);
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(24); }
+ 			timer_queue_expire_local(current_processor());
++			if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(20); }
+ 			ml_interrupt_masked_debug_end();
+ 		}
+ 		if (cpu_signal & SIGPdeferred) {
+@@ -708,6 +835,7 @@
+ 
+ 		cpu_signal = os_atomic_or(&cpu_data_ptr->cpu_signal, 0, acquire);
+ 	}
++	if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(3); }
+ }
+ 
+ void
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1,3 +1,4 @@
++#include <arm/uke_cpu_stall.h>
+ #include <kern/boot_progress.h>
+ /*
+  * Copyright (c) 2012-2023 Apple Inc. All rights reserved.
+@@ -3059,10 +3060,16 @@
+ #endif
+ 
+ 
++    if (uke_cpu_stall_enabled) {
++        uke_cpu_stall_irq_enter(get_saved_state_pc(state), get_saved_state_cpsr(state),
++            get_saved_state_sp(state), get_saved_state_fp(state));
++    }
+ 	sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
++    if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(2); }
+ 	boot_progress_irq(get_saved_state_pc(state), get_saved_state_cpsr(state), get_saved_state_sp(state));
+ 	/* per-interrupt sampling off: boots with it and the Edge matrix stalled after the data disk started (cause not isolated) */
+ 
++    if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(3); }
+ #if USE_APPLEARMSMP
+ 	PE_handle_ext_interrupt();
+ #else
+@@ -3073,10 +3080,12 @@
+ 	    cdp->interrupt_source);
+ #endif
+ 
++    if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(4); }
+ 	entropy_collect();
+ 
+ 
+ 	sleh_interrupt_handler_epilogue();
++    if (uke_cpu_stall_enabled) { uke_cpu_stall_irq_exit(); }
+ #if MACH_ASSERT
+ 	if (preemption_level != sleh_get_preemption_level()) {
+ 		panic("irq handler %p changed preemption level from %d to %d", cdp->interrupt_handler, preemption_level, sleh_get_preemption_level());
+--- a/osfmk/arm/rtclock.c
++++ b/osfmk/arm/rtclock.c
+@@ -37,6 +37,7 @@
+  *   real-time clock.
+  */
+ 
++#include <arm/uke_cpu_stall.h>
+ #include <mach/mach_types.h>
+ 
+ #include <kern/clock.h>
+@@ -329,6 +330,7 @@
+ 	uintptr_t                pc;
+ 
+ 	cdp = getCpuDatap();
++	if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(30); }
+ 
+ 	cdp->cpu_stat.timer_cnt++;
+ 	SCHED_STATS_INC(timer_pop_count);
+@@ -366,7 +368,9 @@
+ 	}
+ 
+ 	/* call the generic etimer */
++	if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(31); }
+ 	timer_intr(user_mode, pc);
++	if (uke_cpu_stall_enabled) { uke_cpu_stall_phase(3); }
+ }
+ 
+ static int
+--- a/osfmk/arm/machine_routines_common.c
++++ b/osfmk/arm/machine_routines_common.c
+@@ -26,6 +26,7 @@
+  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+  */
+ 
++#include <arm/uke_cpu_stall.h>
+ #include <arm/machine_cpu.h>
+ #include <arm/cpu_internal.h>
+ #include <arm/cpuid.h>
+@@ -1123,10 +1124,16 @@
+ #endif
+ 			}
+ 		}
++		if (uke_cpu_stall_enabled) { uke_cpu_stall_mask_end(); }
+ 		__builtin_arm_wsr("DAIFClr", DAIFSC_STANDARD_DISABLE);
+ 	} else if (!enable && ((state & DAIF_STANDARD_DISABLE) != DAIF_STANDARD_DISABLE)) {
+ 		assert3u(state & DAIF_STANDARD_DISABLE, ==, 0);
+ 		__builtin_arm_wsr("DAIFSet", DAIFSC_STANDARD_DISABLE);
++        if (uke_cpu_stall_enabled) {
++            uint64_t sp;
++            __asm__ volatile("mov %0, sp" : "=r"(sp));
++            uke_cpu_stall_mask_begin((uintptr_t)__builtin_return_address(0), sp);
++        }
+ 
+ #if SCHED_HYGIENE_DEBUG
+ 		if (__probable(debug && static_if(sched_debug_interrupt_disable))) {
