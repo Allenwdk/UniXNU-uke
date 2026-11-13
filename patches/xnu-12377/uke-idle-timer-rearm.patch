@@ -1,0 +1,47 @@
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -486,6 +486,10 @@
+ extern bool sheng_sigp_recover(cpu_data_t *target_proc);
+ volatile uint32_t sheng_idle_sigp_cleared, sheng_idle_sigp_refused, sheng_idle_enter[8], sheng_idle_disallowed[8];
+ 
++/* Per-CPU observations for the board's independent persistent log. */
++uint32_t uke_idle_timer_waits[8], uke_idle_timer_rearms[8];
++uint32_t uke_idle_timer_returns[8];
++
+ void __attribute__((noreturn))
+ cpu_idle(void)
+ {
+@@ -566,13 +570,27 @@
+ 
+ 	if (__improbable(cpu_proximate_timer())) {
+ 		if (idle_proximate_timer_wfe == 1) {
+-			/* Poll issuing WFEs until the expected
+-			 * timer FIQ arrives.
++			/*
++			 * The virtual timer arrives through the vGIC. Leave the
++			 * masked wait if delivery does not follow the deadline.
++			 * The generic timer event stream bounds each WFE.
+ 			 */
+-			KDBG(CPUPM_IDLE_TIMER_WFE | DBG_FUNC_START, ipending, cpu_data_ptr->wfe_count, ~0ULL);
+-			ipending = wfe_to_deadline_or_interrupt(cid, ~0ULL, cpu_data_ptr, false, false);
+-			KDBG(CPUPM_IDLE_TIMER_WFE | DBG_FUNC_END, ipending, cpu_data_ptr->wfe_count, ~0ULL);
+-			assert(ipending == true);
++			uint64_t grace;
++			nanoseconds_to_absolutetime(50 * NSEC_PER_USEC, &grace);
++			const uint64_t deadline = cpu_data_ptr->rtcPop + grace;
++			const unsigned cpu = cpu_data_ptr->cpu_number & 7;
++			os_atomic_inc(&uke_idle_timer_waits[cpu], relaxed);
++			KDBG(CPUPM_IDLE_TIMER_WFE | DBG_FUNC_START, ipending, cpu_data_ptr->wfe_count, deadline);
++			ipending = wfe_to_deadline_or_interrupt(cid, deadline, cpu_data_ptr, false, false);
++			KDBG(CPUPM_IDLE_TIMER_WFE | DBG_FUNC_END, ipending, cpu_data_ptr->wfe_count, deadline);
++			os_atomic_inc(&uke_idle_timer_returns[cpu], relaxed);
++			if (!ipending && !cpu_interrupt_is_pending()) {
++				os_atomic_inc(&uke_idle_timer_rearms[cpu], relaxed);
++				/* Reprogram the original pop at the minimum delay
++				 * and let the normal IRQ handler expire the queue. */
++				ClearIdlePop(FALSE);
++				__builtin_arm_isb(ISB_SY);
++			}
+ 		}
+ 		/* Back to machine_idle() */
+ 		Idle_load_context();

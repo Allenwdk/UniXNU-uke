@@ -66,8 +66,7 @@
 &cpu1 { unixnu,cluster-type = "E"; };
 &cpu2 { unixnu,cluster-type = "E"; };
 &cpu3 { unixnu,cluster-type = "P"; };
-// Physical affinity 0x400 lost timer and IPI service in the Stage Manager capture.
-&cpu4 { unixnu,cluster-type = "P"; status = "disabled"; };
+&cpu4 { unixnu,cluster-type = "P"; };
 &cpu5 { unixnu,cluster-type = "P"; };
 &cpu6 { unixnu,cluster-type = "P"; };
 &cpu7 { unixnu,cluster-type = "P"; };

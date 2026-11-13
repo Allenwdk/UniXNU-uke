@@ -29,6 +29,10 @@ extern uint64_t sane_size;
 extern void uke_crash_log_start(void);
 #if defined(UKE_SOURCE_STORAGE_LOG)
 extern void uke_trace_worker_status(void);
+extern void boot_flight_cpu_status(uint64_t out[32]);
+extern uint32_t uke_idle_timer_waits[8] __attribute__((weak_import));
+extern uint32_t uke_idle_timer_returns[8] __attribute__((weak_import));
+extern uint32_t uke_idle_timer_rearms[8] __attribute__((weak_import));
 extern char bootsessionuuid_string[37];
 extern unsigned int vm_page_free_count,vm_page_active_count,vm_page_inactive_count,vm_page_wire_count,vm_page_speculative_count;
 extern volatile uint32_t boot_log_rounds;
@@ -594,6 +598,18 @@ uke_last_log_writer(void *arg, wait_result_t result)
                 IOLog("UKE VM: boot=%.36s free=%u active=%u inactive=%u wired=%u speculative=%u\n",
                     bootsessionuuid_string, vm_page_free_count, vm_page_active_count,
                     vm_page_inactive_count, vm_page_wire_count, vm_page_speculative_count);
+                if (&uke_idle_timer_waits && &uke_idle_timer_returns && &uke_idle_timer_rearms) {
+                    uint64_t cpus[32] = {0};
+                    boot_flight_cpu_status(cpus);
+                    for (unsigned cpu = 0; cpu < 8; ++cpu) {
+                        unsigned waits = __atomic_load_n(&uke_idle_timer_waits[cpu], __ATOMIC_RELAXED);
+                        unsigned returns = __atomic_load_n(&uke_idle_timer_returns[cpu], __ATOMIC_RELAXED);
+                        unsigned rearms = __atomic_load_n(&uke_idle_timer_rearms[cpu], __ATOMIC_RELAXED);
+                        IOLog("UKE [cpu%u idle timer] waits=%u returns=%u rearms=%u state=%u pri=%u signal=%llx idle=%llu\n",
+                            cpu, waits, returns, rearms, (unsigned)cpus[4 * cpu],
+                            (unsigned)(cpus[4 * cpu] >> 32), cpus[4 * cpu + 1], cpus[4 * cpu + 3]);
+                    }
+                }
             }
             IOLog("UKE %s\n", native_cpufreq_row);
             char row[512];
