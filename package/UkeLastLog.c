@@ -39,6 +39,7 @@ extern volatile uint32_t boot_log_rounds;
 extern volatile int32_t native_battery_stats[16];
 extern volatile uint32_t native_battery_dispatch[6];
 extern unsigned armcpu_stats_row(unsigned, char *, unsigned);
+extern volatile uint32_t armcpu_core_timer[8], armcpu_core_sgi[8];
 extern void sheng_cpufreq_poll(void);
 extern char native_cpufreq_row[120];
 extern volatile uint32_t native_cpufreq_ramp[9], native_gpu_dcvs_reasons[9], native_gpu_dcvs_windows[8];
@@ -540,10 +541,10 @@ uke_last_log_writer(void *arg, wait_result_t result)
 	uint32_t progress_only = 0;
 	PE_parse_boot_argn("sheng-diag", &progress_diag, sizeof(progress_diag));
 	PE_parse_boot_argn("uke-progress", &progress_only, sizeof(progress_only));
+	const bool gpu_log_on = progress_diag == 1 || progress_diag == 2 || progress_diag == 4;
 	const bool progress_on = (progress_diag == 1 || progress_only == 1) &&
 	    &native_data_write_back && &native_data_io_reads &&
-	    &native_data_io_writes && &native_data_flushes && &native_data_timer_flushes && &native_data_fua_requests &&
-	    &native_legacy_swapstat;
+	    &native_data_io_writes && &native_data_flushes && &native_data_timer_flushes && &native_data_fua_requests;
 #endif
 	for (;;) {
 		// The first seconds of msgbuf are flooded by boot logs; report the
@@ -585,11 +586,17 @@ uke_last_log_writer(void *arg, wait_result_t result)
         if ((tick % 4) == 0) {
             sheng_cpufreq_poll();
             if (progress_on) {
-                IOLog("UKE progress: data state=%u wb=%u read=%llu write=%llu flush=%llu timer=%llu fua=%llu errors=%llu gpu submit=%llu fence=%llu display offer=%u flip=%u latch=%u retire=%u\n",
-                    native_data_persist_state, native_data_write_back, native_data_io_reads, native_data_io_writes,
-                    native_data_flushes, native_data_timer_flushes, native_data_fua_requests, native_data_persist_errors,
-                    native_adreno_submit_us[0], native_adreno_fence_wake[1], native_legacy_swapstat[0],
-                    native_legacy_swapstat[9], native_legacy_swapstat[10], native_legacy_swapstat[11]);
+                if (gpu_log_on) {
+                    IOLog("UKE progress: data state=%u wb=%u read=%llu write=%llu flush=%llu timer=%llu fua=%llu errors=%llu gpu submit=%llu fence=%llu display offer=%u flip=%u latch=%u retire=%u\n",
+                        native_data_persist_state, native_data_write_back, native_data_io_reads, native_data_io_writes,
+                        native_data_flushes, native_data_timer_flushes, native_data_fua_requests, native_data_persist_errors,
+                        native_adreno_submit_us[0], native_adreno_fence_wake[1], native_legacy_swapstat[0],
+                        native_legacy_swapstat[9], native_legacy_swapstat[10], native_legacy_swapstat[11]);
+                } else {
+                    IOLog("UKE progress: data state=%u wb=%u read=%llu write=%llu flush=%llu timer=%llu fua=%llu errors=%llu\n",
+                        native_data_persist_state, native_data_write_back, native_data_io_reads, native_data_io_writes,
+                        native_data_flushes, native_data_timer_flushes, native_data_fua_requests, native_data_persist_errors);
+                }
             }
         }
         if ((tick % 40) == 0) {
@@ -605,8 +612,8 @@ uke_last_log_writer(void *arg, wait_result_t result)
                         unsigned waits = __atomic_load_n(&uke_idle_timer_waits[cpu], __ATOMIC_RELAXED);
                         unsigned returns = __atomic_load_n(&uke_idle_timer_returns[cpu], __ATOMIC_RELAXED);
                         unsigned rearms = __atomic_load_n(&uke_idle_timer_rearms[cpu], __ATOMIC_RELAXED);
-                        IOLog("UKE [cpu%u idle timer] waits=%u returns=%u rearms=%u state=%u pri=%u signal=%llx idle=%llu\n",
-                            cpu, waits, returns, rearms, (unsigned)cpus[4 * cpu],
+                        IOLog("UKE [cpu%u idle timer] waits=%u returns=%u rearms=%u irqT=%u irqI=%u state=%u pri=%u signal=%llx idle=%llu\n",
+                            cpu, waits, returns, rearms, armcpu_core_timer[cpu], armcpu_core_sgi[cpu], (unsigned)cpus[4 * cpu],
                             (unsigned)(cpus[4 * cpu] >> 32), cpus[4 * cpu + 1], cpus[4 * cpu + 3]);
                     }
                 }
@@ -619,43 +626,6 @@ uke_last_log_writer(void *arg, wait_result_t result)
                 native_cpufreq_ramp[0], native_cpufreq_ramp[3], native_cpufreq_ramp[6],
                 native_cpufreq_ramp[1], native_cpufreq_ramp[4], native_cpufreq_ramp[7],
                 native_cpufreq_ramp[2], native_cpufreq_ramp[5], native_cpufreq_ramp[8]);
-            IOLog("UKE DCVS windows: span=%u windows=%u busy=%u faint=%u ringOnly=%u longest=%uus@%u rests=%u\n",
-                native_gpu_dcvs_windows[7], native_gpu_dcvs_windows[0], native_gpu_dcvs_windows[1],
-                native_gpu_dcvs_windows[2], native_gpu_dcvs_windows[3], native_gpu_dcvs_windows[4],
-                native_gpu_dcvs_windows[5], native_gpu_dcvs_windows[6]);
-            IOLog("UKE DCVS reasons: %u/%u/%u/%u/%u/%u/%u/%u\n",
-                native_gpu_dcvs_reasons[1], native_gpu_dcvs_reasons[2], native_gpu_dcvs_reasons[3], native_gpu_dcvs_reasons[4],
-                native_gpu_dcvs_reasons[5], native_gpu_dcvs_reasons[6], native_gpu_dcvs_reasons[7], native_gpu_dcvs_reasons[8]);
-            IOLog("UKE GPU fence wake: irq=%llu fence=%llu pass=%llu woken=%llu sleep=%llu timeout=%llu periodic=%llu switches=%llu\n",
-                native_adreno_fence_wake[0], native_adreno_fence_wake[1], native_adreno_fence_wake[2], native_adreno_fence_wake[3],
-                native_adreno_fence_wake[4], native_adreno_fence_wake[5], native_adreno_fence_wake[6], native_adreno_fence_wake[7]);
-            IOLog("UKE GPU pool: board=%u/%u KiB=%u rc=%x ranges=%u total=%u free=%u alive=%u grantsKiB=%u retired=%u\n",
-                native_gpu_pool_board[0], native_gpu_pool_board[1], native_gpu_pool_board[2], native_gpu_pool_board[3],
-                native_adreno_pool_state[0], native_adreno_pool_state[1], native_adreno_pool_state[2],
-                native_adreno_pool_state[4], native_adreno_pool_state[5], native_adreno_pool_state[8]);
-            IOLog("UKE GPU governor: level=%u bw=%u changes=%u failed=%u busy=%u topShare=%u touch=%u wake=%u\n",
-                native_gpu_perf_vote[0], native_gpu_perf_vote[1], native_gpu_dcvs[2], native_gpu_dcvs[3],
-                native_gpu_dcvs[4], native_gpu_dcvs_level_share[9], native_gpu_dcvs[13], native_gpu_dcvs[14]);
-            IOLog("UKE GPU pool views: hook=%u tracked=%u untracked=%u closes=%u returned=%u retiredKiB=%u\n",
-                native_adreno_pool_views[4], native_adreno_pool_views[0], native_adreno_pool_views[1],
-                native_adreno_pool_views[2], native_adreno_pool_views[3], native_adreno_pool_state[9]);
-            IOLog("UKE GPU mount fail: stage=%u status=%x qbase=%u count=%u\n",
-                native_adreno_mount_fail[0], native_adreno_mount_fail[1], native_adreno_mount_fail[2], native_adreno_mount_fail[3]);
-            IOLog("UKE GPU tables: cp=%u cpu=%u made=%u freed=%u live=%u peak=%u failure=%x step=%u pages=%u/%u/%u/%u\n",
-                native_adreno_table_switches[0], native_adreno_table_switches[1], native_adreno_table_switches[2],
-                native_adreno_table_switches[3], native_adreno_table_switches[4], native_adreno_table_switches[5],
-                native_adreno_table_switches[6], native_adreno_table_switches[7], native_adreno_table_pages[0],
-                native_adreno_table_pages[1], native_adreno_table_pages[2], native_adreno_table_pages[3]);
-            if (native_adreno_vm_fail[0])
-                IOLog("UKE GPU VM failure: count=%u smmu=%u line=%u process=%u\n",
-                      native_adreno_vm_fail[0], native_adreno_vm_fail[1], native_adreno_vm_fail[2], native_adreno_vm_fail[3]);
-            if (native_adreno_global_fault[0] || native_adreno_global_fault[2])
-                IOLog("UKE GPU global fault: seen=%u status=%x cleared=%u status=%x\n",
-                      native_adreno_global_fault[0], native_adreno_global_fault[1],
-                      native_adreno_global_fault[2], native_adreno_global_fault[3]);
-            if (native_adreno_recover_trace[0])
-                IOLog("UKE GPU recovery trace: step=%u info=%x fence=%u last=%u\n",
-                      native_adreno_recover_trace[0], native_adreno_recover_trace[1], native_adreno_recover_trace[2], native_adreno_recover_trace[3]);
             IOLog("UKE boot memory: addonReleasedPages=%d staticFreedPages=%llu\n",
                 native_gpu_addon_released, ml_static_mfree_pages);
             if (&sheng_edge_cross_type_steals && &sheng_edge_idle_beside_excess && &sheng_edge_idle_beside_queued) {
@@ -671,84 +641,123 @@ uke_last_log_writer(void *arg, wait_result_t result)
                     sheng_edge_idle_beside_queued[1][4], sheng_edge_idle_beside_queued[1][5],
                     sheng_edge_idle_beside_queued[1][6], sheng_edge_idle_beside_queued[1][7]);
             }
-            if (native_adreno_job_time[0]) {
-                const volatile uint32_t *t = native_adreno_job_time;
-                IOLog("UKE GPU jobs: timed=%u stamped=%u over8=%u over16=%u over33=%u over100=%u longestUs=%u slow=%u\n",
-                    t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]);
-                for (unsigned i = 0; i < 6; ++i) {
-                    const volatile uint64_t *j = i < 2 ? native_adreno_long_jobs[i] :
-                        native_adreno_slow_jobs[(t[7] - 1 - (i - 2)) & 15];
-                    if ((i >= 2 && i - 2 >= t[7]) || !j[1]) continue;
-                    IOLog("UKE GPU job %s: fence=%u pid=%u q=%llx ring=%u pri=%d ibs=%u KiB=%llu us=%llu src=%u lvl=%u role=%u at=%llums lat=%lluus\n",
-                        i < 2 ? "long" : "slow", (uint32_t)j[0], (uint32_t)j[3], j[4], (unsigned)(j[0] >> 40 & 15),
-                        (int)(j[0] >> 44 & 0xff) - 1, (unsigned)(j[0] >> 32 & 0xff), j[2] >> 10, j[1],
-                        (unsigned)(j[0] >> 52 & 15), (unsigned)(j[3] >> 40 & 0xffff), (unsigned)(j[3] >> 32 & 0xff),
-                        j[5] / 1000, j[6]);
-                }
-            }
-            if (native_adreno_stall_kick[25]) {
-                const volatile uint32_t *k = native_adreno_stall_kick;
-                IOLog("UKE GPU kick: n=%u fence=%u pendingUs=%u moved=%x retiredUs=%u pid=%u ibs=%u ring=%u pri=%d KiB=%u first=%x:%x/%u/%u at=%x:%x/%u/%u after=%x:%x/%u/%u\n",
-                    k[25], k[0], k[1], k[20], k[21], k[22], k[23] & 0xffff, k[23] >> 16 & 0xff,
-                    (int)(k[23] >> 24) - 1, k[24] >> 10,
-                    k[3], k[2], k[6], k[7], k[9], k[8], k[12], k[13], k[15], k[14], k[18], k[19]);
-            }
-            if (&native_adreno_map_met && native_adreno_map_met[0]) {
-                const volatile uint64_t *m = native_adreno_map_met;
-                IOLog("UKE GPU map conflict: asked=%llx+%llx remap=%u occupant=%llx+%llx handle=%llx jobs=%llu kind=%llx\n",
-                    m[0], m[1] & ~(1ull << 63), (unsigned)(m[1] >> 63), m[2], m[3], m[4], m[5], m[6]);
-            }
-            const unsigned gpu_rows = __atomic_load_n(&native_gpu_row_count, __ATOMIC_RELAXED);
-            if (gpu_rows_logged < 40 && gpu_rows_logged < gpu_rows) {
-                IOLog("UKE GPU bring-up: stage=%x rows=%u\n", native_gpu_power_stage, gpu_rows);
-                while (gpu_rows_logged < 40 && gpu_rows_logged < gpu_rows) {
-                    const char *row = native_gpu_row_log[gpu_rows_logged];
-                    if (!__atomic_load_n(row, __ATOMIC_ACQUIRE)) break;
-                    IOLog("UKE GPU GB%02u %s\n", gpu_rows_logged, row);
-                    ++gpu_rows_logged;
-                }
-            }
             const volatile uint32_t *cost = native_touch_cost;
             IOLog("UKE touch cost: irq=%u/%u/%u wakes=%u peeks=%u stale=%u bad=%u reads=%u frames=%u ms=%u/%u/%u doze=%u/%u/%u type=%u\n",
                 native_touch_irq_stats[0], native_touch_irq_stats[1], native_touch_irq_stats[2],
                 cost[0], cost[1], cost[2], cost[3], cost[4], cost[5], cost[6] / 1000, cost[7] / 1000, cost[8] / 1000,
                 native_touch_doze[0], native_touch_doze[1], native_touch_doze[2], native_touch_doze[3]);
-            const volatile uint32_t *alloc = native_adreno_kernel_alloc_fail;
-            if (alloc[5]) {
-                IOLog("UKE GPU first allocation failure: stage=%u status=%x bytes=%u bits=%u contiguous=%u total=%u\n",
-                    alloc[0], alloc[1], alloc[2], alloc[3], alloc[4], alloc[5]);
-            }
-            const unsigned timeouts = native_adreno_switch_timeouts;
-            for (unsigned i = 0; i < 2 && i < timeouts; ++i) {
-                const volatile uint32_t *words = native_adreno_switch_timeout[i];
-                for (unsigned j = 0; j < 30; j += 6) {
-                    IOLog("UKE GPU switch timeout %u/%u words %u: %08x %08x %08x %08x %08x %08x\n",
-                        i + 1, timeouts, j, words[j], words[j + 1], words[j + 2], words[j + 3], words[j + 4], words[j + 5]);
+            if (gpu_log_on) {
+                IOLog("UKE DCVS windows: span=%u windows=%u busy=%u faint=%u ringOnly=%u longest=%uus@%u rests=%u\n",
+                    native_gpu_dcvs_windows[7], native_gpu_dcvs_windows[0], native_gpu_dcvs_windows[1],
+                    native_gpu_dcvs_windows[2], native_gpu_dcvs_windows[3], native_gpu_dcvs_windows[4],
+                    native_gpu_dcvs_windows[5], native_gpu_dcvs_windows[6]);
+                IOLog("UKE DCVS reasons: %u/%u/%u/%u/%u/%u/%u/%u\n",
+                    native_gpu_dcvs_reasons[1], native_gpu_dcvs_reasons[2], native_gpu_dcvs_reasons[3], native_gpu_dcvs_reasons[4],
+                    native_gpu_dcvs_reasons[5], native_gpu_dcvs_reasons[6], native_gpu_dcvs_reasons[7], native_gpu_dcvs_reasons[8]);
+                IOLog("UKE GPU fence wake: irq=%llu fence=%llu pass=%llu woken=%llu sleep=%llu timeout=%llu periodic=%llu switches=%llu\n",
+                    native_adreno_fence_wake[0], native_adreno_fence_wake[1], native_adreno_fence_wake[2], native_adreno_fence_wake[3],
+                    native_adreno_fence_wake[4], native_adreno_fence_wake[5], native_adreno_fence_wake[6], native_adreno_fence_wake[7]);
+                IOLog("UKE GPU pool: board=%u/%u KiB=%u rc=%x ranges=%u total=%u free=%u alive=%u grantsKiB=%u retired=%u\n",
+                    native_gpu_pool_board[0], native_gpu_pool_board[1], native_gpu_pool_board[2], native_gpu_pool_board[3],
+                    native_adreno_pool_state[0], native_adreno_pool_state[1], native_adreno_pool_state[2],
+                    native_adreno_pool_state[4], native_adreno_pool_state[5], native_adreno_pool_state[8]);
+                IOLog("UKE GPU governor: level=%u bw=%u changes=%u failed=%u busy=%u topShare=%u touch=%u wake=%u\n",
+                    native_gpu_perf_vote[0], native_gpu_perf_vote[1], native_gpu_dcvs[2], native_gpu_dcvs[3],
+                    native_gpu_dcvs[4], native_gpu_dcvs_level_share[9], native_gpu_dcvs[13], native_gpu_dcvs[14]);
+                IOLog("UKE GPU pool views: hook=%u tracked=%u untracked=%u closes=%u returned=%u retiredKiB=%u\n",
+                    native_adreno_pool_views[4], native_adreno_pool_views[0], native_adreno_pool_views[1],
+                    native_adreno_pool_views[2], native_adreno_pool_views[3], native_adreno_pool_state[9]);
+                IOLog("UKE GPU mount fail: stage=%u status=%x qbase=%u count=%u\n",
+                    native_adreno_mount_fail[0], native_adreno_mount_fail[1], native_adreno_mount_fail[2], native_adreno_mount_fail[3]);
+                IOLog("UKE GPU tables: cp=%u cpu=%u made=%u freed=%u live=%u peak=%u failure=%x step=%u pages=%u/%u/%u/%u\n",
+                    native_adreno_table_switches[0], native_adreno_table_switches[1], native_adreno_table_switches[2],
+                    native_adreno_table_switches[3], native_adreno_table_switches[4], native_adreno_table_switches[5],
+                    native_adreno_table_switches[6], native_adreno_table_switches[7], native_adreno_table_pages[0],
+                    native_adreno_table_pages[1], native_adreno_table_pages[2], native_adreno_table_pages[3]);
+                if (native_adreno_vm_fail[0])
+                    IOLog("UKE GPU VM failure: count=%u smmu=%u line=%u process=%u\n",
+                          native_adreno_vm_fail[0], native_adreno_vm_fail[1], native_adreno_vm_fail[2], native_adreno_vm_fail[3]);
+                if (native_adreno_global_fault[0] || native_adreno_global_fault[2])
+                    IOLog("UKE GPU global fault: seen=%u status=%x cleared=%u status=%x\n",
+                          native_adreno_global_fault[0], native_adreno_global_fault[1],
+                          native_adreno_global_fault[2], native_adreno_global_fault[3]);
+                if (native_adreno_recover_trace[0])
+                    IOLog("UKE GPU recovery trace: step=%u info=%x fence=%u last=%u\n",
+                          native_adreno_recover_trace[0], native_adreno_recover_trace[1], native_adreno_recover_trace[2], native_adreno_recover_trace[3]);
+                if (native_adreno_job_time[0]) {
+                    const volatile uint32_t *t = native_adreno_job_time;
+                    IOLog("UKE GPU jobs: timed=%u stamped=%u over8=%u over16=%u over33=%u over100=%u longestUs=%u slow=%u\n",
+                        t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]);
+                    for (unsigned i = 0; i < 6; ++i) {
+                        const volatile uint64_t *j = i < 2 ? native_adreno_long_jobs[i] :
+                            native_adreno_slow_jobs[(t[7] - 1 - (i - 2)) & 15];
+                        if ((i >= 2 && i - 2 >= t[7]) || !j[1]) continue;
+                        IOLog("UKE GPU job %s: fence=%u pid=%u q=%llx ring=%u pri=%d ibs=%u KiB=%llu us=%llu src=%u lvl=%u role=%u at=%llums lat=%lluus\n",
+                            i < 2 ? "long" : "slow", (uint32_t)j[0], (uint32_t)j[3], j[4], (unsigned)(j[0] >> 40 & 15),
+                            (int)(j[0] >> 44 & 0xff) - 1, (unsigned)(j[0] >> 32 & 0xff), j[2] >> 10, j[1],
+                            (unsigned)(j[0] >> 52 & 15), (unsigned)(j[3] >> 40 & 0xffff), (unsigned)(j[3] >> 32 & 0xff),
+                            j[5] / 1000, j[6]);
+                    }
                 }
-            }
-            const unsigned stall_hang = native_adreno_stall_hang;
-            if (stall_hang && stall_hang != gpu_stall_hang_logged) {
-                const volatile uint32_t *f = native_adreno_stall_fault;
-                IOLog("UKE GPU stall snapshot: hang=%u\n", stall_hang);
-                if (f[30]) {
-                    IOLog("UKE GPU stall FAR candidates: matches=%u hiZero=%u level=%u ib=%x:%x word=%u read=%u dwords=%u\n",
-                          f[0], f[1], f[2], f[4], f[3], f[5], f[30], f[31]);
-                    IOLog("UKE GPU stall FAR base candidate: base=%x distance=%x level=%u ib=%x:%x word=%u\n",
-                          f[16], f[17], f[18], f[20], f[19], f[21]);
+                if (native_adreno_stall_kick[25]) {
+                    const volatile uint32_t *k = native_adreno_stall_kick;
+                    IOLog("UKE GPU kick: n=%u fence=%u pendingUs=%u moved=%x retiredUs=%u pid=%u ibs=%u ring=%u pri=%d KiB=%u first=%x:%x/%u/%u at=%x:%x/%u/%u after=%x:%x/%u/%u\n",
+                        k[25], k[0], k[1], k[20], k[21], k[22], k[23] & 0xffff, k[23] >> 16 & 0xff,
+                        (int)(k[23] >> 24) - 1, k[24] >> 10,
+                        k[3], k[2], k[6], k[7], k[9], k[8], k[12], k[13], k[15], k[14], k[18], k[19]);
                 }
-                gpu_stall_hang_logged = stall_hang;
-            }
-            IOLog("UKE GPU maintenance: walk=%llu/%llu/%llu/%llu/%llu skip=%u/%u audit=%u dirty=%u submit=%llu totalUs=%llu\n",
-                native_adreno_maint_walk[0], native_adreno_maint_walk[1], native_adreno_maint_walk[2],
-                native_adreno_maint_walk[3], native_adreno_maint_walk[4], native_adreno_sync_skips[0], native_adreno_sync_skips[1],
-                native_adreno_sync_audit[0], native_adreno_sync_audit[2], native_adreno_submit_us[0], native_adreno_submit_us[6]);
-            for (unsigned i=0; i<24; ++i) {
-                if (native_adreno_bo_owners[i][2])
-                    IOLog("UKE GPU BO owner: pid=%u bytes=%u count=%u peak=%u\n", native_adreno_bo_owners[i][0],
-                        native_adreno_bo_owners[i][1], native_adreno_bo_owners[i][2], native_adreno_bo_owners[i][3]);
-                if (native_adreno_view_owners[i][2])
-                    IOLog("UKE GPU view owner: pid=%u KiB=%u count=%u peak=%u\n", native_adreno_view_owners[i][0],
-                        native_adreno_view_owners[i][1], native_adreno_view_owners[i][2], native_adreno_view_owners[i][3]);
+                if (&native_adreno_map_met && native_adreno_map_met[0]) {
+                    const volatile uint64_t *m = native_adreno_map_met;
+                    IOLog("UKE GPU map conflict: asked=%llx+%llx remap=%u occupant=%llx+%llx handle=%llx jobs=%llu kind=%llx\n",
+                        m[0], m[1] & ~(1ull << 63), (unsigned)(m[1] >> 63), m[2], m[3], m[4], m[5], m[6]);
+                }
+                const unsigned gpu_rows = __atomic_load_n(&native_gpu_row_count, __ATOMIC_RELAXED);
+                if (gpu_rows_logged < 40 && gpu_rows_logged < gpu_rows) {
+                    IOLog("UKE GPU bring-up: stage=%x rows=%u\n", native_gpu_power_stage, gpu_rows);
+                    while (gpu_rows_logged < 40 && gpu_rows_logged < gpu_rows) {
+                        const char *row = native_gpu_row_log[gpu_rows_logged];
+                        if (!__atomic_load_n(row, __ATOMIC_ACQUIRE)) break;
+                        IOLog("UKE GPU GB%02u %s\n", gpu_rows_logged, row);
+                        ++gpu_rows_logged;
+                    }
+                }
+                const volatile uint32_t *alloc = native_adreno_kernel_alloc_fail;
+                if (alloc[5]) {
+                    IOLog("UKE GPU first allocation failure: stage=%u status=%x bytes=%u bits=%u contiguous=%u total=%u\n",
+                        alloc[0], alloc[1], alloc[2], alloc[3], alloc[4], alloc[5]);
+                }
+                const unsigned timeouts = native_adreno_switch_timeouts;
+                for (unsigned i = 0; i < 2 && i < timeouts; ++i) {
+                    const volatile uint32_t *words = native_adreno_switch_timeout[i];
+                    for (unsigned j = 0; j < 30; j += 6) {
+                        IOLog("UKE GPU switch timeout %u/%u words %u: %08x %08x %08x %08x %08x %08x\n",
+                            i + 1, timeouts, j, words[j], words[j + 1], words[j + 2], words[j + 3], words[j + 4], words[j + 5]);
+                    }
+                }
+                const unsigned stall_hang = native_adreno_stall_hang;
+                if (stall_hang && stall_hang != gpu_stall_hang_logged) {
+                    const volatile uint32_t *f = native_adreno_stall_fault;
+                    IOLog("UKE GPU stall snapshot: hang=%u\n", stall_hang);
+                    if (f[30]) {
+                        IOLog("UKE GPU stall FAR candidates: matches=%u hiZero=%u level=%u ib=%x:%x word=%u read=%u dwords=%u\n",
+                              f[0], f[1], f[2], f[4], f[3], f[5], f[30], f[31]);
+                        IOLog("UKE GPU stall FAR base candidate: base=%x distance=%x level=%u ib=%x:%x word=%u\n",
+                              f[16], f[17], f[18], f[20], f[19], f[21]);
+                    }
+                    gpu_stall_hang_logged = stall_hang;
+                }
+                IOLog("UKE GPU maintenance: walk=%llu/%llu/%llu/%llu/%llu skip=%u/%u audit=%u dirty=%u submit=%llu totalUs=%llu\n",
+                    native_adreno_maint_walk[0], native_adreno_maint_walk[1], native_adreno_maint_walk[2],
+                    native_adreno_maint_walk[3], native_adreno_maint_walk[4], native_adreno_sync_skips[0], native_adreno_sync_skips[1],
+                    native_adreno_sync_audit[0], native_adreno_sync_audit[2], native_adreno_submit_us[0], native_adreno_submit_us[6]);
+                for (unsigned i=0; i<24; ++i) {
+                    if (native_adreno_bo_owners[i][2])
+                        IOLog("UKE GPU BO owner: pid=%u bytes=%u count=%u peak=%u\n", native_adreno_bo_owners[i][0],
+                            native_adreno_bo_owners[i][1], native_adreno_bo_owners[i][2], native_adreno_bo_owners[i][3]);
+                    if (native_adreno_view_owners[i][2])
+                        IOLog("UKE GPU view owner: pid=%u KiB=%u count=%u peak=%u\n", native_adreno_view_owners[i][0],
+                            native_adreno_view_owners[i][1], native_adreno_view_owners[i][2], native_adreno_view_owners[i][3]);
+                }
             }
         }
 
