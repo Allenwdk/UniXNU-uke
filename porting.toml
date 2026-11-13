@@ -1044,7 +1044,7 @@ evidence = [
 
 [[area]]
 id = "diagnostics"
-status = "device-verified"
+status = "host-verified"
 components = ["AppleKeyStoreState", "XnuPrelink"]
 paths = ["package/UkeLastLog.c", "scripts/xnu-panic-screen.c", "board.toml"]
 inputs = ["Embedded panic log at 0xFF800000/0x380000 read by the menu before XNU clears it.",
@@ -1056,8 +1056,9 @@ findings = ["The panic screen, ramoops print and the last-panic line work; the j
   "The migration's own diagnostics: from-scratch kernel builds and the ADT baseline diff run on the host."]
 completion = ["Failures leave a readable panic line on screen and in the log."]
 limits = ["Fresh UKELLOG1 and sameboot Data reports were recovered for prior failing27 builds. Current success is direct user feedback; post-fix fault counters were not recaptured this publication turn."]
-next_action = ["After fresh authorization, recover the incremental UKELLOG1 ring and compare joint progress records across any recurrence."]
+next_action = ["Validate the GPU-diagnostics-off AppSync candidate after deployment authorization. On recurrence collect the same-boot text/panic ring and CPU timer/IPI/VM/Data state; GPU flight and full exports are disabled by request."]
 evidence = [
+  { kind = "host", reference = "docs/GPU-LOGS-OFF-APPSYNC-20261113.md", revision = "2ccbf5a362edf06e458d888f08f49b71fc35cb73", command = "formal kernel/payload, source-storage source hash, paired FAT/ADT/AppSync/signature/trust checks", result = "User-requested GPU diagnostics off. Removed diag, gpu-trace, gpu-perf, full export/repeat and flight args. Periodic GPU/DCVS text is gated by diag; CPU timer/IPI, VM/Data and panic remain. All69 addon files and full owner trust equal AppSync047a13e3; Foundation reexport checked. Eight CPUs and idle timer rearm remain. Candidatea38e9e386b7be40acfd7ca3cb78e533be53d2e4f824e124d287322a7992b241f,747Bargs. Host verified, unflashed." },
   { kind = "device", reference = "docs/SETTINGS-FREEZE-DATA-FUA-20261113.md", revision = "a5955df742529e72f611c7c687a48d787459d4ac", command = "CRC-valid changed records and read-only Data extraction", result = "Recovered 518 consecutive CRC-valid records in 581 occupied blocks, with 470 one-block records. Data 12310069248 bytes and 91189 changed pages. Stock boot partitions, A and TWRP. Follow-up candidate 6ee815a8744aca7786af104f9745c1b2af2db673ddacc2221eecadb16c5d953c is unflashed." },
   { kind = "host", reference = "docs/DATA-WRITEBACK-UFS-LOG-20261113.md", revision = "a5955df742529e72f611c7c687a48d787459d4ac", command = "Host check extracted UFS writer and production decoder, then inspected the paired image", result = "Quiet ticks skip writes. Short records use one to four FUA blocks. Failed writes retain the source cursor. CRC rejects a torn record and ignores stale suffix blocks. Candidate vendor_boot 3722f6351123d52e28709711a8ab10f9e11ba601e349f84be4709479acb93dd9." },
   { kind = "device", reference = "docs/CED0-TWO-BOOT-20261111.md", result = "2026-11-11 CED0 first boot UI freeze after swipe, second Apple logo stall. Both CED0 boots identified by UUID and kernel banner. 403 CRC-valid changed tail slots paired to second by exact swap 2 surface. GPU published in both. Second GPU submissions plateau at6, completion passes continue and fence timeouts0 through241s, kernel logs through247.970372s. pstore empty. Data snapshot complete, no host userdata writes. Latest upstream 5282bd9 addresses whole-range pool mappings seen in CED0, exact shared cause unproven.", command = "read-ring.py, read-data-reflink.py, unified log UUID and surface correlation", revision = "12a442dd963fe5ac1582aabedece5af90c589fd2" },
