@@ -96,3 +96,10 @@ name = "RamBlock"
 kind = "driver"
 git = "https://github.com/Allenwdk/RamBlock.git"
 commit = "4acdd59dafb5d958f612e4b5610e36f14a013f58"
+
+# SM7675 fixed USB2 peripheral candidate based on sheng's native controller.
+[[source]]
+name = "QcomDwc3"
+kind = "driver"
+git = "https://github.com/Allenwdk/QcomDwc3.git"
+commit = "309913f2b3e79865d505d4e105dfec16b2415652"

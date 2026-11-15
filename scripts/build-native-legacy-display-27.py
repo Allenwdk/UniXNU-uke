@@ -410,7 +410,33 @@ run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--global
 # virtual keeps its real name and pointer-authentication discriminator), linked against the original IOHIDDevice of this fileset.
 # The source HID driver is compiled by component:ShengHidInput (build-sheng-hid-input.py's arm64e path)
 # against the public IOHIDFamily headers. This builder binds the original IOHIDDevice of the fileset and
-# checks every owned vtable entry's pointer-authentication diversity.
+# Shared by the HID and USB adapters to verify their signed vtable relocations.
+def object_symbols(data):
+    commands = macho(data)['commands']
+    st = next(p for c, p, _ in commands if c == 2)
+    sy, count, strings, _ = struct.unpack_from('<4I', data, st + 8)
+    found = []
+    for i in range(count):
+        ix, kind, _, _, va = struct.unpack_from('<IBBHQ', data, sy + i * 16)
+        found.append((data[strings + ix:data.index(b'\0', strings + ix)].decode(), va, kind))
+    return found
+
+
+def object_vtable(data, found, name, count):
+    """[(symbol, signed word)] of the first count entries of vtable name (authenticated pointer relocations)."""
+    va = next(v for n, v, _ in found if n == name)
+    entries = {}
+    for segment in macho(data)['segments']:
+        for sec in segment['sections']:
+            if sec['va'] <= va < sec['va'] + sec['size']:
+                ro, rc = struct.unpack_from('<2I', data, sec['command_offset'] + 56)
+                for i in range(rc):
+                    offset, bits = struct.unpack_from('<2I', data, ro + i * 8)
+                    if bits >> 27 & 1 and bits >> 25 & 3 == 3 and bits >> 28 == 11:
+                        entries[sec['va'] + offset] = (found[bits & 0xffffff][0],
+                                                       struct.unpack_from('<Q', data, sec['fileoff'] + offset)[0])
+    return [entries.get(va + 16 + i * 8) for i in range(count)]
+
 SRC = ROOT / 'build/sheng-hid-input'
 hid_probe = ROOT / 'kits/uke/HidInputProbe.cpp'
 HID_SOURCE = (SRC / 'NativeHidInput.o').is_file() and (SRC / 'NativeHidInput.late.o').is_file()
@@ -418,33 +444,6 @@ if HID_SOURCE:
     hid_abi = json.loads(Path(__file__).resolve().with_name('hid-device-24A446.json').read_text())
     hid_slots = [(int(t, 16), int(d, 16)) for t, d in hid_abi['slots']]
     hid_pure = {i for i, (t, _) in enumerate(hid_slots) if t == slots[214][0]}
-
-
-    def object_symbols(data):
-        commands = macho(data)['commands']
-        st = next(p for c, p, _ in commands if c == 2)
-        sy, count, strings, _ = struct.unpack_from('<4I', data, st + 8)
-        found = []
-        for i in range(count):
-            ix, kind, _, _, va = struct.unpack_from('<IBBHQ', data, sy + i * 16)
-            found.append((data[strings + ix:data.index(b'\0', strings + ix)].decode(), va, kind))
-        return found
-
-
-    def object_vtable(data, found, name, count):
-        """[(symbol, signed word)] of the first count entries of vtable name (authenticated pointer relocations)."""
-        va = next(v for n, v, _ in found if n == name)
-        entries = {}
-        for segment in macho(data)['segments']:
-            for sec in segment['sections']:
-                if sec['va'] <= va < sec['va'] + sec['size']:
-                    ro, rc = struct.unpack_from('<2I', data, sec['command_offset'] + 56)
-                    for i in range(rc):
-                        offset, bits = struct.unpack_from('<2I', data, ro + i * 8)
-                        if bits >> 27 & 1 and bits >> 25 & 3 == 3 and bits >> 28 == 11:
-                            entries[sec['va'] + offset] = (found[bits & 0xffffff][0],
-                                                           struct.unpack_from('<Q', data, sec['fileoff'] + offset)[0])
-        return [entries.get(va + 16 + i * 8) for i in range(count)]
 
 
     hid_raw = (SRC / 'NativeHidInput.o').read_bytes()
@@ -585,6 +584,164 @@ for source in (ROOT / 'drivers/QcomGeniSpi/GeniSpi.c', ROOT / 'drivers/ShengNova
     compile_c(source, obj)
     board_objects.append(obj)
 input_objects += board_objects
+# USB device mode: the Qualcomm subclass of the original AppleUSBXDCI of this fileset.
+usb_abi = json.loads(Path(__file__).resolve().with_name('usb-xdci-24A446.json').read_text())
+usb_slots = [(int(t, 16), int(d, 16)) for t, d in usb_abi['slots']]
+usb_methods = {int(k): v for k, v in usb_abi['methods'].items()}
+usb_pure = {i for i, (t, _) in enumerate(usb_slots) if t == slots[214][0]}
+USB = ROOT / 'drivers/QcomDwc3'
+require((USB / 'QcomDwc3.cpp').exists(), 'QcomDwc3 module directory')
+USB_OUT = board_dir / 'qcom-dwc3'
+USB_OUT.mkdir(parents=True, exist_ok=True)
+usb_names = ({int(k): v for k, v in usb_abi['macros'].items()} if 'macros' in usb_abi else
+             {179: 'XDCI_KEEP_CONFIGURATIONS', 227: 'XDCI_DESIRED_POWER', 267: 'XDCI_TRANSPORT_ACTIVE', 268: 'XDCI_POWER_ON',
+              269: 'XDCI_POWER_OFF', 270: 'XDCI_PARAMETERS', 275: 'XDCI_CONTROLLER_RESET', 277: 'XDCI_PERIODIC_USAGE',
+              278: 'XDCI_PERIODIC_SET'})
+usb_header = '''// Generated from the reviewed AppleUSBXDCI fixture; opaque private storage only.
+#pragma once
+#include <IOKit/IOService.h>
+'''
+for slot, macro in usb_names.items():
+    usb_header += f'#define {macro} {usb_methods[slot]["name"]}\n'
+usb_header += f'''class AppleUSBXDCI : public IOService {{
+ OSDeclareAbstractStructors(AppleUSBXDCI)
+ unsigned char originalPrivate[{usb_abi['instance_size']}-sizeof(IOService)];
+public:
+ void free() override;
+ bool init(OSDictionary *properties=nullptr) override;
+ IOReturn setProperties(OSObject *) override;
+ bool start(IOService *) override;
+ void stop(IOService *) override;
+ bool terminate(IOOptionBits options=0) override;
+ IOWorkLoop *getWorkLoop() const override;
+ IOReturn callPlatformFunction(const OSSymbol *,bool,void *,void *,void *,void *) override;
+ IOReturn setPowerState(unsigned long,IOService *) override;
+ unsigned long maxCapabilityForDomainState(IOPMPowerFlags) override;
+ unsigned long initialPowerStateForDomainState(IOPMPowerFlags) override;
+ IOReturn powerStateWillChangeTo(IOPMPowerFlags,unsigned long,IOService *) override;
+ IOReturn powerStateDidChangeTo(IOPMPowerFlags,unsigned long,IOService *) override;
+'''
+for i in range(usb_abi.get('base_slots', 168), len(usb_slots)):
+    m = usb_methods[i]
+    suffix = '=0' if i in usb_pure else ''
+    usb_header += f' virtual {m["returns"]} {m["name"]}({m["parameters"]}){suffix};\n'
+usb_header += f'}};\nstatic_assert(sizeof(AppleUSBXDCI)=={usb_abi["instance_size"]},"Original controller instance size");\n'
+(USB_OUT / 'OriginalUsbXdciABI.h').write_text(usb_header)
+# Host mode: the native subclass of the original AppleUSBXHCI, in the same object. IOService slots the original overrides are declared so
+# that the native vtable reaches them.
+xhci_abi = json.loads(Path(__file__).resolve().with_name('usb-xhci-24A446.json').read_text())
+xhci_slots = [(int(t, 16), int(d, 16)) for t, d in xhci_abi['slots']]
+xhci_methods = {int(k): v for k, v in xhci_abi['methods'].items()}
+xhci_names = ({int(k): v for k, v in xhci_abi['macros'].items()} if 'macros' in xhci_abi else
+              {188: 'XHCI_DESIRED_POWER', 315: 'XHCI_READ64', 317: 'XHCI_WRITE64'})
+xhci_header = '''// Generated from the reviewed AppleUSBXHCI fixture; opaque private storage only.
+#pragma once
+#include <IOKit/IOService.h>
+'''
+for slot, macro in xhci_names.items():
+    xhci_header += f'#define {macro} {xhci_methods[slot]["name"]}\n'
+xhci_header += f'''class AppleUSBXHCI : public IOService {{
+ OSDeclareAbstractStructors(AppleUSBXHCI)
+ unsigned char originalPrivate[{xhci_abi['instance_size']}-sizeof(IOService)];
+public:
+ void free() override;
+ bool init(OSDictionary *properties=nullptr) override;
+ IOReturn setProperties(OSObject *) override;
+ bool didTerminate(IOService *,IOOptionBits,bool *) override;
+ void systemWillShutdown(IOOptionBits) override;
+ void registerService(IOOptionBits options=0) override;
+ bool start(IOService *) override;
+ void stop(IOService *) override;
+ bool open(IOService *,IOOptionBits options=0,void *arg=nullptr) override;
+ void close(IOService *,IOOptionBits options=0) override;
+ bool handleOpen(IOService *,IOOptionBits,void *) override;
+ void handleClose(IOService *,IOOptionBits) override;
+ bool handleIsOpen(const IOService *) const override;
+ bool terminate(IOOptionBits options=0) override;
+ bool matchPropertyTable(OSDictionary *,SInt32 *) override;
+ bool attach(IOService *) override;
+ IOWorkLoop *getWorkLoop() const override;
+ IOReturn message(UInt32,IOService *,void *arg=nullptr) override;
+ void PMstop() override;
+ IOReturn setPowerState(unsigned long,IOService *) override;
+ unsigned long maxCapabilityForDomainState(IOPMPowerFlags) override;
+ unsigned long initialPowerStateForDomainState(IOPMPowerFlags) override;
+ IOReturn powerStateWillChangeTo(IOPMPowerFlags,unsigned long,IOService *) override;
+ IOReturn powerStateDidChangeTo(IOPMPowerFlags,unsigned long,IOService *) override;
+'''
+for i in range(xhci_abi.get('base_slots', 168), len(xhci_slots)):
+    m = xhci_methods[i]
+    xhci_header += f' virtual {m["returns"]} {m["name"]}({m["parameters"]});\n'
+xhci_header += f'}};\nstatic_assert(sizeof(AppleUSBXHCI)=={xhci_abi["instance_size"]},"Original controller instance size");\n'
+(USB_OUT / 'OriginalUsbXhciABI.h').write_text(xhci_header)
+require(all(fixture['kernelcache_sha256'] == abi['kernelcache_sha256'] and
+            int(fixture['collection_slide'], 16) == slide for fixture in (usb_abi, xhci_abi)),
+        'USB ABI fixtures must match the 24A446 display fileset and slide')
+usb_flags = ('-DQCOM_DWC3_UKE_USB2', '-I', str(USB_OUT), '-I', str(USB), '-I', str(KITS),
+             '-I', str(remoteproc))
+compile_cpp(USB / 'QcomDwc3.cpp', USB_OUT / 'QcomDwc3.o', usb_flags)
+compile_cpp(KITS / 'UsbProbe.cpp', USB_OUT / 'UsbProbe.o', usb_flags)
+compile_cpp(KITS / 'UkeUsbBoard.cpp', USB_OUT / 'UkeUsbBoard.o', usb_flags)
+usb_raw = (USB_OUT / 'QcomDwc3.o').read_bytes()
+usb_found = object_symbols(usb_raw)
+usb_bindings = {n: int(v, 16) + slide for n, v in usb_abi['bindings'].items()}
+usb_vt = '__ZTV12QcomDwc3Xdci'
+usb_entries = object_vtable(usb_raw, usb_found, usb_vt, len(usb_slots))
+require(all(usb_entries), f'{usb_vt}: at least the {len(usb_slots)} AppleUSBXDCI entries')
+for i, (name, word) in enumerate(usb_entries):
+    require(word >> 63 and word >> 48 & 1 and word >> 49 & 3 == 0 and (word >> 32) & 0xffff == usb_slots[i][1],
+            f'{usb_vt} slot {i} ({name}) signed with the original diversity {usb_slots[i][1]:#x}')
+    if '12AppleUSBXDCI' in name:
+        require(i not in usb_pure, f'{usb_vt} slot {i} ({name}) implements an abstract original slot')
+        require(usb_bindings.setdefault(name, usb_slots[i][0] + slide) == usb_slots[i][0] + slide, f'{name}: one original address')
+    elif not name.startswith(('__ZN12QcomDwc3Xdci', '__ZNK12QcomDwc3Xdci')):
+        require(i < usb_abi.get('base_slots', 168), f'{usb_vt} slot {i} ({name}) is inherited from IOService')
+usb_slot_by_diversity = {d: i for i, (_, d) in enumerate(usb_slots)}
+for name in sorted({n for n, _, k in usb_found if k == 1 and '12AppleUSBXDCI' in n} - set(usb_bindings)):
+    slot = usb_slot_by_diversity.get(discriminator(name[1:]))
+    require(slot is not None and slot not in usb_pure, f'{name}: an original concrete AppleUSBXDCI slot')
+    usb_bindings[name] = usb_slots[slot][0] + slide
+# Every inherited slot must be what the original has: a vtable slot of the base class that the native class leaves to IOService is a bug.
+xhci_bindings = {n: int(v, 16) + slide for n, v in xhci_abi['bindings'].items()}
+xhci_vt = '__ZTV12QcomDwc3Xhci'
+xhci_entries = object_vtable(usb_raw, usb_found, xhci_vt, len(xhci_slots))
+require(all(xhci_entries), f'{xhci_vt}: at least the {len(xhci_slots)} AppleUSBXHCI entries')
+for i, (name, word) in enumerate(xhci_entries):
+    require(word >> 63 and word >> 48 & 1 and word >> 49 & 3 == 0 and (word >> 32) & 0xffff == xhci_slots[i][1],
+            f'{xhci_vt} slot {i} ({name}) signed with the original diversity {xhci_slots[i][1]:#x}')
+    if '12AppleUSBXHCI' in name:
+        require(xhci_bindings.setdefault(name, xhci_slots[i][0] + slide) == xhci_slots[i][0] + slide, f'{name}: one original address')
+    elif not name.startswith(('__ZN12QcomDwc3Xhci', '__ZNK12QcomDwc3Xhci')):
+        require(i < xhci_abi.get('base_slots', 168), f'{xhci_vt} slot {i} ({name}) is inherited from IOService')
+# Targets below the kernel's text are the original's overrides in its kexts.
+XHCI_BASE = xhci_abi.get('base_slots', 168)
+kernel_text = range(*(int(x, 16) for x in xhci_abi['kernel_text'])) if 'kernel_text' in xhci_abi else range(0xfffffe000b000000, 1 << 64)
+xhci_io = {i for i, (t, _) in enumerate(xhci_slots[:XHCI_BASE]) if t not in kernel_text and i not in (0, 1, 7)}
+for i in sorted(xhci_io):
+    require('12AppleUSBXHCI' in xhci_entries[i][0] or 'QcomDwc3Xhci' in xhci_entries[i][0], f'{xhci_vt} slot {i} ({xhci_entries[i][0]}) reaches the original override')
+xhci_slot_by_diversity = {d: i for i, (_, d) in enumerate(xhci_slots)}
+for name in sorted({n for n, _, k in usb_found if k == 1 and '12AppleUSBXHCI' in n} - set(xhci_bindings)):
+    slot = xhci_slot_by_diversity.get(discriminator(name[1:]))
+    require(slot is not None, f'{name}: an original concrete AppleUSBXHCI slot')
+    xhci_bindings[name] = xhci_slots[slot][0] + slide
+usb_bindings.update(xhci_bindings)
+USB_DATA = {'__ZN12AppleUSBXDCI10gMetaClassE', '__ZTV12AppleUSBXDCI', '__ZN12AppleUSBXHCI10gMetaClassE', '__ZTV12AppleUSBXHCI'}
+usb_text, usb_addresses = '.text\n.p2align 2\n', ''
+for name, va in sorted(usb_bindings.items()):
+    if name in USB_DATA:
+        usb_addresses += f'.globl {name}\n.set {name}, {va:#x}\n'
+    else:
+        usb_addresses += f'.globl {name}.original\n.set {name}.original, {va:#x}\n'
+        usb_text += f'.globl {name}\n{name}:\n bti c\n b {name}.original\n'
+(USB_OUT / 'usb-bindings.S').write_text(usb_text)
+(USB_OUT / 'usb-addresses.S').write_text(usb_addresses)
+for stem in ('usb-bindings', 'usb-addresses'):
+    run(['xcrun', 'clang', '-target', TRIPLE, '-isysroot', sdk, '-c', USB_OUT / (stem + '.S'), '-o', USB_OUT / (stem + '.o')])
+usb_late = USB_OUT / 'QcomDwc3.late.o'
+run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_QcomDwc3.cpp',
+     USB_OUT / 'QcomDwc3.o', usb_late])
+input_objects += [usb_late, USB_OUT / 'usb-bindings.o', USB_OUT / 'usb-addresses.o', USB_OUT / 'UsbProbe.o', USB_OUT / 'UkeUsbBoard.o']
+
 print(f'Board drivers: {len(board_objects)} objects')
 stage_source = KITS / 'UkeBootStages.cpp'
 stage_object = OUT / 'UkeBootStages.o'
@@ -626,6 +783,9 @@ sources += [KITS / name for name in (
     'AdspProbe.cpp', 'ShengAdsp.h', 'ShengGpr.c', 'ShengGpr.h',
     'ShengAudioReach.c', 'ShengAudioReach.h', 'UkeAudioProbe.cpp',
     'ShengBattmgr.c', 'ShengBattmgr.h', 'ShengBattery.cpp', 'BatteryProbe.cpp', 'ShengQrtr.c')]
+sources += [USB / name for name in ('QcomDwc3.cpp', 'QcomEusb2Phy.h', 'QcomQmpUsb3.h', 'QcomUcsi.h')]
+sources += [KITS / name for name in ('UsbProbe.cpp', 'UkeUsbBoard.cpp', 'UkeUsbBoard.h')]
+sources += [ROOT / 'scripts' / f'usb-{kind}-24A446.json' for kind in ('xdci', 'xhci')]
 sources += list(remoteproc.glob('*.c')) + list(remoteproc.glob('*.h')) + list(remoteproc.glob('*.cpp'))
 (OUT / 'build-report.json').write_text(json.dumps(dict(
     source_sha256={str(p.relative_to(ROOT)): sha(p) for p in sources}, generated_abi_sha256=sha(OUT / 'OriginalLegacyFramebufferABI.h'),

@@ -661,6 +661,7 @@ extern void sheng_cpufreq_probe(void);
 extern void sheng_adsp_probe(void);
 extern void sheng_battery_probe(void);
 extern void uke_audio_probe(void);
+extern void uke_usb_probe(void);
 extern void sheng_gpu_power_probe(void);
 extern void native_touch_probe(void);
 extern void sheng_buttons_probe(void);
@@ -761,6 +762,7 @@ void native_legacy_display_late_probe(void) {
     uke_wpss_probe();
     sheng_adsp_probe();
     sheng_battery_probe();
+    uke_usb_probe();
     uke_audio_probe();
     native_hid_input_probe();
     native_virtio_input_probe();

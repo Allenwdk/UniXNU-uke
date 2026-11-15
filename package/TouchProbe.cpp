@@ -24,6 +24,7 @@ extern "C" {
 #include "NvtTouchCore.h"
 #include "TouchBoard.h"
 #include "SmmuBypass.h"
+#include "UkeUsbBoard.h"
 extern const uint8_t native_touch_firmware[] __attribute__((weak_import));
 extern const uint32_t native_touch_firmware_size __attribute__((weak_import));
 }
@@ -398,12 +399,15 @@ bool prepareDma(Session &s) {
     cacheRange(virt, 2 * kDmaBytes, 1);
     if (!mapRegion(TB_APPS_SMMU_BASE, TB_APPS_SMMU_SIZE, s.smmu)) {fail(43, -12); return false;}
     mark(s, 43);
-    struct smmu_io io = {reinterpret_cast<void *>(s.smmu.va), smmuRd, smmuWr};
-    struct smmu_plan plan = smmu_plan_bypass(&io, TB_QUP_SMMU_SID, s.dmaPhys, 2 * kDmaBytes);
-    s.smmuSlot = static_cast<int>(plan.slot); s.smmuBank = static_cast<int>(plan.bank);
-    if (plan.error) {s.smmuErr = smmuErrorCode(plan.error); fail(43, -100 - s.smmuErr); return false;}
-    const char *e = smmu_configure_bypass(&io, &plan, TB_QUP_SMMU_SID);
-    if (e) {s.smmuErr = smmuErrorCode(e); fail(44, -100 - s.smmuErr); return false;}
+    {
+        AppsSmmuLock guard;
+        struct smmu_io io = {reinterpret_cast<void *>(s.smmu.va), smmuRd, smmuWr};
+        struct smmu_plan plan = smmu_plan_bypass(&io, TB_QUP_SMMU_SID, s.dmaPhys, 2 * kDmaBytes);
+        s.smmuSlot = static_cast<int>(plan.slot); s.smmuBank = static_cast<int>(plan.bank);
+        if (plan.error) {s.smmuErr = smmuErrorCode(plan.error); fail(43, -100 - s.smmuErr); return false;}
+        const char *e = smmu_configure_bypass(&io, &plan, TB_QUP_SMMU_SID);
+        if (e) {s.smmuErr = smmuErrorCode(e); fail(44, -100 - s.smmuErr); return false;}
+    }
     s.spi.use_dma = 1;
     s.spi.dma.ctx = nullptr;
     s.spi.dma.clean = dmaClean;

@@ -16,6 +16,7 @@
 #include "ArmSmmu4K.h"
 #include "ArmSmmu4KContext.h"
 #include "SmmuBypass.h"
+#include "UkeUsbBoard.h"
 #include "Sm7675RemoteProc.h"
 #include "Sm7675Scm.h"
 extern "C" {
