@@ -30,6 +30,7 @@
 #include <libkern/c++/OSSymbol.h>
 #include <pexpert/pexpert.h>
 #include "GeniI2c.h"
+#include "UkeUsbBoard.h"
 #include "UkeBacklightState.h"
 
 // [0] stage (1 mapped, 2 engines ready, 3 published, 4 published as AppleARMBacklight, negative: the step that failed), [1] brightness requests, [2] last effective output (0 when gated),
@@ -81,7 +82,7 @@ struct EngineIo {
     volatile uint32_t *va;
     IOSimpleLock *lock;
     uint32_t pending, mask;
-    bool deferred;
+    bool deferred, wcdPolling;
     uint64_t firstPendingAt;
 };
 EngineIo gIo[2];
@@ -199,6 +200,11 @@ void seIrq(void *context) {
     const unsigned index = (unsigned)(uintptr_t)context;
     EngineIo &io = gIo[index];
     const auto state = IOSimpleLockLockDisableInterrupt(io.lock);
+    // A WCD transaction on this engine polls its own status under the work-loop gate.
+    if (io.wcdPolling) {
+        IOSimpleLockUnlockEnableInterrupt(io.lock, state);
+        return;
+    }
     const uint32_t status = rd(io.va, GENI_M_IRQ_STATUS);
     // Mask delivery until the work loop feeds/drains the FIFO. Preserve the
     // firmware's watermark threshold throughout that deferred handoff.
@@ -710,7 +716,51 @@ class ShengBacklight : public IOService {
         printf("UKE BL: ready st=%d initial=%d/%d proto=%x/%x\n", native_backlight_stats[0],
                native_backlight_stats[3], native_backlight_stats[4], native_backlight_stats[7], native_backlight_stats[8]);
     }
+    // Run with the existing work-loop gate held. Exclude both backlight's timer
+    // path and the primary IRQ consumer while a WCD command owns SE0.
+    static IOReturn withWcdBus(OSObject *owner, void *arg, void *, void *, void *) {
+        auto *self = static_cast<ShengBacklight *>(owner);
+        auto &io = gIo[0];
+        auto &backlight = self->engine[0];
+        if (!backlight.usable) return kIOReturnNoDevice;
+        if (geni_i2c_busy(&backlight.bus) || engineActive(0)) return kIOReturnBusy;
+
+        auto state = IOSimpleLockLockDisableInterrupt(io.lock);
+        if (io.pending) {
+            IOSimpleLockUnlockEnableInterrupt(io.lock, state);
+            return kIOReturnBusy;
+        }
+        io.wcdPolling = true;
+        const uint32_t savedSeIrq = rd(io.va, GENI_SE_IRQ_EN);
+        const uint32_t savedMask = rd(io.va, GENI_M_IRQ_EN);
+        wr(io.va, GENI_SE_IRQ_EN, savedSeIrq & ~GENI_SE_M_IRQ_EN);
+        wr(io.va, GENI_M_IRQ_CLEAR, rd(io.va, GENI_M_IRQ_STATUS));
+        IOSimpleLockUnlockEnableInterrupt(io.lock, state);
+
+        // Use the same live FIFO settings with a separate address and command state.
+        GeniI2c bus{};
+        bus.io = {ioRead, [](void *ctx, uint32_t reg, uint32_t value) {
+            wr(static_cast<EngineIo *>(ctx)->va, reg, value);
+        }, &io};
+        bus.address = 0x0e;
+        bus.tx_fifo_words = backlight.bus.tx_fifo_words;
+        bus.rx_fifo_words = backlight.bus.rx_fifo_words;
+        const bool success = (*static_cast<UkeWcdBusAction *>(arg))(bus);
+
+        state = IOSimpleLockLockDisableInterrupt(io.lock);
+        wr(io.va, GENI_M_IRQ_EN, savedMask);
+        wr(io.va, GENI_M_IRQ_CLEAR, rd(io.va, GENI_M_IRQ_STATUS));
+        io.wcdPolling = false;
+        wr(io.va, GENI_SE_IRQ_EN, savedSeIrq);
+        IOSimpleLockUnlockEnableInterrupt(io.lock, state);
+        return success ? kIOReturnSuccess : kIOReturnIOError;
+    }
+
 public:
+    IOReturn runWcdAction(UkeWcdBusAction action) {
+        return loop->runAction(&ShengBacklight::withWcdBus, this, &action);
+    }
+
     bool startBacklight(const bool usable[2]) {
         loop = IOWorkLoop::workLoop();
         fade = IOTimerEventSource::timerEventSource(this, &ShengBacklight::fadeStep);
@@ -802,6 +852,13 @@ OSDefineDefaultStructors(ShengBacklight, IOService)
 OSDefineMetaClassAndStructors(ShengBacklight, IOService)
 #endif
 
+static ShengBacklight *volatile gWcdBusOwner;
+IOReturn uke_backlight_with_wcd_bus(UkeWcdBusAction action) {
+    if (!action) return kIOReturnBadArgument;
+    auto *owner = __atomic_load_n(&gWcdBusOwner, __ATOMIC_ACQUIRE);
+    return owner ? owner->runWcdAction(action) : kIOReturnNotReady;
+}
+
 // Called by BacklightProbe.cpp once this file's classes are registered (its static initializer runs between preModLoad and postModLoad).
 // The service starts with the engines' level reads in flight and publishes itself when they are answered.
 extern "C" void sheng_backlight_start(void) {
@@ -834,6 +891,7 @@ extern "C" void sheng_backlight_start(void) {
         if (backlight) backlight->release();
         fail(3, -19); return;
     }
+    __atomic_store_n(&gWcdBusOwner, backlight, __ATOMIC_RELEASE);
     backlight->release();
 }
 

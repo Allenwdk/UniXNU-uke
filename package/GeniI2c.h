@@ -77,7 +77,7 @@ enum {GeniPending = 0, GeniDone = 1, GeniFailed = 2};
 /* Why the last transfer failed. */
 enum {GeniOk = 0, GeniErrBusy = 1, GeniErrBus = 2, GeniErrTimeout = 3, GeniErrNoData = 4, GeniErrState = 5};
 
-typedef struct {
+typedef struct GeniI2c {
     GeniIo io;
     uint8_t address, phase, reading, hold;
     uint8_t reg, value, error, data;

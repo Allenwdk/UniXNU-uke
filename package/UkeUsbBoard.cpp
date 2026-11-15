@@ -193,41 +193,7 @@ bool repeater() {
     return false;
 }
 
-bool routeWcd() {
-    Registers engine, pins, reset;
-    if (!engine.map(0xa80000, 0x4000) || !pins.map(0xf134000, 0x2000) ||
-        !reset.map(0xf177000, 0x1000)) return false;
-    // GPIO52/53 mux selector 1 for QUP0 SE0, 2 mA pull-up. GPIO119 is the WCD reset.
-    pins.update(0, 0x3ff, 7);
-    pins.update(0x1000, 0x3ff, 7);
-    reset.update(4, 2, 0);
-    reset.update(0, 0x3ff, (1u << 9) | (7u << 6));
-    IOSleep(20);
-    reset.update(4, 2, 2);
-    IOSleep(20);
-    gGcc.update(0x52008, 0, 1u << 18 | 1u << 19 | 1u << 22);
-    if (!gGcc.wait(0x18004, 1u << 31, 0)) return false;
-    unsigned level = 0;
-    for (; level < 8; ++level) {
-        if ((gGcc.read(0x1802c + 4 * level) & 0x71f) <= 1) break;
-    }
-    if (level == 8 || ((engine.read(GENI_FW_REVISION) >> 8) & 0xff) != GENI_PROTO_I2C) return false;
-    engine.update(0x28, 0, 0x7f);
-    engine.update(0xe30, 0, 0xf);
-    engine.write(0x24, 0x7f);
-    engine.write(0x20, 1);
-    engine.write(0xe18, 0);
-    engine.write(0x7c, level);
-    engine.write(GENI_CLK_CFG, 7u << 4 | 1u);
-    engine.write(GENI_SCL_COUNTERS, 10u << 20 | 12u << 10 | 26);
-    const GeniIo io = {
-        [](void *ctx, uint32_t reg) {return static_cast<Registers *>(ctx)->read(reg);},
-        [](void *ctx, uint32_t reg, uint32_t value) {static_cast<Registers *>(ctx)->write(reg, value);},
-        &engine,
-    };
-    GeniI2c bus{};
-    uint32_t cfg = 0;
-    if (geni_i2c_prepare(&bus, &io, 0x0e, &cfg)) return false;
+bool programWcd(GeniI2c &bus) {
     auto finish = [&] {
         for (unsigned step = 0; step < 3; ++step) {
             for (unsigned i = 0; i < 100; ++i) {
@@ -240,9 +206,18 @@ bool routeWcd() {
         return false;
     };
     auto write = [&](uint8_t reg, uint8_t val) {return !geni_i2c_start_write(&bus, reg, val) && finish();};
-    auto read = [&](uint8_t reg) {return !geni_i2c_start_read_combined(&bus, reg) && finish();};
-    if (!write(0, 4) || !read(0x3a)) return false;
+    // OEM geni_i2c_fifo_xfer issues WRITE with STOP_STRETCH, followed by READ.
+    auto read = [&](uint8_t reg) {return !geni_i2c_start_read(&bus, reg) && finish();};
+    auto failure = [&](const char *step, unsigned reg) {
+        printf("[usb] uke WCD %s reg=%03x error=%u irq=%08x rx=%02x\n",
+               step, reg, bus.error, bus.error_status, bus.data);
+        return false;
+    };
+    constexpr uint16_t chipId1 = 0x439;
+    if (!write(0, chipId1 >> 8)) return failure("page", chipId1);
+    if (!read(static_cast<uint8_t>(chipId1))) return failure("revision read", chipId1);
     native_usb_stats[32] = bus.data;
+    printf("[usb] uke WCD CHIP_ID1=%02x\n", bus.data);
     if (bus.data != 1) return false; // Harmonium 2.0, the reviewed peripheral route.
     const struct {uint16_t reg; uint8_t mask, value;} route[] = {
         {0x419, 0x10, 0}, {0x413, 3, 1}, {0x020, 9, 9},
@@ -254,10 +229,34 @@ bool routeWcd() {
         const uint8_t reg = static_cast<uint8_t>(item.reg);
         if (!write(0, item.reg >> 8) || !read(reg) ||
             !write(reg, (bus.data & ~item.mask) | item.value) || !read(reg) ||
-            (bus.data & item.mask) != item.value) return false;
+            (bus.data & item.mask) != item.value) return failure("route", item.reg);
     }
     native_usb_stats[32] |= 1u << 16;
     return true;
+}
+
+bool routeWcd() {
+    Registers reset;
+    if (!reset.map(0xf177000, 0x1000)) {
+        printf("[usb] uke WCD reset GPIO map failed\n");
+        return false;
+    }
+    // GPIO119 is the WCD reset only. SE0 pins, GCC votes and timing belong to the shared backlight owner.
+    reset.update(4, 2, 0);
+    reset.update(0, 0x3ff, (1u << 9) | (7u << 6));
+    IOSleep(20);
+    reset.update(4, 2, 2);
+    IOSleep(20);
+
+    IOReturn result = kIOReturnNotReady;
+    for (unsigned attempt = 0; attempt < 20; ++attempt) {
+        result = uke_backlight_with_wcd_bus(programWcd);
+        if (result != kIOReturnBusy && result != kIOReturnNotReady) break;
+        IOSleep(10);
+    }
+    printf("[usb] uke WCD shared SE0 result=%08x revision_route=%08x\n",
+           static_cast<uint32_t>(result), native_usb_stats[32]);
+    return result == kIOReturnSuccess;
 }
 
 bool initPhy() {
