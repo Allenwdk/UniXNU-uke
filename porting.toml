@@ -10,7 +10,8 @@ summary = "On 2026-11-15 the device user confirmed that brightness adjustment an
 id = "configuration"
 status = "host-verified"
 components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink"]
-paths = ["board.toml", "feeds.toml", "unixnu.lock", "configs/**", "patches/xnu/series", "patches/xnu-12377/series", "proprietary-files.txt"]
+paths = [".gitignore", "out", "patches/xnu-12377/upstream/*.patch", "patches/xnu-12377/uke-adt-driver-args.patch", "patches/xnu-12377/uke-upstream-boot-arg-aliases.patch", "patches/xnu-12377/zzzz-sheng-ipados27-bringup.patch", "scripts/check-adt-driver-args.py", "scripts/make-uke-adt.py", "package/UkeClassRegistration.h",
+  "board.toml", "feeds.toml", "unixnu.lock", "configs/**", "patches/xnu/series", "patches/xnu-12377/series", "proprietary-files.txt"]
 inputs = ["Format-2 resolver of the shared UniXNU checkout (schema_version = 2).",
   "UniXNU-sm7675-common SoC layer and the ipados-27.0.1-24A446 OS profile (iPad17,3, XNU 12377.121.6, arm64e).",
   "24A446 kernelcache kernelcache.decompressed (sha256 38e6d9fa...) as the prelink reference.",
@@ -188,7 +189,8 @@ evidence = [
 id = "cpu"
 status = "device-verified"
 components = ["ArmCpu", "ArmDTPlatform", "ArmVirtPlatform"]
-paths = ["dts/uke.dts", "board.toml", "patches/xnu-12377/uke-idle-timer-rearm.patch", "package/UkeLastLog.c"]
+paths = ["package/BootWatchdogPolicy.c", "package/CpuFreqProbe.cpp", "patches/xnu-12377/uke-cpu-stall-state.patch", "patches/xnu-12377/uke-pset-lock-owner.patch", "patches/xnu-12377/zzzzzzzzzz-sheng-sigp-reinit-assert.patch",
+  "dts/uke.dts", "board.toml", "patches/xnu-12377/uke-idle-timer-rearm.patch", "package/UkeLastLog.c"]
 inputs = ["Eight Kryo cores at affinity 0x000 through 0x700 (SM7675 cliffs).",
   "PSCI over SMC for secondary bring-up."]
 configuration = ["dts/uke.dts: eight CPUs at 0x000..0x700 with E/P clusters, timebase 19200000 and PSCI SMC.",
@@ -235,7 +237,8 @@ evidence = [
 id = "memory"
 status = "device-verified"
 components = ["RamBlock"]
-paths = ["board.toml", "dts/uke.dts"]
+paths = ["patches/xnu-12377/uke-outside-dram-wc.patch", "patches/xnu-12377/uke-vm-delayed-work-pool.patch",
+  "board.toml", "dts/uke.dts"]
 inputs = ["High DRAM window at 0x8C0000000 sized 0x240000000 (9 GiB) with the owned window at 0x130000000.",
   "GMU pool 0xC8000000/32 MiB reserved in the UEFI map and adopted over IODeviceMemory::withRange."]
 configuration = ["[payload.adt]: 0x180000000 high bootstrap window, 16 loader outside-memory entries, chip_id 207, cpu_regs 0..0x700, boot-manifest-hash pinned.",
@@ -280,7 +283,8 @@ evidence = [
 id = "storage"
 status = "device-verified"
 components = ["ShengUfs", "RamBlock", "VirtioMmioBlock", "VirtioMmioConsole", "VerifiedRoot"]
-paths = ["board.toml", "package/SourceStorage.cpp", "package/SourceRootBinding.cpp", "package/SourceRootPolicies.cpp", "package/UfsDpuStubs.c", "package/UfsDpuTableStubs.c", "scripts/make-root-policy-27.py"]
+paths = ["drivers/ShengUfs/**", "patches/xnu-12377/uke-systemos-root-identity.patch",
+  "board.toml", "package/SourceStorage.cpp", "package/SourceRootBinding.cpp", "package/SourceRootPolicies.cpp", "package/UfsDpuStubs.c", "package/UfsDpuTableStubs.c", "scripts/make-root-policy-27.py"]
 inputs = ["UFS host at 0x1d84000 (GCC windows 0x177000/0x19e000).",
   "24A446 OS disk image: raw APFS, 9,613,344,768 B, image sha256 8a12cdad... (equals profile [root]), volume UUID 2F8E6EED-...; the VerifiedRoot OS policy verified all 2,347,008 blocks.",
   "userdata SHNGROOT v2 image (9,689,890,816 B): OS window at 0x100000 (block 512, read-only) and the OS.vroot data object at 0x23D100000 (75,104,800 B, block 4096)."]
@@ -309,7 +313,8 @@ evidence = [
 id = "display"
 status = "device-verified"
 components = ["GopFramebuffer", "NativeUfs"]
-paths = ["package/LegacyDisplayProbe.cpp", "package/OfflineGOP*.mm", "package/DpuProbe.cpp", "scripts/build-native-legacy-display-27.py", "scripts/legacy-display-24A446.json", "scripts/build-native-legacy-display.py", "scripts/check-dpu-probe-host.py", "docs/dts-reference/mdss-cliffs-map.md",
+paths = ["package/GeniI2c.*", "package/MobileDisplayProviderProbe.cpp", "package/UkeBrightnessTransactions.m", "package/tests/geni_i2c_host.c", "scripts/check-backlight-runtime.py",
+  "package/LegacyDisplayProbe.cpp", "package/OfflineGOP*.mm", "package/DpuProbe.cpp", "scripts/build-native-legacy-display-27.py", "scripts/legacy-display-24A446.json", "scripts/build-native-legacy-display.py", "scripts/check-dpu-probe-host.py", "docs/dts-reference/mdss-cliffs-map.md",
   "package/AppleARMBacklight.cpp",
   "package/BacklightProbe.cpp",
   "package/UkeBacklightState.h",
@@ -461,7 +466,8 @@ evidence = [
 id = "input"
 status = "device-verified"
 components = ["ShengHidInput", "ShengNovatekTouch", "QcomGeniSpi"]
-paths = ["drivers/NativeNovatekTouch/**", "package/TouchProbe.cpp", "package/HidInputProbe.cpp", "package/HidInputStubs.c",
+paths = ["drivers/ShengHidInput/**",
+  "drivers/NativeNovatekTouch/**", "package/TouchProbe.cpp", "package/HidInputProbe.cpp", "package/HidInputStubs.c",
   "package/ButtonProbe.cpp",
   "package/UkeButtonState.h",
   "scripts/check-input-backlight.py"
@@ -522,7 +528,8 @@ evidence = [
 id = "gpu"
 status = "device-verified"
 components = ["Adreno740", "AdrenoMetal", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "Sm7675Platform", "Sm8550Platform", "AirNir"]
-paths = ["board.toml", "scripts/prepare-uke-gmu.py", "scripts/build-adreno740-kits.py", "package/GpuPowerProbe.cpp", "docs/GPU-IOS27.md"]
+paths = ["package/AcceleratorABIProbe.cpp", "package/GpuDcvsOpps.h", "package/GpuMemoryPool.cpp", "package/OfflineGPUBrokerProbe.cpp", "package/OriginalGPUProviderProbe.cpp", "package/UkeGpuExport.c", "package/UkeGpuSystemCache*", "patches/xnu-12377/uke-gpu-*.patch", "scripts/analyze-gpu-iokit-waits.py", "scripts/check-gpu-touch-export.py", "scripts/data/uke-gpu-inputs.json", "scripts/decode-gpu-trace.py",
+  "board.toml", "scripts/prepare-uke-gmu.py", "scripts/build-adreno740-kits.py", "package/GpuPowerProbe.cpp", "docs/GPU-IOS27.md"]
 inputs = ["Real 0x43030b00/gen7_11_0, pinned gen71100 firmware, OEM DT and OEM gen7_11_0 source ed4ad0d1ad00.", "Upstream main Adreno740 6fa7bae, Metal 243d63c, GOP e47c1b8; existing 24A446 OS/SystemOS and immutable Data seed."]
 configuration = ["NATIVE_ADRENO enabled; per-process VM, preemption mode2, DCVS, BGRA8 scanout, Turnip render-mode selection and concurrent binning.", "160 MiB raw FAT with standard UEFI compression; paired uke UEFI required."]
 procedure = ["Build kernel, UEFI, Turnip ios27, Metal ios27, addon/trust and payload; pack boot/vendor_boot.", "Only the compression round trip and required artifact/record checks; hardware tests follow delivery."]
@@ -687,7 +694,8 @@ evidence = [
 id = "network"
 status = "device-verified"
 components = ["Sm7675Platform", "Ath12kWifi"]
-paths = ["board.toml", "feeds.toml", "package/Wifi*.c", "package/WifiProbe.cpp", "package/UkeWpss.h", "package/UkeWpssMemory.h", "package/AdspFirmware.c", "firmware/wcn6750/**", "scripts/check-uke-wifi-firmware.py", "scripts/check-uke-wifi-assets.py", "scripts/*wcn6750-qmi.py", "scripts/build-native-legacy-display-27.py", "docs/WIFI-WCN6750.md"]
+paths = ["package/Wifi*.cpp", "patches/xnu-12377/uke-wifi-*.patch", "scripts/build-ath11k-wifi.py", "scripts/build-wifi-*.py", "scripts/check-uke-wifi-*.py",
+  "board.toml", "feeds.toml", "package/Wifi*.c", "package/WifiProbe.cpp", "package/UkeWpss.h", "package/UkeWpssMemory.h", "package/AdspFirmware.c", "firmware/wcn6750/**", "scripts/check-uke-wifi-firmware.py", "scripts/check-uke-wifi-assets.py", "scripts/*wcn6750-qmi.py", "scripts/build-native-legacy-display-27.py", "docs/WIFI-WCN6750.md"]
 inputs = ["Stock WCN6750 signed WPSS pieces from the read-only modem_a firmware partition, pinned in firmware/wcn6750/manifest.json.",
   "Uke live DTS: WPSS25MiB at0x9bb00000, MSA12MiB at0xa6400000, SMEM GLINK/IPCRTR remotePID13 and IPCC client24; PAS6.",
   "DMA ownership (porting/platform): apps_smmu@15000000 stream SID0x1400 mask1, IOVA pool0xb0000000+0x10000000, MSI doorbell0x17110040 and SPI0x300-0x31f, dma-coherent; BAR0x61e00000+0x200000 from DEVICE_INFO.",
@@ -820,7 +828,8 @@ evidence = [
 id = "audio"
 status = "implemented"
 components = []
-paths = ["package/AdspProbe.cpp", "package/ShengAdsp.h", "package/ShengQrtr.c", "package/ShengGpr.*", "package/ShengAudioReach.*", "package/UkeAudioProbe.cpp", "scripts/build-native-legacy-display-27.py", "scripts/check-uke-dsp-host.py", "firmware/uke-adsp/manifest.json", "docs/DSP-AUDIO-POWER.md"]
+paths = ["package/tests/uke_adsp_metadata_host.cpp",
+  "package/AdspProbe.cpp", "package/ShengAdsp.h", "package/ShengQrtr.c", "package/ShengGpr.*", "package/ShengAudioReach.*", "package/UkeAudioProbe.cpp", "scripts/build-native-legacy-display-27.py", "scripts/check-uke-dsp-host.py", "firmware/uke-adsp/manifest.json", "docs/DSP-AUDIO-POWER.md"]
 inputs = ["Uke Cliffs ADSP PAS1 and DTB PAS36, reserved 0x9d400000/0x4500000 and 0xa1900000/0x80000, stock modem split firmware.", "Sheng upstream 6bc0ce1e8c3a3733110a80dd80ddfb2a1ca46555 and Senemos fd33b9174872395fc215bfad5127e525eb423467."]
 configuration = ["First stage uses adsp=2 battery=1 audio=1. Audio mode1 performs APM readiness only. Existing board defaults keep ADSP disabled until the explicit staged payload is selected."]
 procedure = ["Run python3 scripts/check-uke-dsp-host.py, formal kernel and staged payload builds. After candidate authorization, capture same-boot UKE ADSP, UKE BATTERY and UKE AUDIO logs."]
@@ -858,7 +867,8 @@ evidence = [
 id = "power"
 status = "device-verified"
 components = ["Adreno740", "AppleKeyStoreState"]
-paths = ["board.toml", "scripts/build-sheng-platform-power.py",
+paths = ["package/BatteryProbe.cpp", "package/KeyStoreProbe.cpp", "package/ShengPlatformPower.cpp", "package/tests/uke_battery*_host.cpp", "scripts/check-uke-llcc.py",
+  "board.toml", "scripts/build-sheng-platform-power.py",
   "package/AppleARMBacklight.cpp",
   "package/BacklightProbe.cpp",
   "package/UkeBacklightState.h",
@@ -969,7 +979,8 @@ evidence = [
 id = "packaging"
 status = "host-verified"
 components = ["DarwinBoot", "XnuPrelink", "VerifiedRoot"]
-paths = ["board.toml", "scripts/build-session-image.sh"]
+paths = ["docs/releases/*.json", "patches/xnu-12377/sheng-appsync-*.patch", "patches/xnu-12377/uke-addon-memory-release.patch", "patches/xnu-12377/uke-icon-services-cache.patch", "patches/xnu-12377/uke-kext-registration-lock-order.patch", "scripts/build-appsync-runtime.py", "scripts/build-icon-service-cache.py", "scripts/check-icon-service-cache.py",
+  "board.toml", "scripts/build-session-image.sh"]
 inputs = ["Stock vendor_boot DTB with the board's dtb_node patches (splash reservation, payload at 0x1000000).",
   "Trust cache bundle and the recorded Data seed."]
 configuration = ["160MiB raw FAT, payload.compression=uefi; EDK II standard UEFI compression transport in vendor_boot. Paired uke UEFI expands into reserved0xA8000000..0xB2000000 after overlap checks.", "Android v4 vendor_boot retains original DTB/table/bootconfig/vbmeta. Accepted boot1519616B and vendor_boot44859392B fit the96MiB partitions."]
@@ -1070,7 +1081,8 @@ evidence = [
 id = "diagnostics"
 status = "host-verified"
 components = ["AppleKeyStoreState", "XnuPrelink"]
-paths = ["package/UkeLastLog.c", "scripts/xnu-panic-screen.c", "board.toml"]
+paths = ["package/BootDiagExport.c", "package/BootLatency*", "package/BootReset*", "package/BootUiTrace*", "package/UkeFlight*", "scripts/build-boot-log.py", "scripts/decode-sheng-latency.py", "scripts/sheng-latency-report.py", "tools/*.py",
+  "package/UkeLastLog.c", "scripts/xnu-panic-screen.c", "board.toml"]
 inputs = ["Embedded panic log at 0xFF800000/0x380000 read by the menu before XNU clears it.",
   "Boot progress stages and the uke log ring (sheng-log=1)."]
 configuration = ["panic_screen true with the vendored Font.h; boot-progress=2 for the stage bars.",
