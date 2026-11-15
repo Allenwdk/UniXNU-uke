@@ -48,14 +48,19 @@ Registers gGcc;
 
 bool refClock() {
     // qcom_scm_io_readl, atomic SIP IO service. The OEM TCSR gate is in a secure aperture.
-    constexpr uintptr_t pa = 0x1fb1118;
+    // OEM live FDT tcsrcc register range and tcsrcc-pineapple.c enable_reg.
+    constexpr uintptr_t tcsrccBase = 0x01f40000;
+    constexpr unsigned usb2ClkrefOffset = 0x000b1118;
+    constexpr uintptr_t pa = tcsrccBase + usb2ClkrefOffset;
+    static_assert(pa == 0x01ff1118, "Cliffs USB2 TCSR gate address");
     register uint64_t x0 __asm__("x0") = 0xc2000501;
     register uint64_t x1 __asm__("x1") = 1;
     register uint64_t x2 __asm__("x2") = pa;
     register uint64_t x3 __asm__("x3") = 0;
     __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3)
                     : : "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
-    printf("[usb] uke TCSR clkref scm=%lld gate=%08x\n", (long long)x0, (uint32_t)x1);
+    printf("[usb] uke TCSR clkref pa=%08x scm=%lld gate=%08x\n",
+           static_cast<uint32_t>(pa), (long long)x0, (uint32_t)x1);
     return x0 == 0 && (x1 & 1);
 }
 
