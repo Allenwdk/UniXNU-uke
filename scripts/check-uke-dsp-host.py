@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory(prefix='uke-dsp-host-') as directory:
     subprocess.run([exe], check=True)
     source = (DEVICE / 'package/ShengBattery.cpp').read_text()
     start = source.index('        if (__atomic_exchange_n(&self->channelChanged')
-    end = source.index('        for (;;) {', start)
+    end = source.index('        self->drainInbox();', start)
     fixture = (DEVICE / 'package/tests/uke_battery_state_host.cpp').read_text()
     fixture = fixture.replace('#include "../ShengBattmgr.h"', '#include "ShengBattmgr.h"')
     state_source = scratch / 'battery-state.cpp'
@@ -38,6 +38,22 @@ with tempfile.TemporaryDirectory(prefix='uke-dsp-host-') as directory:
                     DEVICE / 'package/tests/uke_battmgr_refresh_host.c', battery_object,
                     '-o', refresh_exe], check=True)
     subprocess.run([refresh_exe], check=True)
+    recovery_exe = scratch / 'battery-recovery'
+    subprocess.run([os.environ.get('CC', 'clang'), '-std=c11', *flags,
+                    DEVICE / 'package/tests/uke_battmgr_recovery_host.c', battery_object,
+                    '-o', recovery_exe], check=True)
+    subprocess.run([recovery_exe], check=True)
+    start = source.index('    static void requestAction(')
+    end = source.index('    static void refreshAction(', start)
+    fixture = (DEVICE / 'package/tests/uke_battery_timer_host.cpp').read_text()
+    drain_start = source.index('    void drainInbox() {')
+    timer_source = scratch / 'battery-timer.cpp'
+    timer_source.write_text(fixture.replace('// PRODUCTION_REQUEST_ACTION', source[start:end])
+                           .replace('// PRODUCTION_DRAIN_INBOX', source[drain_start:start]))
+    timer_exe = scratch / 'battery-timer'
+    subprocess.run([os.environ.get('CXX', 'clang++'), '-std=c++17', *flags,
+                    '-I', DEVICE / 'package', timer_source, battery_object, '-o', timer_exe], check=True)
+    subprocess.run([timer_exe], check=True)
     start = source.index('    static void dspState(')
     end = source.index('    void subscribe()', start)
     fixture = (DEVICE / 'package/tests/uke_battery_dispatch_host.cpp').read_text()

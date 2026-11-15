@@ -80,13 +80,15 @@ int main(void)
     sheng_battmgr_refresh(&b, 0);
     CHECK(sheng_battmgr_next(&b, request));
     response(reply, request, 1);
-    sheng_battmgr_timeout(&b);
-    CHECK(b.poisoned && !b.valid);
+    CHECK(sheng_battmgr_timeout(&b) == BmAnswer);
+    CHECK(!b.poisoned && !(b.valid & (1u << BmStatus)));
+    CHECK(sheng_battmgr_next(&b, request) == 24);
+    CHECK(get(request + 16) == 2); // Continue with present, not the expired status.
     CHECK(sheng_battmgr_receive(&b, reply, 24) == BmIgnored);
     sheng_battmgr_refresh(&b, 1);
     CHECK(!sheng_battmgr_next(&b, request));
 
-    // Only a confirmed clean transport may initialize a fresh state.
+    // A confirmed clean transport may also initialize a fresh state.
     sheng_battmgr_init(&b);
     sheng_battmgr_refresh(&b, 1);
     CHECK(sheng_battmgr_next(&b, request));
@@ -118,10 +120,10 @@ int main(void)
 
     sheng_battmgr_init(&b);
     b.notification_pending = 1;
-    sheng_battmgr_timeout(&b);
-    CHECK(b.poisoned && b.last_timeout == -2 && !b.valid);
+    CHECK(sheng_battmgr_timeout(&b) == BmAnswer);
+    CHECK(!b.poisoned && b.last_timeout == -2 && !b.notification_pending);
     uint8_t notify[16] = {0};
     put(notify, 32778); put(notify + 4, 2); put(notify + 8, 7);
-    CHECK(sheng_battmgr_receive(&b, notify, sizeof notify) == BmIgnored);
-    printf("PASS Uke battery read-only and timeout quarantine: %u checks\n", checks);
+    CHECK(sheng_battmgr_receive(&b, notify, sizeof notify) == BmNotified);
+    printf("PASS Uke battery read-only and per-request timeout: %u checks\n", checks);
 }

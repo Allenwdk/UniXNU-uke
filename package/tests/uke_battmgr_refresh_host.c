@@ -81,9 +81,9 @@ int main(void)
     sheng_battmgr_refresh(&b, 1);
     notify(&b);
     CHECK(b.refresh_wanted == 2);
-    // Transport timeout still invalidates everything and forbids that queued work.
-    sheng_battmgr_timeout(&b);
-    CHECK(b.poisoned && !b.valid);
-    CHECK(!sheng_battmgr_next(&b, request));
+    // A timed-out GET loses only its own field and does not discard queued work.
+    CHECK(sheng_battmgr_timeout(&b) == BmAnswer);
+    CHECK(!b.poisoned && !(b.valid & (1u << BmStatus)));
+    CHECK(b.refresh_wanted == 2 && sheng_battmgr_next(&b, request));
     printf("PASS completed battery snapshot before queued refresh: %u checks\n", checks);
 }

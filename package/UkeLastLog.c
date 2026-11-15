@@ -576,7 +576,7 @@ uke_last_log_writer(void *arg, wait_result_t result)
 #if defined(UKE_SOURCE_STORAGE_LOG)
         /* Observe dispatch independently of the DSP and battery work-loop.
          * Counts are diagnostic samples, not a committed battery snapshot. */
-        if ((tick % 40) == 0 && native_battery_stats[0] != 0) {
+        if (progress_on && (tick % 40) == 0 && native_battery_stats[0] != 0) {
             uint32_t counts[6];
             for (unsigned i = 0; i < 6; ++i)
                 counts[i] = __atomic_load_n(&native_battery_dispatch[i], __ATOMIC_RELAXED);
@@ -651,34 +651,36 @@ uke_last_log_writer(void *arg, wait_result_t result)
                     }
                 }
             }
-            IOLog("UKE %s\n", native_cpufreq_row);
-            char row[512];
-            for (unsigned i = 0; i < 17 && armcpu_stats_row(i, row, sizeof row); ++i)
-                IOLog("UKE %s\n", row);
-            IOLog("UKE CPU ramp: full=%u/%u/%u late=%u/%u/%u statePct=%u/%u/%u\n",
-                native_cpufreq_ramp[0], native_cpufreq_ramp[3], native_cpufreq_ramp[6],
-                native_cpufreq_ramp[1], native_cpufreq_ramp[4], native_cpufreq_ramp[7],
-                native_cpufreq_ramp[2], native_cpufreq_ramp[5], native_cpufreq_ramp[8]);
-            IOLog("UKE boot memory: addonReleasedPages=%d staticFreedPages=%llu\n",
-                native_gpu_addon_released, ml_static_mfree_pages);
-            if (&sheng_edge_cross_type_steals && &sheng_edge_idle_beside_excess && &sheng_edge_idle_beside_queued) {
-                IOLog("UKE CPU edges: steals=%u/%u idleExcess=%u/%u queuedE=%u/%u/%u/%u/%u/%u/%u/%u queuedP=%u/%u/%u/%u/%u/%u/%u/%u\n",
-                    sheng_edge_cross_type_steals[0], sheng_edge_cross_type_steals[1],
-                    sheng_edge_idle_beside_excess[0], sheng_edge_idle_beside_excess[1],
-                    sheng_edge_idle_beside_queued[0][0], sheng_edge_idle_beside_queued[0][1],
-                    sheng_edge_idle_beside_queued[0][2], sheng_edge_idle_beside_queued[0][3],
-                    sheng_edge_idle_beside_queued[0][4], sheng_edge_idle_beside_queued[0][5],
-                    sheng_edge_idle_beside_queued[0][6], sheng_edge_idle_beside_queued[0][7],
-                    sheng_edge_idle_beside_queued[1][0], sheng_edge_idle_beside_queued[1][1],
-                    sheng_edge_idle_beside_queued[1][2], sheng_edge_idle_beside_queued[1][3],
-                    sheng_edge_idle_beside_queued[1][4], sheng_edge_idle_beside_queued[1][5],
-                    sheng_edge_idle_beside_queued[1][6], sheng_edge_idle_beside_queued[1][7]);
+            if (progress_on) {
+                IOLog("UKE %s\n", native_cpufreq_row);
+                char row[512];
+                for (unsigned i = 0; i < 17 && armcpu_stats_row(i, row, sizeof row); ++i)
+                    IOLog("UKE %s\n", row);
+                IOLog("UKE CPU ramp: full=%u/%u/%u late=%u/%u/%u statePct=%u/%u/%u\n",
+                    native_cpufreq_ramp[0], native_cpufreq_ramp[3], native_cpufreq_ramp[6],
+                    native_cpufreq_ramp[1], native_cpufreq_ramp[4], native_cpufreq_ramp[7],
+                    native_cpufreq_ramp[2], native_cpufreq_ramp[5], native_cpufreq_ramp[8]);
+                IOLog("UKE boot memory: addonReleasedPages=%d staticFreedPages=%llu\n",
+                    native_gpu_addon_released, ml_static_mfree_pages);
+                if (&sheng_edge_cross_type_steals && &sheng_edge_idle_beside_excess && &sheng_edge_idle_beside_queued) {
+                    IOLog("UKE CPU edges: steals=%u/%u idleExcess=%u/%u queuedE=%u/%u/%u/%u/%u/%u/%u/%u queuedP=%u/%u/%u/%u/%u/%u/%u/%u\n",
+                        sheng_edge_cross_type_steals[0], sheng_edge_cross_type_steals[1],
+                        sheng_edge_idle_beside_excess[0], sheng_edge_idle_beside_excess[1],
+                        sheng_edge_idle_beside_queued[0][0], sheng_edge_idle_beside_queued[0][1],
+                        sheng_edge_idle_beside_queued[0][2], sheng_edge_idle_beside_queued[0][3],
+                        sheng_edge_idle_beside_queued[0][4], sheng_edge_idle_beside_queued[0][5],
+                        sheng_edge_idle_beside_queued[0][6], sheng_edge_idle_beside_queued[0][7],
+                        sheng_edge_idle_beside_queued[1][0], sheng_edge_idle_beside_queued[1][1],
+                        sheng_edge_idle_beside_queued[1][2], sheng_edge_idle_beside_queued[1][3],
+                        sheng_edge_idle_beside_queued[1][4], sheng_edge_idle_beside_queued[1][5],
+                        sheng_edge_idle_beside_queued[1][6], sheng_edge_idle_beside_queued[1][7]);
+                }
+                const volatile uint32_t *cost = native_touch_cost;
+                IOLog("UKE touch cost: irq=%u/%u/%u wakes=%u peeks=%u stale=%u bad=%u reads=%u frames=%u ms=%u/%u/%u doze=%u/%u/%u type=%u\n",
+                    native_touch_irq_stats[0], native_touch_irq_stats[1], native_touch_irq_stats[2],
+                    cost[0], cost[1], cost[2], cost[3], cost[4], cost[5], cost[6] / 1000, cost[7] / 1000, cost[8] / 1000,
+                    native_touch_doze[0], native_touch_doze[1], native_touch_doze[2], native_touch_doze[3]);
             }
-            const volatile uint32_t *cost = native_touch_cost;
-            IOLog("UKE touch cost: irq=%u/%u/%u wakes=%u peeks=%u stale=%u bad=%u reads=%u frames=%u ms=%u/%u/%u doze=%u/%u/%u type=%u\n",
-                native_touch_irq_stats[0], native_touch_irq_stats[1], native_touch_irq_stats[2],
-                cost[0], cost[1], cost[2], cost[3], cost[4], cost[5], cost[6] / 1000, cost[7] / 1000, cost[8] / 1000,
-                native_touch_doze[0], native_touch_doze[1], native_touch_doze[2], native_touch_doze[3]);
             if (gpu_log_on) {
                 IOLog("UKE DCVS windows: span=%u windows=%u busy=%u faint=%u ringOnly=%u longest=%uus@%u rests=%u\n",
                     native_gpu_dcvs_windows[7], native_gpu_dcvs_windows[0], native_gpu_dcvs_windows[1],

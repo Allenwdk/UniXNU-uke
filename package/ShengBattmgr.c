@@ -117,15 +117,18 @@ static int finish(ShengBattmgr *b)
     return 1;
 }
 
-void sheng_battmgr_timeout(ShengBattmgr *b)
+int sheng_battmgr_timeout(ShengBattmgr *b)
 {
-    if (!b->in_flight && !b->notification_pending) return;
+    if (b->poisoned || (!b->in_flight && !b->notification_pending)) return BmIgnored;
     b->timeouts++;
     b->last_timeout = b->in_flight ? b->cursor : -2;
-    b->in_flight = b->notification_pending = 0;
-    b->cursor = NO_CYCLE;
-    b->valid = 0;
-    b->poisoned = 1;
+    if (b->notification_pending) {
+        b->notification_pending = 0;
+        return BmAnswer;  /* The owner retries the idempotent subscription. */
+    }
+    b->valid &= ~(1u << b->cursor);
+    advance(b);
+    return finish(b) ? BmCycleDone : BmAnswer;
 }
 
 int sheng_battmgr_receive(ShengBattmgr *b, const uint8_t *data, uint32_t length)

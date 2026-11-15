@@ -6,7 +6,7 @@
 //
 // DSP callbacks copy responses to a bounded ring. The service work loop owns
 // requests and snapshots. The upstream IOInterruptEventSource signals that
-// work loop. Timed-out untagged replies quarantine the transport.
+// work loop. Retire timed-out GETs individually and retry incomplete snapshots.
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/IOTimerEventSource.h>
@@ -45,7 +45,7 @@ extern "C" {volatile uint32_t native_battery_dispatch[6];}
 extern "C" {volatile int32_t native_charger_stats[16];}
 
 namespace {
-constexpr uint32_t kRequestMs = 2000, kRefreshMs = 60000, kSlowEvery = 10, kRing = 16, kMessage = 560;
+constexpr uint32_t kRequestMs = 2000, kRefreshMs = 60000, kRetryMs = 5000, kSlowEvery = 10, kRing = 16, kMessage = 560;
 }
 
 // Keep the upstream interrupt producer, action dispatch and work-loop gate.
@@ -182,6 +182,7 @@ class ShengBattery : public IOPMPowerSource {
                bm.cycles_done, bm.valid, required, bm.responses, bm.errors, bm.timeouts);
         if (bm.poisoned || (bm.valid & required) != required) {
             stale(true);
+            if (!bm.poisoned) refresh->setTimeoutMS(kRetryMs);
             if (published) updateStatus();
             return;
         }
@@ -292,6 +293,12 @@ class ShengBattery : public IOPMPowerSource {
             printf("UKE BATTERY: inbox up=%u generation=%u poisoned=%u\n", (unsigned)up,
                    self->transportGeneration, self->bm.poisoned);
         }
+        self->drainInbox();
+    }
+    // Called under the work-loop gate, also before deciding a request timed out.
+    // The DSP callback may already have queued its answer while this loop slept.
+    void drainInbox() {
+        ShengBattery *self = this;
         for (;;) {
             uint8_t data[kMessage];
             uint32_t length = 0;
@@ -305,9 +312,6 @@ class ShengBattery : public IOPMPowerSource {
             }
             IOSimpleLockUnlock(self->ringLock);
             if (!length) break;
-            if ((self->bm.in_flight || self->bm.notification_pending) && mach_absolute_time() >= self->requestDeadline) {
-                requestAction(self, nullptr);
-            }
             if (self->messageLogs < 8) {
                 char hex[49] = {};
                 const unsigned n = length < 24 ? length : 24;
@@ -323,18 +327,29 @@ class ShengBattery : public IOPMPowerSource {
     static void requestAction(OSObject *owner, IOTimerEventSource *) {
         ShengBattery *self = OSDynamicCast(ShengBattery, owner);
         if (!self || !self->wasUp || self->bm.poisoned) return;
+        self->drainInbox();
         if (!self->bm.in_flight && !self->bm.notification_pending) {
             if (!self->bm.enabled) self->subscribe();
             else self->pump();
             return;
         }
-        sheng_battmgr_timeout(&self->bm);
-        self->refresh->cancelTimeout();
+        // Draining may have completed the old request and armed a new one. A
+        // timer for the old request must not expire that new request early.
+        const uint64_t now = mach_absolute_time();
+        if (now < self->requestDeadline) {
+            uint64_t ns = 0;
+            absolutetime_to_nanoseconds(self->requestDeadline - now, &ns);
+            self->request->setTimeoutMS((uint32_t)((ns + 999999) / 1000000));
+            return;
+        }
+        const int result = sheng_battmgr_timeout(&self->bm);
+        self->refresh->setTimeoutMS(kRetryMs);
         self->stale(true);
         if (self->published) self->updateStatus();
-        self->counters();
-        printf("UKE BATTERY: timeout field=%d generation=%u quarantined\n",
+        printf("UKE BATTERY: timeout field=%d generation=%u retrying\n",
                self->bm.last_timeout, self->transportGeneration);
+        self->handle(result);
+        if (!self->bm.enabled) self->request->setTimeoutMS(kRetryMs);
     }
     static void refreshAction(OSObject *owner, IOTimerEventSource *sender) {
         ShengBattery *self = OSDynamicCast(ShengBattery, owner);

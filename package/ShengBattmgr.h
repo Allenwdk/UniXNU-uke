@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
 /* PMIC GLINK battery codec, derived from UniXNU-sheng 6bc0ce1e.
  * Uke publishes measurements and notification subscriptions only. A timed-out
- * untagged request quarantines this transport generation until a clean restart. */
+ * GET invalidates that field and advances, as in the upstream/OEM driver. */
 #ifndef SHENG_BATTMGR_H
 #define SHENG_BATTMGR_H
 #include <stdint.h>
@@ -67,8 +67,9 @@ void sheng_battmgr_refresh(ShengBattmgr *b, int slow);
 /* Consume BmCycleDone before calling next again. A queued refresh begins here, after the owner publishes the completed snapshot.
  * Returns 0 while another request is outstanding or the transport is quarantined. */
 uint32_t sheng_battmgr_next(ShengBattmgr *b, uint8_t out[SHENG_BATTMGR_REQUEST_BYTES]);
-/* Quarantine an untagged request after timeout. A clean transport generation must reinitialize it. */
-void sheng_battmgr_timeout(ShengBattmgr *b);
+/* Retire one timed-out request. Returns BmCycleDone if it ended the cycle,
+ * otherwise BmAnswer; an idle/transport-lost decoder returns BmIgnored. */
+int sheng_battmgr_timeout(ShengBattmgr *b);
 /* A message from the channel; returns one of the Bm* results. */
 int sheng_battmgr_receive(ShengBattmgr *b, const uint8_t *data, uint32_t length);
 /* The power source values from the fields read so far. */
