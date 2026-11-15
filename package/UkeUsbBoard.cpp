@@ -59,6 +59,12 @@ bool refClock() {
     return x0 == 0 && (x1 & 1);
 }
 
+// rpmh-rsc.c extracts the major version at bits 23:16. The board's DRV-2
+// selection comes from its physical aperture, while bits 15:8 hold the minor version.
+constexpr bool supportedRscVersion(uint32_t id) {return ((id >> 16) & 0xff) == 3;}
+static_assert(supportedRscVersion(0x00030200), "Uke apps RSC DRV-2 reports version 3.2");
+static_assert(!supportedRscVersion(0x00020200), "USB uses the version 3 status offsets");
+
 bool voteRails() {
     Registers db, rsc;
     constexpr unsigned kDbSize = 0x20000, kDrvOffset = 0xd00, kUsbTcs = 2;
@@ -69,17 +75,32 @@ bool voteRails() {
         uint32_t word = db.read(i);
         memcpy(copy + i, &word, sizeof(word));
     }
-    const auto layout = qcom_rsc_layout(rsc.read(0));
+    const uint32_t rscId = rsc.read(0);
+    const auto layout = qcom_rsc_layout(rscId);
     const unsigned tcs = kDrvOffset + kUsbTcs * layout.tcs_stride;
-    bool ok = ((rsc.read(0) >> 16) & 255u) == 3 && (rsc.read(0) & 255u) == 2;
-    auto submit = [&](const uint32_t *addr, const uint32_t *val, unsigned count) {
-        if (!rsc.read(tcs + 0x28) || (rsc.read(tcs + layout.control) & (1u << 24))) return false;
+    constexpr unsigned kV3TcsStatus = 0x28, kV3CmdStatus = 0x40;
+    constexpr unsigned kTriggered = 1u << 24, kIssuedAndComplete = (1u << 8) | (1u << 16);
+    bool ok = supportedRscVersion(rscId);
+    auto submit = [&](const char *resource, const uint32_t *addr, const uint32_t *val, unsigned count) {
+        const uint32_t status = rsc.read(tcs + kV3TcsStatus);
+        const uint32_t control = rsc.read(tcs + layout.control);
+        if (!status || (control & kTriggered)) {
+            printf("[usb] uke rpmh busy resource=%s tcs=%u status=%08x control=%08x\n",
+                   resource, kUsbTcs, status, control);
+            return false;
+        }
         QcomRpmhWrite writes[20];
         const unsigned n = qcom_rpmh_active_request(&layout, kUsbTcs, addr, val, count, writes, 20);
         if (!n) return false;
         for (unsigned i = 0; i < n; ++i) rsc.write(kDrvOffset + writes[i].offset, writes[i].value);
         for (unsigned i = 0; i < count; ++i) {
-            if (!rsc.wait(tcs + 0x40 + i * layout.cmd_stride, 0x10100, 0x10100, 5000)) return false;
+            const unsigned offset = tcs + kV3CmdStatus + i * layout.cmd_stride;
+            if (!rsc.wait(offset, kIssuedAndComplete, kIssuedAndComplete, 5000)) {
+                printf("[usb] uke rpmh timeout resource=%s cmd=%u address=%08x status=%08x tcs=%08x irq=%08x\n",
+                       resource, i, addr[i], rsc.read(offset), rsc.read(tcs + kV3TcsStatus),
+                       rsc.read(kDrvOffset + layout.irq_status));
+                return false;
+            }
         }
         const unsigned done = qcom_rpmh_finish(&layout, kUsbTcs, writes, 20);
         for (unsigned i = 0; i < done; ++i) rsc.write(kDrvOffset + writes[i].offset, writes[i].value);
@@ -90,11 +111,14 @@ bool voteRails() {
     };
     for (unsigned i = 0; ok && i < sizeof(rails) / sizeof(*rails); ++i) {
         QcomRpmhResource rail{};
-        ok = qcom_cmd_db_find(copy, kDbSize, rails[i].name, &rail) == 0;
-        if (ok) {
+        const int lookup = qcom_cmd_db_find(copy, kDbSize, rails[i].name, &rail);
+        ok = lookup == 0;
+        if (!ok) {
+            printf("[usb] uke cmd-db resource=%s status=%d\n", rails[i].name, lookup);
+        } else {
             const uint32_t addresses[] = {rail.address + 8, rail.address, rail.address + 4};
             const uint32_t values[] = {7, rails[i].mv, 1};
-            ok = submit(addresses, values, 3);
+            ok = submit(rails[i].name, addresses, values, 3);
         }
         if (ok) native_usb_stats[9] |= 1u << i;
     }
@@ -106,12 +130,12 @@ bool voteRails() {
         const uint32_t vote = scaled > 0x3fff ? 0x3fff : static_cast<uint32_t>(scaled);
         const uint32_t addresses[] = {xo.address, sn2.address};
         const uint32_t values[] = {3, 1u << 30 | 1u << 29 | vote << 14 | vote};
-        ok = vote && submit(addresses, values, 2);
+        ok = vote && submit("xo.lvl/SN2", addresses, values, 2);
     } else {
         ok = false;
     }
     IOFreeData(copy, kDbSize);
-    printf("[usb] uke rails votes=%x rsc=%08x complete=%u\n", native_usb_stats[9], rsc.read(0), ok);
+    printf("[usb] uke rails votes=%x rsc=%08x complete=%u\n", native_usb_stats[9], rscId, ok);
     return ok;
 }
 
