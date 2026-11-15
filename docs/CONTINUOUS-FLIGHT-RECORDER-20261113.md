@@ -34,3 +34,7 @@ python3 UniXNU-uke/tools/collect-freeze.py --serial b8a81f12 \
 collector只读；保留flight-region.bin、boot分组manifest、GPU/latency/CPU/heartbeat、完整export/manifest及ukelog.bin。文本槽因跨启动残留仍需按baseline/boot匹配；工具不自动把所有有效文本当本次。flight每槽UUID可直接区分不同启动。也可用 `read-flight.py --image <16MiB.bin> --out <new-directory>` 离线解析。
 
 验收边界：下一次冻结回收须先确认本次boot UUID、最后成功FUA槽、心跳/探针更新时间、每来源lost及覆盖窗口，再用GPU最后提交/完成与等待栈判定停止环节。当前仅证明主机代码、格式和镜像门禁通过，不能宣称已取得卡死现场或修复卡死。
+
+## 本轮刷写
+
+2026-11-13T04:50:52.498996+08:00，四分区Sending/Writing均OKAY，set_active a/current-slot a/reboot均成功；未刷写或擦除userdata。回执 `uke-port/releases/2026-11-13-continuous-flight-recorder/flash-result-20261113-045045.json`。刷后不轮询，等待一次原Safari操作复现。

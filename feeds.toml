@@ -15,13 +15,13 @@ kind = "soc"
 git = "https://github.com/Allenwdk/UniXNU-sm7675-common"
 commit = "e5c8d35c32381613e72d37b5dfdc3d65c923b39e"
 
-# Uke integration branch, pending device qualification.
+# GPU revisions used by the latest archived Uke build.
 [[source]]
 name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
 # GPU mapping and stall fixes with Uke support.
-commit = "e1bdfe91171fdc80c62a6fbb7a5c70728e1c3b14"
+commit = "03ec4bc645a023da0db86816ddb87e90d449d8e3"
 
 [[source]]
 name = "GopFramebuffer"
@@ -35,7 +35,7 @@ name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/Allenwdk/AdrenoMetal.git"
 # Upstream runtime and Turnip changes with Uke rendering and diagnostics.
-commit = "f9d11954887abf48c4ad24dfca4dc1130b76c187"
+commit = "75e182072332863bd65df9806b446668057ac75d"
 
 [[source]]
 name = "ShengUfs"
@@ -69,7 +69,7 @@ commit = "c93d26a75c368ad2c4c85bd4f482aa3807ae2d84"
 name = "ArmCpu"
 kind = "driver"
 git = "https://github.com/Allenwdk/ArmCpu.git"
-commit = "795159ef145e1768b27e7fa9c1bf01dcc981e17c"
+commit = "87212886526392ed4b25ea1ce7345a6fe82508d8"
 
 # Upstream CPU/GPU synchronization, with Uke integration retained.
 [[source]]
@@ -88,4 +88,11 @@ commit = "638c39acc135a224e287a3155927d28b9a115d7f"
 name = "XnuPrelink"
 kind = "kit"
 git = "https://github.com/Allenwdk/XnuPrelink.git"
-commit = "64425131a9f88a428f808bbc6ae8a37c21abf577"
+commit = "b4d34b316e20a909f4755eadd8fa52f9deedb859"
+
+# Uke Data writeback and force-unit-access completion.
+[[source]]
+name = "RamBlock"
+kind = "driver"
+git = "https://github.com/Allenwdk/RamBlock.git"
+commit = "4acdd59dafb5d958f612e4b5610e36f14a013f58"

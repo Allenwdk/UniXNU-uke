@@ -15,4 +15,12 @@
 
 设备实现 `c97bca260a1b831fce889889204dcacc4878c69d` 将抢占关闭时长和中断关闭时长的开发诊断默认值改为 XNU 的 TRACE 模式 1，保留计时和超时事件，避免这两项检测直接走 fatal 路径。此选择针对当前证据，区别于 sheng `1108068` 关闭计时诊断静态键的默认设置。八核、Edge、每核 IRQ 记录、AppSync 与 GPU 诊断关闭配置继续有效。一般 panic、页表校验及断言仍可触发。记录模式的运行时效果以及是否解决桌面冻结待实机验证。
 
-候选 vendor_boot SHA-256 `3849c862faf8394ad3901484218244526bc03e82c6c9f14ccf9228c373ed4fb8`，763 字节命令行沿用上一版。正式内核、预链接、payload、镜像配对、最终 FAT 的八核 ADT、内置 TRACE 参数、AppSync 全部运行库、完整信任 bundle 和根策略通过核验。尚未刷。主机证据在 `uke-port/fixes/2026-11-14-cpu-stall-readback/`，配对镜像在 `uke-port/releases/2026-11-14-cpu-timeout-trace/`。实机首先确认启动，再核对开机约 110 秒后所有核的 IRQ 和定时器继续推进。
+候选 vendor_boot SHA-256 `3849c862faf8394ad3901484218244526bc03e82c6c9f14ccf9228c373ed4fb8`，763 字节命令行沿用上一版。正式内核、预链接、payload、镜像配对、最终 FAT 的八核 ADT、内置 TRACE 参数、AppSync 全部运行库、完整信任 bundle 和根策略通过核验。构建和部署证据分别保存。主机证据在 `uke-port/fixes/2026-11-14-cpu-stall-readback/`，配对镜像在 `uke-port/releases/2026-11-14-cpu-timeout-trace/`。实机首先确认启动，再核对开机约 110 秒后所有核的 IRQ 和定时器继续推进。
+
+## 本轮刷入
+
+2026-11-14T22:53:57.335879+08:00 用户授权刷入 3849c862。刷前用直接读取复核 SHNGROOT，四个启动分区写入成功，A 槽回读通过，重启命令成功。实机启动与冻结复测待反馈。[刷写回执](../../uke-port/releases/2026-11-14-cpu-timeout-trace/flash-result-20261114-225350.json)。
+
+## 本轮用户反馈与去日志版本
+
+2026-11-14，用户反馈“这次似乎不会卡死了”，对应已刷入的 `3849c862faf8394ad3901484218244526bc03e82c6c9f14ccf9228c373ed4fb8`。仅记录本轮暂未复现卡死；用户未提供持续时长，未回读同次八核 IRQ，不作为长期稳定性或根因确认。证据为 [用户反馈](../../uke-port/releases/2026-11-14-cpu-timeout-trace/user-observation.json)。按用户要求准备关闭 CPU IRQ/关中断取证和周期统计的版本，保留两项时长检查 TRACE 设置、八核、调频与完整 AppSync；新候选实机待验。

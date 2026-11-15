@@ -24,4 +24,10 @@ GPU 为冻结原因的判断尚未结案。此次关闭日志由用户明确要�
 
 logging-verification.json 确认日志源码与提交 `2ccbf5a362edf06e458d888f08f49b71fc35cb73`、正式编入的 source-storage archive 对齐。所有周期 GPU/DCVS 文本行均在 diag 条件中，CPU timer/IPI 记录独立工作。常规故障与 panic 输出继续记录。
 
-候选尚未刷入。设备现状沿用另一会话的 AppSync 047a13e3 实刷与桌面反馈。GPU 诊断关闭后的行为尚无实机验收。
+构建完成时尚未部署，配对基线为另一会话的 AppSync 047a13e3 实刷与桌面反馈。GPU 诊断关闭后的行为尚无实机验收。
+
+## 本轮部署
+
+2026-11-13T22:14:26.380492+08:00，用户本轮“刷吧”授权部署 `a38e9e38…`。21 项归档校验和及 porting-record 13 区检查通过，设备 product=uke、bootloader fastboot。boot_a、vendor_boot_a、boot_b、vendor_boot_b 的 Sending/Writing 全部 OKAY，A 槽已回读确认，重启命令成功。AppSync 完整保留，GPU 诊断关闭。主机未写擦 userdata。启动、持续运行、台前调度和 AppSync 安装/启动待实机反馈。刷后停止设备轮询。
+
+[本轮刷写回执](../../uke-port/releases/2026-11-13-gpu-logs-off-appsync/flash-result-20261113-221424.json)。

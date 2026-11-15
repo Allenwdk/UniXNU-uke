@@ -1,6 +1,6 @@
 # GPU 大块分配预处理锁优化（2026-11-13）
 
-候选 vendor_boot SHA-256 `6ecf3db32bfb53d827089ccf534368ce8d0afeb8eb1c35256035cccff6565e62`。基于 `5d9f3b30…`，保留其 Metal 回放句柄边界检查和采样停滞时的内核栈记录。新包已通过正式 kernel、payload、镜像和签名核验，待当次授权刷写和实机测量。
+候选 vendor_boot SHA-256 `6ecf3db32bfb53d827089ccf534368ce8d0afeb8eb1c35256035cccff6565e62`。基于 `5d9f3b30…`，保留其 Metal 回放句柄边界检查和采样停滞时的内核栈记录。新包已通过正式 kernel、payload、镜像和签名核验，已按当次授权刷入，待实机测量。
 
 在实测 `b8ffe6b0…` 的同次日志中，backboardd PID 572 的编码批次 53729 历时 335.721 ms，其中编码线程占用 CPU 1.996 ms。最慢的索引绘制占 334.374 ms 墙钟时间。它开始时附近有一笔同 PID 的 80 MiB 分配，锁页 70.487 ms，前置限额检查仅 1 μs。这笔分配与长尾时间重叠，尚无足够记录解释剩余等待。
 
@@ -13,3 +13,5 @@ Adreno740 `03ec4bc` 在连接建立时发布固定的 BO 大小上限和物理�
 源码内核 SHA-256 `02349d54c3da3bbcf5c35afbce3f13e0c0b2a34a4e833e1def8274253c20ea98`。FAT 内核 SHA-256 `322aaec60fca56f6791c4c972b2f664685f614c51e5d8ef291441bf06717cc19`。实际启动参数 832 字节。已校验配对 boot、原厂 vendor_boot 元数据、prelink 闭包及与上一候选完全一致的 Metal/Turnip addon、信任缓存与 Data seed。
 
 证据目录 `uke-port/fixes/2026-11-13-bo-preflight-lock/`，包含同次时间关联、全屏 pass 分类、预处理反汇编和构建核验。候选目录 `uke-port/releases/2026-11-13-bo-preflight-lock/`。
+
+2026-11-13T19:11:59.476928+08:00 四个启动分区 Sending/Writing 均返回 OKAY，A 槽已回读，重启命令成功。刷写回执 `uke-port/releases/2026-11-13-bo-preflight-lock/flash-result-20261113-191152.json`。

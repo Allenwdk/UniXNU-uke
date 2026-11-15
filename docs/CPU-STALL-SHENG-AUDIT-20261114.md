@@ -19,4 +19,14 @@ SIGPast 由调度请求设置，处理器进入对应分支时会先清除它，
 
 正式 kernel、预链接、payload 和配对镜像通过。FAT 命令行实测 763 字节，新增 `uke-cpu-stall=1`。保留八核、既有调度策略、关闭 GPU 诊断和 AppSync 全部运行库及信任 bundle。最终反汇编核对 6 条路径，包含编译器内联至 IPI 函数的 4 个回调阶段写入。
 
-设备源码 `02757b828aeec889db09ad8f99daa5465c29ccd5`，vendor_boot SHA-256 `13fbe7af6f4ede0a82464d0acbaa400e6fe86eec134d3f4e0cf927b33d34d0d7`。候选未刷。设备上次确认留在原厂四启动分区、A 槽、TWRP。后续实测优先把停转核的 IRQ 阶段、关中断调用点与同次 UI 时间线对齐。构建及归档位于 `uke-port/releases/2026-11-13-cpu-stall-sheng-audit/` 和 `uke-port/fixes/2026-11-13-cpu-stall-sheng-audit/`。
+设备源码 `02757b828aeec889db09ad8f99daa5465c29ccd5`，vendor_boot SHA-256 `13fbe7af6f4ede0a82464d0acbaa400e6fe86eec134d3f4e0cf927b33d34d0d7`。后续实测优先把停转核的 IRQ 阶段、关中断调用点与同次 UI 时间线对齐。构建及归档位于 `uke-port/releases/2026-11-13-cpu-stall-sheng-audit/` 和 `uke-port/fixes/2026-11-13-cpu-stall-sheng-audit/`。
+
+## 本轮刷入
+
+2026-11-14T22:17:04.210770+08:00 用户授权刷入 13fbe7af。四启动分区的发送和写入均成功，A 槽回读确认，重启命令成功。实机启动和冻结复测待反馈。[刷写回执](../../uke-port/releases/2026-11-13-cpu-stall-sheng-audit/flash-result-20261114-221656.json)。
+
+实刷后启动在 UFS 根卷清单校验处 panic，已恢复物理分区首 8 KiB，iPadOS 启动待验。[回读与修复](CPU-STALL-ROOT-PANIC-20261114.md)。
+
+## 根卷清单恢复后的复刷
+
+2026-11-14T22:35:36.079952+08:00 从分区和整盘直接复读，确认此前修复的 SHNGROOT 仍然正确。用户授权复刷同一 13fbe7af 镜像。四个启动分区均写入成功，A 槽回读确认，重启命令成功。实机启动和冻结复测待反馈。[刷写回执](../../uke-port/releases/2026-11-13-cpu-stall-sheng-audit/flash-result-20261114-223528.json)。

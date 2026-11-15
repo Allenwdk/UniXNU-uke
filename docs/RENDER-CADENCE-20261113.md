@@ -7,3 +7,5 @@ The comparison image removes `sheng-diag=1`, `sheng-gpu-trace=1` and `tu-debug=p
 At 2026-11-13T01:50:09.839697+08:00 all four boot partitions were written, slot A was confirmed and reboot was accepted. Hardware testing is pending.
 
 On boot 3DDF7238 the user reported another freeze after about four minutes of desktop swipes. A short power press had no visible effect. The GPU replayed eight jobs after a ring switch timeout at 96.083 s, and user-space activity persisted to 236.236 s. The verified single-ring comparison 68c1b6e8 awaits authorization.
+
+At 2026-11-13T02:06:09.507427+08:00 the single-ring candidate 68c1b6e8 was written to all four boot partitions. Slot A and reboot were confirmed. Device testing is pending.
