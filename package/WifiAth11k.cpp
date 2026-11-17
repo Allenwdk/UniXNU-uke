@@ -13,6 +13,7 @@
 #include <sys/kern_control.h>
 #include <sys/kpi_mbuf.h>
 #include <mach/kmod.h>
+#include <mach/mach_time.h>
 #include <stdarg.h>
 #include <string.h>
 #include "UkeClassRegistration.h"
@@ -188,6 +189,7 @@ void dmaFree(size_t n, void *p, uint64_t bus) {
 
 uint64_t nowMs(void) {uint64_t ns = 0; absolutetime_to_nanoseconds(mach_absolute_time(), &ns); return ns / 1000000;}
 uint64_t nowNs(void) {uint64_t ns = 0; absolutetime_to_nanoseconds(mach_absolute_time(), &ns); return ns;}
+uint64_t bootNs(void) {uint64_t ns = 0; absolutetime_to_nanoseconds(mach_continuous_time(), &ns); return ns;}
 void sleepMs(unsigned ms) {IOSleep(ms);}
 
 constexpr uint32_t kMsiSpiBase = 0x300;       // DT SPI number of vector 0
@@ -369,7 +371,7 @@ int fwGet(const char *name, const uint8_t **data, size_t *size) {
 
 const struct lx_platform gPlatform = {
     nowMs, sleepMs, pollGl, logLine, haltNoop, allocHdr, freeHdr,
-    dmaAlloc, dmaFree, dmaMap, dmaSync, fwGet, nowNs, nowNs, busyDelay,
+    dmaAlloc, dmaFree, dmaMap, dmaSync, fwGet, nowNs, bootNs, busyDelay,
     preemptOff, preemptOn,
 };
 }  // namespace
