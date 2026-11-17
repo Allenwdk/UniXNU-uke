@@ -258,8 +258,6 @@ kernel_args = [
   "-ukedeferredconsole",
   "sheng-gpu-power=9",
   "sheng-gpu-metal=1",
-  # Keep the A732 baseline while the R2507 plugin defaults to concurrent binning.
-  "tu-cb=0",
   # Explicit preemption default restored now that driver defaults live in ADT.
   "sheng-gpu-dcvs=1",
   "sheng-fb-gpu=1",
