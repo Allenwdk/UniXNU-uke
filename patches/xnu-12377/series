@@ -148,3 +148,6 @@ sheng-appsync-user-trust.patch
 
 # Fixed per-CPU IRQ and interrupt-mask observations, opt-in without GPU tracing.
 uke-cpu-stall-state.patch
+
+# Opt-in platform sleep hooks from sheng #127.
+sheng-platform-sleep.patch
