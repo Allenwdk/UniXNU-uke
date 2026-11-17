@@ -36,6 +36,7 @@ notifications = 'void post_event(' + section('void post_event(', '// ---- what t
 callbacks = 'void on_connect_done(' + section('void on_connect_done(', '// What the address configuration exchanges')
 power = 'int power(apple80211req &rq) {' + section('case kPower: {', 'case kScanReq:')
 power_get = 'int power_get(apple80211req &rq) { nw_wifi_status st; visible_status(st); uint32_t w[6]{}; w[0]' + section('case kPower: w[0]', 'case kState:') + '}\n'
+scan_request = 'int request_scan(' + section('int request_scan(', 'int apple80211(')
 scan = 'int scan(apple80211req &rq) { nw_wifi_status st; visible_status(st);' + section('case kScanReq: case kScanReqMultiple: {', 'case kAssociate:')
 auth = 'int auth(apple80211req &rq) { uint32_t w[4]{}; w[0]' + section('case kAuthType: w[0]', 'case kPowerSave:') + '}\n'
 
@@ -64,15 +65,11 @@ static void nw_wifi_power_mock(int enabled) { power_calls++; last_power = enable
 static void sheng_wifi_wake() {}
 static unsigned gScanning, gScanCursor, gResultsShown, scan_calls;
 static int scan_error;
-static void *gCachedScan;
 static constexpr int kMillisecondScale = 1;
-static void cached_scan_done(void *, void *) {}
-static void *thread_call_allocate(void (*)(void *, void *), void *) { return reinterpret_cast<void *>(1); }
-static void clock_interval_to_deadline(unsigned, int, uint64_t *value) { *value = 1; }
-static void thread_call_enter_delayed(void *, uint64_t) {}
-static int nw_wifi_bss_count_mock() { return 0; }
+static uint64_t gCacheRefreshAfter;
+static uint64_t mach_absolute_time() { return 1; }
+static void clock_interval_to_deadline(unsigned, int, uint64_t *value) { *value = 2; }
 static int nw_wifi_scan_mock(const uint8_t *, size_t length) { assert(length <= 32); scan_calls++; return scan_error; }
-#define nw_wifi_bss_count nw_wifi_bss_count_mock
 #define nw_wifi_scan nw_wifi_scan_mock
 static void IOSleep(unsigned ms) {
     sleep_ms += ms;
@@ -267,7 +264,7 @@ int main() {
     puts("PASS: wire layouts, credentials, real duplicate/switch joins, pending result, full async success/failure events, unauthorized callback rejection and power-off/leave");
 }
 '''
-unit = prefix + '#include <initializer_list>\n' + events + types + link_type + assertions + decoder + notifications + callbacks + power + power_get + scan + auth + join + fixtures
+unit = prefix + '#include <initializer_list>\n' + events + types + link_type + assertions + decoder + notifications + callbacks + power + power_get + scan_request + scan + auth + join + fixtures
 (out / 'test.cpp').write_text(unit)
 subprocess.run(['clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
                 '-Wno-unused-but-set-global',
