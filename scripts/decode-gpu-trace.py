@@ -31,6 +31,7 @@ FIELDS = {
  67: ('gpu_exec_low', 'sample'),
  68: ('gpu_exec_high', 'sample'),
  69: ('gpu_shader_waits', 'sample'),
+ 70: ('recovery', 'fence completed replayed flags dead_reason guilty_ring loaded status fsr far fsynr ttbr0'),
 }
 LATENCY_RECORD = struct.Struct('<QQII6Q')
 LATENCY_FIELDS = {
