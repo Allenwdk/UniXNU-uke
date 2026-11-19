@@ -26,6 +26,7 @@ paths = [
   "scripts/usb-*-24A446.json",
   ".gitignore",
   ".github/workflows/porting-record.yml",
+  ".github/workflows/ci.yml",
   "out",
   "patches/xnu-12377/upstream/*.patch",
   "patches/xnu-12377/uke-adt-driver-args.patch",
@@ -646,6 +647,7 @@ paths = [
   "scripts/check-icon-service-cache.py",
   "board.toml",
   "scripts/build-session-image.sh",
+  "scripts/check-xnu-patch-set.sh",
 ]
 inputs = [
   "24A446 IPSW, XNU 12377.121.6, the matched Apple RELEASE/LTO reference, generated 24A446 ADT, owner trust cache and OEM boot assets.",
@@ -658,6 +660,7 @@ procedure = [
 ]
 findings = [
   "The XR10 package used 984 bytes of boot arguments and added zero unresolved prelink bindings. The two-slot boot pair was written successfully.",
+  "CI resolves the XNU revision and four-layer patch order through UniXNU. All 149 patches applied on a clean XNU 12377.121.6 checkout.",
 ]
 completion = [
   "Validated boot and vendor images fit the destination partitions and the boot chain hands off a matching payload.",
@@ -673,6 +676,13 @@ reference = "docs/USB-DP-20261119.md"
 result = "Formal kernel and payload builds and the vendor_boot payload round trip passed for c0a6f7ec9315."
 command = "./unixnu build kernel && ./unixnu build payload; release verify.py"
 revision = "d61336190c478c9884334f85433eea44e5fee6d0"
+
+[[area.evidence]]
+kind = "host"
+reference = "docs/USB-DP-20261119.md"
+result = "All 149 resolved patches applied to clean XNU 12377.121.6 at ac9718fb1af618d5ce8678d0dc6e8a58f252216f."
+command = "bash scripts/check-xnu-patch-set.sh"
+revision = "380cfbf686f41ae2a2ebf44835ce541a10241bcd"
 
 [[area]]
 id = "diagnostics"
