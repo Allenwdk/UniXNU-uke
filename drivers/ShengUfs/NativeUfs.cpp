@@ -305,12 +305,17 @@ extern "C" volatile uint32_t native_ufs_extra_atos[8];
 extern "C" volatile uint32_t native_ufs_dpu_smmu[24];
 extern "C" volatile uint32_t native_ufs_dpu_state;
 extern "C" volatile uint32_t native_ufs_dpu_check[8];
-// The display bank's stage 1 table: L1, then L2 for the first GiB, then kDpuSlots * kDpuSlotTables L3 tables (one per 2 MiB of a slot).
-constexpr uint32_t kDpuWindow = 0x10000000U, kDpuSlots = 4, kDpuSlotBytes = 32U << 20, kDpuSlotTables = kDpuSlotBytes >> 21;
+// The existing four slots belong to the built-in panel. An opt-in second
+// output has two dedicated slots following that range.
+// Two CPU-composed slots and four reusable IOSurface slots for DP.
+constexpr uint32_t kDpuWindow = 0x10000000U, kDpuPanelSlots = 4, kDpuExternalSlots = 6;
+constexpr uint32_t kDpuSlotBytes = 32U << 20, kDpuSlotTables = kDpuSlotBytes >> 21;
+static_assert(kDpuWindow + (kDpuPanelSlots + kDpuExternalSlots) * kDpuSlotBytes <= (1U << 30));
 static uint64_t *gDpuTables;
 static uintptr_t gDpuCb;
 static IOLock *gDpuLock;
 static uintptr_t gDpuLiveCb;
+static unsigned gDpuSlots;
 // FSR fault bits (TF .. UUT, SS, MULTI); 0x600 is the format field.
 constexpr uint32_t kDpuFaults = 0xc00001feU;
 static void dpuClean (const void *start, size_t length)
@@ -329,7 +334,10 @@ static bool dpuTlbFlush (uintptr_t cb)
 static void dpuEnable (uintptr_t smmu, uintptr_t cb, uint32_t bank, uint32_t oldSctlr)
 {
   (void) smmu;
-  const size_t bytes = (2 + kDpuSlots * kDpuSlotTables) * 4096;
+  unsigned allocateExternal = 0;
+  PE_parse_boot_argn ("uke-dp-ext-buffers", &allocateExternal, sizeof (allocateExternal));
+  const unsigned slots = kDpuPanelSlots + (allocateExternal == 1 ? kDpuExternalSlots : 0);
+  const size_t bytes = (2 + slots * kDpuSlotTables) * 4096;
   IOBufferMemoryDescriptor *tables = IOBufferMemoryDescriptor::inTaskWithOptions (
     kernel_task, static_cast<IOOptionBits> (kIODirectionInOut) | static_cast<IOOptionBits> (kIOMemoryPhysicallyContiguous) |
     static_cast<IOOptionBits> (kIOMemoryMapperNone), bytes, 4096);
@@ -347,7 +355,7 @@ static void dpuEnable (uintptr_t smmu, uintptr_t cb, uint32_t bank, uint32_t old
   l1[0] = pa | 3;
   l1[2] = 0x80000000ULL | attrs | 1;
   l1[3] = 0xc0000000ULL | attrs | 1;
-  for (uint32_t t = 0; t < kDpuSlots * kDpuSlotTables; ++t) l1[(kDpuWindow >> 21) + t] = (pa + (2 + t) * 4096ULL) | 3;
+  for (uint32_t t = 0; t < slots * kDpuSlotTables; ++t) l1[(kDpuWindow >> 21) + t] = (pa + (2 + t) * 4096ULL) | 3;
   dpuClean (l1, bytes);
   const uint32_t old[5] = {read32 (cb, 0x20), read32 (cb, 0x24), read32 (cb, 0x10), read32 (cb, 0x30), read32 (cb, 0x38)};
   gDpuLiveCb = cb;
@@ -388,7 +396,7 @@ static void dpuEnable (uintptr_t smmu, uintptr_t cb, uint32_t bank, uint32_t old
     c[4] = read32 (cb, 0x60); c[5] = read32 (cb, 0x64); c[6] = read32 (cb, 0x68);
     undo (0xdead0005U); return;
   }
-  gDpuTables = l1; gDpuCb = cb;
+  gDpuTables = l1; gDpuCb = cb; gDpuSlots = slots;
   native_ufs_dpu_state = 0x80000000U | bank;
 }
 static uintptr_t gExtraSmmu, gExtraCb;
@@ -1436,7 +1444,7 @@ static bool hostBringUp (const char **why)
     // dpu-scanout=1 or more: stage 1 for the display's bank (i562: bank 3, CBAR type 1, SCTLR 0xe0 = translation off, so the display
     // fetched physical addresses; its pipe address registers are 32-bit and every kernel allocation is above 4 GiB). The table keeps
     // 0x80000000..0xffffffff as it was (two 1 GiB identity blocks, so the boot loader's scanout at 0xb8000000 carries on unchanged) and adds
-    // kDpuSlots windows of kDpuSlotBytes at kDpuWindow for the compositor's surfaces, filled by native_ufs_dpu_map. Undone at once when the
+    // dedicated 32 MiB windows at kDpuWindow for the compositor's surfaces. Undone at once when the
     // bank does not take the table or a check translation of 0xb8000000 does not come back identical.
     const uint32_t found = native_ufs_dpu_smmu[4], bank = found >> 16;
     if (scanout && found != 0xffffffffU && bank < banks && ((native_ufs_dpu_smmu[6] >> 16) & 3) == 0 && !(native_ufs_dpu_smmu[9] & 1) &&
@@ -1709,22 +1717,30 @@ extern "C" uint32_t native_ufs_dpu_live (unsigned reg)
   return gDpuLiveCb ? read32 (gDpuLiveCb, reg ? 0x58 : 0x0) : 0xffffffffU;
 }
 
-// Points slot (0 .. kDpuSlots-1) of the display's window at count 4 KiB pages and returns the slot's address for the display, 0 when
-// translation is off or the pages do not fit. The caller makes sure the display is not fetching from the slot while it changes.
-extern "C" uint32_t native_ufs_dpu_map (unsigned slot, const uint64_t *pages, unsigned count)
+// The display owner must retire scanout before changing a mapping. Serialize
+// table edits and the context-bank TLB operation across both outputs.
+static uint32_t mapDpuSlot (unsigned slot, const uint64_t *pages, unsigned count)
 {
-  if (!gDpuTables || slot >= kDpuSlots || count > kDpuSlotBytes / 4096) return 0;
+  if (!gDpuTables || slot >= gDpuSlots || count > kDpuSlotBytes / 4096 || (count && !pages)) return 0;
+  for (unsigned i = 0; i < count; ++i) if (pages[i] & 0xfff) return 0;
   uint64_t *l3 = gDpuTables + 1024 + static_cast<size_t> (slot) * kDpuSlotTables * 512;
   const uint64_t attrs = (1ULL << 10) | (1ULL << 6);
-  for (unsigned i = 0; i < kDpuSlotTables * 512; ++i) {
-    if (i < count && (pages[i] & 0xfff)) return 0;
-    l3[i] = i < count ? (pages[i] | attrs | 3) : 0;
-  }
-  dpuClean (l3, kDpuSlotTables * 4096);
   IOLockLock (gDpuLock);
+  for (unsigned i = 0; i < kDpuSlotTables * 512; ++i) l3[i] = i < count ? (pages[i] | attrs | 3) : 0;
+  dpuClean (l3, kDpuSlotTables * 4096);
   const bool synced = dpuTlbFlush (gDpuCb);
   IOLockUnlock (gDpuLock);
   return synced ? kDpuWindow + slot * kDpuSlotBytes : 0;
+}
+
+extern "C" uint32_t native_ufs_dpu_map (unsigned slot, const uint64_t *pages, unsigned count)
+{
+  return slot < kDpuPanelSlots ? mapDpuSlot (slot, pages, count) : 0;
+}
+
+extern "C" uint32_t uke_ufs_dpu_map_external (unsigned slot, const uint64_t *pages, unsigned count)
+{
+  return slot < kDpuExternalSlots ? mapDpuSlot (kDpuPanelSlots + slot, pages, count) : 0;
 }
 
 extern "C" int native_ufs_part_find (const char *name, uint32_t *lun, uint64_t *first, uint64_t *blocks)

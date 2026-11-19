@@ -80,6 +80,9 @@ def discriminator(name):
 # Prototypes of the original slots the owned backend overrides or calls; every other slot is an opaque dispatch target.
 PROTOTYPES = {
     'isMainDisplay': 'bool isMainDisplay()', 'getDotPitch': 'IOReturn getDotPitch(uint32_t *)',
+    'getFramebufferID': 'uint32_t getFramebufferID()',
+    'setDisplayMode': 'IOReturn setDisplayMode(uint32_t,uint32_t)',
+    'readExternalMode': 'IOReturn readExternalMode(void *,uint32_t,uint32_t,const uint64_t *,uint32_t,void *,uint32_t)',
     'supportedFrameInfo': 'IOReturn supportedFrameInfo(uint32_t,uint32_t *,char *,uint32_t *)=0',
     'getDisplayDimensions': 'void getDisplayDimensions(uint32_t *,uint32_t *)', 'startHardware': 'bool startHardware()',
     'kickSwapQueue': 'void kickSwapQueue()', 'completeCurrentSwap': 'void completeCurrentSwap()',
@@ -116,7 +119,9 @@ static constexpr unsigned kRequestRect0={R['rect0']},kRequestRect1={R['rect1']},
 #define NATIVE_LEGACY_DEFAULT_SURFACE 1
 #define NATIVE_LEGACY_CANCEL_SWAPS 1
 #define NATIVE_LEGACY_BOOT_SCANOUT_REQUESTED 1
+#define NATIVE_LEGACY_EXTERNAL_DISPLAY 1
 static constexpr unsigned kLegacyDefaultSurface={D['default_surface']};
+static constexpr unsigned kLegacyDigitalState={D['digital_state']}, kLegacyHpdClients={D['hpd_clients']};
 {''.join(renames)}class IOMobileFramebufferLegacy : public IOService {{
  OSDeclareAbstractStructors(IOMobileFramebufferLegacy)
  unsigned char originalPrivate[{abi['instance_size']}-sizeof(IOService)];
@@ -132,6 +137,22 @@ public:
   if(!surface)return false;
   // Transfer the factory reference to the family; its stop path releases this field.
   memcpy(self+kLegacyDefaultSurface,&surface,sizeof(surface));
+  return true;
+ }}
+ bool replaceDefaultSurface(uint32_t width,uint32_t height) {{
+  auto self=reinterpret_cast<unsigned char *>(this);
+  OSObject *previous=nullptr,*root=nullptr;
+  uint32_t oldWidth=0,oldHeight=0;
+  memcpy(&previous,self+kLegacyDefaultSurface,sizeof(previous));
+  memcpy(&oldWidth,self+{D['width']},sizeof(oldWidth));
+  memcpy(&oldHeight,self+{D['height']},sizeof(oldHeight));
+  if(previous && oldWidth==width && oldHeight==height)return true;
+  memcpy(&root,self+{D['surface_root']},sizeof(root));
+  if(!root)return false;
+  OSObject *surface=native_legacy_default_surface_create(root,width,height);
+  if(!surface)return false;
+  memcpy(self+kLegacyDefaultSurface,&surface,sizeof(surface));
+  if(previous)previous->release();
   return true;
  }}
  void installBootDimensions(uint32_t width,uint32_t height) {{
@@ -545,7 +566,7 @@ compile_cpp(remoteproc / 'Sm7675RemoteProc.cpp', board_dir / 'Sm7675RemoteProc.o
 board_objects.append(board_dir / 'Sm7675RemoteProc.o')
 compile_cpp(remoteproc / 'Sm7675Scm.cpp', board_dir / 'Sm7675Scm.o')
 board_objects.append(board_dir / 'Sm7675Scm.o')
-compile_cpp(KITS / 'ShengBattery.cpp', board_dir / 'ShengBattery.o')
+compile_cpp(KITS / 'ShengBattery.cpp', board_dir / 'ShengBattery.o', ('-I', str(ROOT / 'drivers/QcomDwc3')))
 battery_late = board_dir / 'ShengBattery.late.o'
 run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func',
      '--globalize-symbol=__GLOBAL__sub_I_ShengBattery.cpp', board_dir / 'ShengBattery.o', battery_late])
@@ -594,7 +615,9 @@ require((USB / 'QcomDwc3.cpp').exists(), 'QcomDwc3 module directory')
 USB_OUT = board_dir / 'qcom-dwc3'
 USB_OUT.mkdir(parents=True, exist_ok=True)
 usb_names = ({int(k): v for k, v in usb_abi['macros'].items()} if 'macros' in usb_abi else
-             {179: 'XDCI_KEEP_CONFIGURATIONS', 227: 'XDCI_DESIRED_POWER', 267: 'XDCI_TRANSPORT_ACTIVE', 268: 'XDCI_POWER_ON',
+             {179: 'XDCI_KEEP_CONFIGURATIONS', 197: 'XDCI_CONNECTION_DONE', 227: 'XDCI_DESIRED_POWER',
+              258: 'XDCI_UPDATE_REGISTER_FIELD',
+              267: 'XDCI_TRANSPORT_ACTIVE', 268: 'XDCI_POWER_ON',
               269: 'XDCI_POWER_OFF', 270: 'XDCI_PARAMETERS', 275: 'XDCI_CONTROLLER_RESET', 277: 'XDCI_PERIODIC_USAGE',
               278: 'XDCI_PERIODIC_SET'})
 usb_header = '''// Generated from the reviewed AppleUSBXDCI fixture; opaque private storage only.
@@ -681,7 +704,8 @@ usb_flags = ('-DQCOM_DWC3_UKE_USB2', '-I', str(USB_OUT), '-I', str(USB), '-I', s
              '-I', str(remoteproc))
 compile_cpp(USB / 'QcomDwc3.cpp', USB_OUT / 'QcomDwc3.o', usb_flags)
 compile_cpp(KITS / 'UsbProbe.cpp', USB_OUT / 'UsbProbe.o', usb_flags)
-compile_cpp(KITS / 'UkeUsbBoard.cpp', USB_OUT / 'UkeUsbBoard.o', usb_flags)
+compile_cpp(KITS / 'UkeUsbBoard.cpp', USB_OUT / 'UkeUsbBoard.o',
+            (*usb_flags, '-I', str(ROOT / 'drivers/GopFramebuffer')))
 usb_raw = (USB_OUT / 'QcomDwc3.o').read_bytes()
 usb_found = object_symbols(usb_raw)
 usb_bindings = {n: int(v, 16) + slide for n, v in usb_abi['bindings'].items()}
@@ -759,6 +783,7 @@ archive.unlink(missing_ok=True)
 run(['xcrun', 'ar', 'rcs', archive, late, OUT / 'original-bindings.o', OUT / 'original-addresses.o', OUT / 'LegacyDisplayProbe.o', OUT / 'DisplayCallTrace27.o', OUT / 'LegacyDisplaySupport27.o', gop_late,
      OUT / 'KeyStoreProbe.o', keyevents_late, *input_objects])
 sources = [ROOT / 'drivers/GopFramebuffer/NativeLegacyDisplay.cpp', ROOT / 'drivers/GopFramebuffer/NativeLegacyRequest.h',
+           ROOT / 'drivers/GopFramebuffer/NativeExternalDisplay.h',
            ROOT / 'drivers/GopFramebuffer/NativeGOPPresenter.cpp', ROOT / 'drivers/GopFramebuffer/NativeGOPWire.h',
            ROOT / 'drivers/GopFramebuffer/NativeHalfCodes.h', source,
            ROOT / 'scripts' / ABI_PATH.name, keystore_source, ROOT / 'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',
@@ -782,9 +807,12 @@ sources += [KITS / 'BootResetCore.h', ROOT / 'scripts/build-ath11k-wifi.py',
 sources += [KITS / name for name in (
     'AdspProbe.cpp', 'ShengAdsp.h', 'ShengGpr.c', 'ShengGpr.h',
     'ShengAudioReach.c', 'ShengAudioReach.h', 'UkeAudioProbe.cpp',
-    'ShengBattmgr.c', 'ShengBattmgr.h', 'ShengBattery.cpp', 'BatteryProbe.cpp', 'ShengQrtr.c')]
+    'ShengBattmgr.c', 'ShengBattmgr.h', 'ShengBattery.cpp', 'BatteryProbe.cpp', 'ShengQrtr.c',
+    'UkeDpAltMode.h')]
 sources += [USB / name for name in ('QcomDwc3.cpp', 'QcomEusb2Phy.h', 'QcomQmpUsb3.h', 'QcomUcsi.h')]
-sources += [KITS / name for name in ('UsbProbe.cpp', 'UkeUsbBoard.cpp', 'UkeUsbBoard.h')]
+sources += [KITS / name for name in (
+    'UsbProbe.cpp', 'UkeUsbBoard.cpp', 'UkeUsbBoard.h', 'UkeQmpUsb3.h', 'UkeQmpDp.h',
+    'UkeDpLinkPolicy.h', 'UkeDpVideoMode.h', 'UkeDpDpu.h')]
 sources += [ROOT / 'scripts' / f'usb-{kind}-24A446.json' for kind in ('xdci', 'xhci')]
 sources += list(remoteproc.glob('*.c')) + list(remoteproc.glob('*.h')) + list(remoteproc.glob('*.cpp'))
 (OUT / 'build-report.json').write_text(json.dumps(dict(

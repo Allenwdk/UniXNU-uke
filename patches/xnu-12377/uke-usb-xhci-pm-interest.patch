@@ -1,0 +1,71 @@
+diff --git a/iokit/Kernel/IOServicePM.cpp b/iokit/Kernel/IOServicePM.cpp
+index a743ff0..ebaf808 100644
+--- a/iokit/Kernel/IOServicePM.cpp
++++ b/iokit/Kernel/IOServicePM.cpp
+@@ -94,6 +94,32 @@ uke_usb_pm_trace(IOService *service, unsigned category, unsigned limit)
+ 	return __atomic_fetch_add(&gUkeUsbPmRows[category], 1, __ATOMIC_RELAXED) < limit;
+ }
+ 
++// The Uke xHCI controller and the Apple ports under it consume their own
++// power notifications. Compare the concrete classes because arm64e thunks
++// hide the powerStateDidChangeTo override from the legacy test.
++static bool
++uke_xhci_needs_self_power_interest(IOService *service)
++{
++	const char *name = service->getMetaClass()->getClassName();
++	if (strcmp(name, "QcomDwc3Xhci") == 0) {
++		return true;
++	}
++	if (strcmp(name, "AppleUSB20XHCIPort") != 0 &&
++	    strcmp(name, "AppleUSB30XHCIPort") != 0 &&
++	    strcmp(name, "AppleUSB20HubPort") != 0 &&
++	    strcmp(name, "AppleUSB30HubPort") != 0) {
++		return false;
++	}
++
++	// A hub port can be below other hubs in the service plane.
++	for (IOService *provider = service->getProvider(); provider; provider = provider->getProvider()) {
++		if (strcmp(provider->getMetaClass()->getClassName(), "QcomDwc3Xhci") == 0) {
++			return true;
++		}
++	}
++	return false;
++}
++
+ static uint64_t
+ computeTimeDeltaNS( const AbsoluteTime * start )
+ {
+@@ -1400,7 +1426,9 @@ IOService::handleRegisterPowerDriver( IOPMRequest * request )
+ 
+ 		root = getPlatform()->getProvider();
+ 		assert(root);
+-		if (!root ||
++		const bool xhciSelfInterest = this == powerDriver &&
++		    uke_xhci_needs_self_power_interest(this);
++		if (xhciSelfInterest || !root ||
+ 		    ((OSMemberFunctionCast(void (*)(void),
+ 		    root, &IOService::powerStateDidChangeTo)) !=
+ 		    ((OSMemberFunctionCast(void (*)(void),
+@@ -1413,6 +1441,10 @@ IOService::handleRegisterPowerDriver( IOPMRequest * request )
+ 				PM_LOCK();
+ 				fInterestedDrivers->appendNewInformee(powerDriver);
+ 				PM_UNLOCK();
++				if (xhciSelfInterest) {
++					IOLog("[usb otg] %s registered for own power notifications\n",
++					    getMetaClass()->getClassName());
++				}
+ 			}
+ 		}
+ 
+@@ -4460,6 +4492,11 @@ IOService::driverInformPowerChange( void )
+ 				clock_get_uptime(&informee->startTime);
+ 				result = driver->powerStateDidChangeTo(powerFlags, powerState, this);
+ 				clock_get_uptime(&end);
++				if (driver == this && uke_xhci_needs_self_power_interest(this)) {
++					IOLog("[usb otg] %s own power notification state=%lu result=%08x\n",
++					    getMetaClass()->getClassName(), (unsigned long)powerState,
++					    (unsigned int)result);
++				}
+ 				OUR_PMLogFuncEnd(kPMLogInformDriverPostChange, (uintptr_t) this, result);
+ 			}
+ 

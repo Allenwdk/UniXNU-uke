@@ -36,3 +36,7 @@ a wired cache for authenticated table pages read on demand. Set
 ## Persistent Data and logs
 
 RamBlock can write Data through `native_ufs_store_write_cached` and make it durable through `native_ufs_store_sync`. Uke's log writer sets FUA on its own writes, keeping log durability independent of the Data cache flush schedule.
+
+## Uke display DMA
+
+Uke uses four 32 MiB display IOVA slots starting at `0x10000000` for the built-in panel. With the board opt-in `uke-dp-ext-buffers=1`, the existing display context allocates two more slots at `0x18000000` and `0x1a000000`. The external mapping entry point accepts ordinals 0 and 1. Table updates and TLB invalidation are serialized across both outputs. The display owner retires scanout before unmapping its wired pages.

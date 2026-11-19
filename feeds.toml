@@ -21,21 +21,21 @@ name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
 # GPU mapping and stall fixes with Uke support.
-commit = "03ec4bc645a023da0db86816ddb87e90d449d8e3"
+commit = "a13e9760d1d00c35d76f64acc23cc202d53622e6"
 
 [[source]]
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
-# Display fence callout delivery and bounded polling fallback.
-commit = "eadd64adce942f0521a5f6f1985959d902092e4a"
+# Native extended desktop, scanout fences and XR10 direct scanout.
+commit = "be8881bd3776ddccc612232a4dd5e95e65685fcf"
 
 [[source]]
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/Allenwdk/AdrenoMetal.git"
-# Upstream runtime and Turnip changes with Uke rendering and diagnostics.
-commit = "75e182072332863bd65df9806b446668057ac75d"
+# Uke complete damage repaint and producer submission ordering.
+commit = "124ced2608f34d8f56336f29b663d8c8d498755d"
 
 [[source]]
 name = "ShengUfs"
@@ -62,14 +62,14 @@ local = "drivers/NativeNovatekTouch"
 name = "Ath12kWifi"
 kind = "driver"
 git = "https://github.com/Allenwdk/Ath12kWifi.git"
-commit = "c93d26a75c368ad2c4c85bd4f482aa3807ae2d84"
+commit = "384c899ce44b7cf204321810c96daf0e8788d85f"
 
 # Upstream CPU/GPU synchronization, with Uke integration retained.
 [[source]]
 name = "ArmCpu"
 kind = "driver"
 git = "https://github.com/Allenwdk/ArmCpu.git"
-commit = "87212886526392ed4b25ea1ce7345a6fe82508d8"
+commit = "5820db463c5de4d76f1d94b877703ac4a04640fc"
 
 # Upstream CPU/GPU synchronization, with Uke integration retained.
 [[source]]
@@ -97,9 +97,16 @@ kind = "driver"
 git = "https://github.com/Allenwdk/RamBlock.git"
 commit = "4acdd59dafb5d958f612e4b5610e36f14a013f58"
 
-# SM7675 fixed USB2 peripheral candidate based on sheng's native controller.
+# SM7675 host, peripheral and DisplayPort Alt Mode based on sheng's controller.
 [[source]]
 name = "QcomDwc3"
 kind = "driver"
 git = "https://github.com/Allenwdk/QcomDwc3.git"
-commit = "309913f2b3e79865d505d4e105dfec16b2415652"
+commit = "4825d1f98b98abdea12bdd26b0b632467a3a67dd"
+
+# Software key wrapping used by the 24A446 Data fixture, with legacy boot argument names.
+[[source]]
+name = "AppleKeyStoreState"
+kind = "driver"
+git = "https://github.com/UniXNU/AppleKeyStoreState.git"
+commit = "5454637729e39feaa361e6b658b6eec25c870f7e"

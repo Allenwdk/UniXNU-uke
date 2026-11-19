@@ -1,0 +1,116 @@
+diff --git a/iokit/Kernel/IOCommandQueue.cpp b/iokit/Kernel/IOCommandQueue.cpp
+index 997ee30..9ad9960 100644
+--- a/iokit/Kernel/IOCommandQueue.cpp
++++ b/iokit/Kernel/IOCommandQueue.cpp
+@@ -90,6 +90,10 @@ IOCommandQueue::init(OSObject *inOwner,
+ 		return false;
+ 	}
+ 
++	// The arm64e member-function conversion may not distinguish this
++	// checkForWork override from the base thunk; this queue must be active.
++	flags |= kActive;
++
+ 	if (KERN_SUCCESS
+ 	    != semaphore_create(kernel_task, &producerSema, SYNC_POLICY_FIFO, inSize)) {
+ 		return false;
+diff --git a/iokit/Kernel/IODMAEventSource.cpp b/iokit/Kernel/IODMAEventSource.cpp
+index e41d7cb..5b46604 100644
+--- a/iokit/Kernel/IODMAEventSource.cpp
++++ b/iokit/Kernel/IODMAEventSource.cpp
+@@ -50,6 +50,10 @@ IODMAEventSource::init(OSObject *inOwner,
+ 		return false;
+ 	}
+ 
++	// The arm64e member-function conversion may not distinguish this
++	// checkForWork override from the base thunk; this queue must be active.
++	flags |= kActive;
++
+ 	if (inProvider == NULL) {
+ 		return false;
+ 	}
+diff --git a/iokit/Kernel/IOInterruptEventSource.cpp b/iokit/Kernel/IOInterruptEventSource.cpp
+index 5109834..6bc3fa9 100644
+--- a/iokit/Kernel/IOInterruptEventSource.cpp
++++ b/iokit/Kernel/IOInterruptEventSource.cpp
+@@ -92,6 +92,11 @@ IOInterruptEventSource::init(OSObject *inOwner,
+ 		return false;
+ 	}
+ 
++	// The modern arm64e member-function ABI compares virtual-call thunks,
++	// not per-instance overrides. This source implements checkForWork and
++	// must run on the work-loop thread; use the existing explicit contract.
++	flags |= kActive;
++
+ 	reserved = IOMallocType(ExpansionData);
+ 
+ 	provider = inProvider;
+diff --git a/iokit/Kernel/IOPMPowerStateQueue.cpp b/iokit/Kernel/IOPMPowerStateQueue.cpp
+index 10aeccf..6628404 100644
+--- a/iokit/Kernel/IOPMPowerStateQueue.cpp
++++ b/iokit/Kernel/IOPMPowerStateQueue.cpp
+@@ -51,6 +51,11 @@ IOPMPowerStateQueue::init( OSObject * inOwner, Action inAction )
+ 		return false;
+ 	}
+ 
++	// The modern arm64e member-function ABI compares virtual-call thunks,
++	// not per-instance overrides. This source implements checkForWork and
++	// must run on the work-loop thread; use the existing explicit contract.
++	flags |= kActive;
++
+ 	queue_init( &queueHead );
+ 
+ 	queueLock = IOLockAlloc();
+diff --git a/iokit/Kernel/IOServicePM.cpp b/iokit/Kernel/IOServicePM.cpp
+index 37d4222..a743ff0 100644
+--- a/iokit/Kernel/IOServicePM.cpp
++++ b/iokit/Kernel/IOServicePM.cpp
+@@ -9139,6 +9139,11 @@ IOPMRequestQueue::init( IOService * inOwner, Action inAction )
+ 		return false;
+ 	}
+ 
++	// The modern arm64e member-function ABI compares virtual-call thunks,
++	// not per-instance overrides. This source implements checkForWork and
++	// must run on the work-loop thread; use the existing explicit contract.
++	flags |= kActive;
++
+ 	queue_init(&fQueue);
+ 	fLock = IOLockAlloc();
+ 	return fLock != NULL;
+@@ -9272,6 +9277,11 @@ IOPMWorkQueue::init( IOService * inOwner, Action invoke, Action retire )
+ 		return false;
+ 	}
+ 
++	// The modern arm64e member-function ABI compares virtual-call thunks,
++	// not per-instance overrides. This source implements checkForWork and
++	// must run on the work-loop thread; use the existing explicit contract.
++	flags |= kActive;
++
+ 	queue_init(&fWorkQueue);
+ 
+ 	fInvokeAction  = invoke;
+@@ -9530,6 +9540,11 @@ IOPMCompletionQueue::init( IOService * inOwner, Action inAction )
+ 		return false;
+ 	}
+ 
++	// The modern arm64e member-function ABI compares virtual-call thunks,
++	// not per-instance overrides. This source implements checkForWork and
++	// must run on the work-loop thread; use the existing explicit contract.
++	flags |= kActive;
++
+ 	queue_init(&fQueue);
+ 	return true;
+ }
+diff --git a/iokit/Kernel/IOUserServer.cpp b/iokit/Kernel/IOUserServer.cpp
+index 14d77fb..52b357b 100644
+--- a/iokit/Kernel/IOUserServer.cpp
++++ b/iokit/Kernel/IOUserServer.cpp
+@@ -7382,6 +7382,9 @@ IOServiceStateNotificationEventSource::serviceStateNotificationEventSource(IOSer
+ 		return nullptr;
+ 	}
+ 
++	// This source overrides checkForWork and must be linked on the active
++	// chain; arm64e thunk conversion is not a reliable override test.
++	source->flags |= kActive;
+ 	source->fStateNotification = service;
+ 	kr = service->stateNotificationListenerAdd(items, &source->fListener, ^kern_return_t () {
+ 		if (!source->workLoop) {

@@ -11,6 +11,7 @@ extern volatile uintptr_t native_legacy_object;
 extern volatile uint32_t native_legacy_swap_validation_calls;
 extern volatile uint32_t native_legacy_transfer_calls;
 extern "C" unsigned native_legacy_vsync_report(char *, unsigned);
+extern "C" bool native_legacy_external_client(IOUserClient *);
 
 extern "C" void
 native_legacy_display_sample27(const char *reason)
@@ -56,8 +57,10 @@ extern "C" void
 native_legacy_method_trace(IOUserClient *client, uint32_t selector,
     const IOExternalMethodArguments *args, uint32_t result, unsigned phase)
 {
-    if (selector >= kSelectors || phase > 1 || !enabled() || !client ||
+    if (selector >= kSelectors || phase > 1 || !client ||
         !client->metaCast("IOMobileFramebufferUserClient")) return;
+    const bool external=native_legacy_external_client(client);
+    if (!external && !enabled())return;
     ClientCounts *counts = nullptr;
     const auto object = reinterpret_cast<uintptr_t>(client);
     for (auto &row : clients) {
@@ -84,13 +87,13 @@ native_legacy_method_trace(IOUserClient *client, uint32_t selector,
     }
     if (phase && !result && args && args->scalarOutput && args->scalarOutputCount)
         output = args->scalarOutput[0];
-    printf("UKE DISP call pid=%d client=%p sel=%u %s result=%x scalars=%u/%u struct=%u/%u desc=%u/%u in=%llx,%llx,%llx out=%llx\n",
-        proc_selfpid(), client, selector, phase ? "return" : "enter", result,
+    printf("UKE DISP call pid=%d client=%p external=%u sel=%u %s result=%x scalars=%u/%u struct=%u/%u desc=%u/%u in=%llx,%llx,%llx out=%llx\n",
+        proc_selfpid(), client, external, selector, phase ? "return" : "enter", result,
         args ? args->scalarInputCount : 0, args ? args->scalarOutputCount : 0,
         args ? args->structureInputSize : 0, args ? args->structureOutputSize : 0,
         args && args->structureInputDescriptor ? 1u : 0u,
         args && args->structureOutputDescriptor ? 1u : 0u,
         input[0], input[1], input[2], output);
-    if (phase && (selector == 3 || selector == 4 || selector == 5 || selector == 6 || selector == 72))
+    if (!external && phase && (selector == 3 || selector == 4 || selector == 5 || selector == 6 || selector == 72))
         native_legacy_display_sample27("method-return");
 }

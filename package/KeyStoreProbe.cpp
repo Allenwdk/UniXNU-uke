@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Mutually exclusive offline probes: unchanged target keystore loading, or
-// ephemeral notification-only service. Neither supplies keys or unlock state.
+// Mutually exclusive offline probes for the original and board-owned keystores.
 #include "UkeClassRegistration.h"
+#include <IOKit/IOLib.h>
 #include <IOKit/IOService.h>
 #include <IOKit/IODeviceTreeSupport.h>
 #include <libkern/c++/OSKext.h>
@@ -25,6 +25,7 @@ extern char boot_progress_ext[8][48];
 volatile uint32_t native_aks_opens, native_aks_calls;
 static volatile uint32_t aks_count[96];
 static volatile int32_t aks_rc[96];
+static unsigned aks_wrap_trace_rows;
 bool native_aks_state_enabled(void) {
     static int cached = -1;
     if (cached < 0) {
@@ -65,6 +66,26 @@ static void aks_publish(void) {
     for (; i < 47; ++i) boot_progress_ext[1][i] = ' ';
     boot_progress_ext[1][47] = 0;
 }
+// Use the same configured identity at every boot of the software wrapping test.
+size_t native_aks_device_id(uint8_t *out, size_t capacity) {
+    unsigned enabled = 0;
+    if (!PE_parse_boot_argn("uke-aks-wrap", &enabled, sizeof(enabled)) || enabled != 1) return 0;
+
+    IORegistryEntry *chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
+    OSData *id = chosen ? OSDynamicCast(OSData, chosen->getProperty("unique-chip-id")) : nullptr;
+    size_t n = 0;
+    if (id && id->getLength() >= 8 && id->getLength() <= capacity) {
+        const uint8_t *bytes = static_cast<const uint8_t *>(id->getBytesNoCopy());
+        bool nonzero = false;
+        for (unsigned i = 0; i < id->getLength(); ++i) nonzero |= bytes[i] != 0;
+        if (nonzero) {
+            n = id->getLength();
+            memcpy(out, bytes, n);
+        }
+    }
+    OSSafeReleaseNULL(chosen);
+    return n;
+}
 void native_aks_opened(void) {
     native_aks_opens = native_aks_opens + 1;
     aks_publish();
@@ -72,6 +93,12 @@ void native_aks_opened(void) {
 void native_aks_call(uint32_t selector, int32_t result) {
     native_aks_calls = native_aks_calls + 1;
     if (selector < 96) { aks_count[selector] = aks_count[selector] + 1; aks_rc[selector] = result; }
+    if ((selector == 10 || selector == 11) && __atomic_fetch_add(&aks_wrap_trace_rows, 1, __ATOMIC_RELAXED) < 16) {
+        unsigned enabled = 0;
+        if (PE_parse_boot_argn("uke-aks-wrap", &enabled, sizeof(enabled)) && enabled == 1) {
+            IOLog("[uke aks] selector=%u result=%08x\n", selector, static_cast<unsigned>(result));
+        }
+    }
     aks_publish();
 }
 static void native_keyevents_probe(void) {

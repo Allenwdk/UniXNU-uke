@@ -149,5 +149,30 @@ sheng-appsync-user-trust.patch
 # Fixed per-CPU IRQ and interrupt-mask observations, opt-in without GPU tracing.
 uke-cpu-stall-state.patch
 
+# Bounded native PM observations for QcomDwc3Xdci with usb=1.
+uke-usb-pm-trace.patch
+
+# Explicit active contracts for native PM/root-domain and IRQ event sources.
+uke-event-sources-active.patch
+
+# Classify the prelinked USB mux socket event source as active on arm64e.
+uke-usb-socket-event-source.patch
+
+# Keep the prelinked USB request-completion work on the active chain.
+uke-usb-request-completer-active.patch
+
+# Explicit power-driver interest for Uke xHCI, root ports and downstream hub ports.
+uke-usb-xhci-pm-interest.patch
+# Retain the Uke USB2 or SuperSpeed port power vote until detach, including hubs.
+uke-usb-enumeration-power.patch
+
+# Opt-in tracing for USB HID completion messages entering DriverKit IPC.
+uke-usb-hid-rpc-trace.patch
+
+# Opt-in volume-query tracing for the Files startup failure.
+uke-files-volume-trace.patch
+# Use the existing upper-root union view for Files on iPadOS.
+uke-files-union-view.patch
+
 # Opt-in platform sleep hooks from sheng #127.
 sheng-platform-sleep.patch

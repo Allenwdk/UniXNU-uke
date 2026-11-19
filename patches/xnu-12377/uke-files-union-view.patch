@@ -1,0 +1,204 @@
+diff --git a/bsd/vfs/vfs_attrlist.c b/bsd/vfs/vfs_attrlist.c
+index d0365ac..3017a45 100644
+--- a/bsd/vfs/vfs_attrlist.c
++++ b/bsd/vfs/vfs_attrlist.c
+@@ -69,6 +69,8 @@ vattr_get_alt_data(vnode_t, struct attrlist *, struct vnode_attr *, int, int,
+ static void get_error_attributes(vnode_t, struct attrlist *, uint64_t, user_addr_t,
+     size_t, int, caddr_t, vfs_context_t) __attribute__((noinline));
+ 
++extern mount_t uke_files_union_identity(mount_t mp);
++
+ static int getvolattrlist(vfs_context_t, vnode_t, struct attrlist *, user_addr_t,
+     size_t, uint64_t, enum uio_seg, int, int) __attribute__((noinline));
+ 
+@@ -1015,7 +1017,7 @@ getvolattrlist(vfs_context_t ctx, vnode_t vp, struct attrlist *alp,
+ 	vs.f_vol_name = NULL;
+ 	attr_max_buffer = proc_support_long_paths(vfs_context_proc(ctx)) ?
+ 	    ATTR_MAX_BUFFER_LONGPATHS : ATTR_MAX_BUFFER;
+-	mnt = vp->v_mount;
++	mnt = uke_files_union_identity(vp->v_mount);
+ 
+ 	/* Check for invalid or dead mounts. */
+ 	if (!mnt || mnt == dead_mountp) {
+@@ -1041,7 +1043,7 @@ getvolattrlist(vfs_context_t ctx, vnode_t vp, struct attrlist *alp,
+ 	}
+ 
+ 	/* If we do not have root vnode, look it up and substitute it in */
+-	if (!vnode_isvroot(vp)) {
++	if (!vnode_isvroot(vp) || vp->v_mount != mnt) {
+ 		if (mnt != NULL) {
+ 			error = VFS_ROOT(mnt, &root_vp, ctx);
+ 			if (error) {
+@@ -1755,6 +1757,14 @@ attr_pack_common(vfs_context_t ctx, mount_t mp, vnode_t vp, struct attrlist *alp
+ 	uint32_t        perms = 0;
+ 	int             error = 0;
+ 
++	if (vp && (alp->commonattr & (ATTR_CMN_DEVID | ATTR_CMN_FSID))) {
++		mount_t original = mp ? mp : vnode_mount(vp);
++		mount_t visible = uke_files_union_identity(original);
++		if (visible != original) {
++			mp = visible;
++		}
++	}
++
+ 	if ((alp->commonattr & ATTR_CMN_ERROR) &&
+ 	    (!return_valid || pack_invalid)) {
+ 		ATTR_PACK4((*abp), 0);
+diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
+index 46a2477..1dafb1c 100644
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -3721,6 +3721,41 @@ quotactl(__unused proc_t p, __unused struct quotactl_args *uap, __unused int32_t
+ #endif /* QUOTA */
+ 
+ TUNABLE(bool, uke_files_volume_trace, "uke-files-volume-trace", false);
++TUNABLE(bool, uke_files_union_view, "uke-files-union-view", false);
++
++mount_t uke_files_union_identity(mount_t mp);
++
++// Same upper-root view as the macOS owner-union implementation, scoped to
++// Files on iPadOS so existing system clients keep their current volume view.
++static mount_t
++uke_files_union_top(void)
++{
++	if (!uke_files_union_view) {
++		return NULL;
++	}
++	proc_t p = vfs_context_proc(vfs_context_current());
++	if (!p || strcmp(p->p_comm, "Files") != 0) {
++		return NULL;
++	}
++	mount_t top = rootvnode ? vnode_mount(rootvnode) : NULL;
++	if (!top || !(top->mnt_flag & MNT_UNION) || !top->mnt_vnodecovered ||
++	    !(top->mnt_vnodecovered->v_flag & VROOT)) {
++		return NULL;
++	}
++	mount_t lower = vnode_mount(top->mnt_vnodecovered);
++	return lower && lower != top && (lower->mnt_flag & MNT_ROOTFS) ? top : NULL;
++}
++
++mount_t
++uke_files_union_identity(mount_t mp)
++{
++	if (!mp || !(mp->mnt_flag & MNT_ROOTFS)) {
++		return mp;
++	}
++	mount_t top = uke_files_union_top();
++	return top && vnode_mount(top->mnt_vnodecovered) == mp ? top : mp;
++}
++
+ 
+ bool uke_files_volume_trace_take(proc_t p);
+ 
+@@ -3779,7 +3814,7 @@ statfs(proc_t p, struct statfs_args *uap, __unused int32_t *retval)
+ 		return error;
+ 	}
+ 	vp = nd.ni_vp;
+-	mp = vp->v_mount;
++	mp = uke_files_union_identity(vp->v_mount);
+ 	nameidone(&nd);
+ 
+ 	error = statfs_internal(p, mp, uap->buf);
+@@ -3813,7 +3848,7 @@ fstatfs(proc_t p, struct fstatfs_args *uap, __unused int32_t *retval)
+ 
+ 	AUDIT_ARG(vnpath_withref, vp, ARG_VNODE1);
+ 
+-	mp = vp->v_mount;
++	mp = uke_files_union_identity(vp->v_mount);
+ 	if (!mp) {
+ 		error = EBADF;
+ 		goto out_vnode;
+@@ -3853,7 +3888,8 @@ vfs_get_statfs64(struct mount *mp, struct statfs64 *sfs)
+ 	 * macOS reports the root volume as the union instead (macos-union-one-volume.patch, native_union_identity).
+ 	 */
+ #if !XNU_TARGET_OS_OSX
+-	if ((mp->mnt_flag & MNT_UNION) && mp->mnt_vnodecovered != NULLVP && (mp->mnt_vnodecovered->v_flag & VROOT) &&
++	if ((mp->mnt_flag & MNT_UNION) && mp != uke_files_union_top() &&
++	    mp->mnt_vnodecovered != NULLVP && (mp->mnt_vnodecovered->v_flag & VROOT) &&
+ 	    (mp->mnt_vnodecovered->v_mount->mnt_flag & MNT_ROOTFS)) {
+ 		sfs->f_fsid = mp->mnt_vnodecovered->v_mount->mnt_vfsstat.f_fsid;
+ 	}
+@@ -3896,7 +3932,7 @@ statfs64(__unused struct proc *p, struct statfs64_args *uap, __unused int32_t *r
+ 		goto out;
+ 	}
+ 	vp = ndp->ni_vp;
+-	mp = vp->v_mount;
++	mp = uke_files_union_identity(vp->v_mount);
+ 	nameidone(ndp);
+ 
+ #if CONFIG_MACF
+@@ -3922,9 +3958,10 @@ statfs64(__unused struct proc *p, struct statfs64_args *uap, __unused int32_t *r
+ 	}
+ 	error = copyout(sfsp, uap->buf, sizeof(*sfsp));
+ 	if (uke_files_volume_trace_take(p)) {
+-		printf("[files volume] pid=%d statfs64 error=%d type=%s flags=%08x fsid=%x:%x\n",
+-		    proc_getpid(p), error, sfsp->f_fstypename, sfsp->f_flags,
+-		    sfsp->f_fsid.val[0], sfsp->f_fsid.val[1]);
++		printf("[files volume] pid=%d statfs64 error=%d type=%s flags=%08x ext=%x fsid=%x:%x bsize=%u blocks=%llu avail=%llu\n",
++		    proc_getpid(p), error, sfsp->f_fstypename, sfsp->f_flags, sfsp->f_flags_ext,
++		    sfsp->f_fsid.val[0], sfsp->f_fsid.val[1], sfsp->f_bsize,
++		    (unsigned long long)sfsp->f_blocks, (unsigned long long)sfsp->f_bavail);
+ 	}
+ 	vnode_put(vp);
+ 
+@@ -3959,7 +3996,7 @@ fstatfs64(__unused struct proc *p, struct fstatfs64_args *uap, __unused int32_t
+ 
+ 	AUDIT_ARG(vnpath_withref, vp, ARG_VNODE1);
+ 
+-	mp = vp->v_mount;
++	mp = uke_files_union_identity(vp->v_mount);
+ 	if (!mp) {
+ 		error = EBADF;
+ 		goto out;
+@@ -4009,6 +4046,10 @@ getfsstat_callback(mount_t mp, void * arg)
+ 	int error, my_size;
+ 	vfs_context_t ctx = vfs_context_current();
+ 
++	if (uke_files_union_identity(mp) != mp) {
++		return VFS_RETURNED;
++	}
++
+ 	if (fstp->sfsp && fstp->count < fstp->maxcount) {
+ #if CONFIG_MACF
+ 		error = mac_mount_check_stat(ctx, mp);
+@@ -4192,6 +4233,10 @@ getfsstat64_callback(mount_t mp, void * arg)
+ 	struct statfs64 sfs;
+ 	int error;
+ 
++	if (uke_files_union_identity(mp) != mp) {
++		return VFS_RETURNED;
++	}
++
+ 	if (fstp->sfsp && fstp->count < fstp->maxcount) {
+ #if CONFIG_MACF
+ 		error = mac_mount_check_stat(vfs_context_current(), mp);
+diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
+index 8ab165e..72bd459 100644
+--- a/bsd/vfs/vfs_vnops.c
++++ b/bsd/vfs/vfs_vnops.c
+@@ -109,6 +109,8 @@
+ #endif
+ 
+ #include <IOKit/IOBSD.h>
++
++extern mount_t uke_files_union_identity(mount_t mp);
+ #include <libkern/section_keywords.h>
+ 
+ static int vn_closefile(struct fileglob *fp, vfs_context_t ctx);
+@@ -1585,11 +1587,14 @@ vn_stat_noauth(struct vnode *vp, void *sbptr, kauth_filesec_t *xsec, int isstat6
+ 	/*
+ 	 * Copy from vattr table
+ 	 */
++	mount_t volume = vnode_mount(vp);
++	mount_t visible = uke_files_union_identity(volume);
++	dev_t reported_dev = visible != volume ? vfs_statfs(visible)->f_fsid.val[0] : va.va_fsid;
+ 	if (isstat64 != 0) {
+-		sb64->st_dev = va.va_fsid;
++		sb64->st_dev = reported_dev;
+ 		sb64->st_ino = (ino64_t)va.va_fileid;
+ 	} else {
+-		sb->st_dev = va.va_fsid;
++		sb->st_dev = reported_dev;
+ 		sb->st_ino = (ino_t)va.va_fileid;
+ 	}
+ 	mode = va.va_mode;

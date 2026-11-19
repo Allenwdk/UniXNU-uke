@@ -1522,6 +1522,9 @@
   ]
  ],
  "methods": {
+  "setDisplayMode": 187,
+  "readExternalMode": 229,
+  "getFramebufferID": 265,
   "isMainDisplay": 186,
   "getDotPitch": 190,
   "supportedFrameInfo": 216,
@@ -1552,9 +1555,15 @@
   "_native_legacy_surface_descriptor": "0xfffffe000a4330a4",
   "_native_legacy_surface_width": "0xfffffe000a4331a8",
   "_native_legacy_surface_height": "0xfffffe000a4331b4",
+  "_native_legacy_surface_plane_base": "0xfffffe000a43325c",
+  "_native_legacy_surface_plane_stride": "0xfffffe000a4337f0",
   "_native_legacy_surface_stride": "0xfffffe000a4331cc",
   "_native_legacy_surface_format": "0xfffffe000a433190",
   "_native_legacy_surface_planes": "0xfffffe000a4331fc",
+  "_native_legacy_ioav_timing": "0xfffffe0009f3d4e8",
+  "_native_legacy_ioav_timing_colors": "0xfffffe0009f3e9d8",
+  "_native_legacy_ioav_color": "0xfffffe0009f3c868",
+  "_native_legacy_send_notification": "0xfffffe000a27e368",
   "_native_legacy_vsync_notify": "0xfffffe000a292ad4",
   "_native_legacy_set_refresh_properties": "0xfffffe000a296ca8",
   "_native_legacy_surface_create": "0xfffffe000a444a68",
@@ -1612,6 +1621,8 @@
   "default_surface": 7000,
   "surface_root": 6976,
   "requested": 7180,
+  "digital_state": 7608,
+  "hpd_clients": 6760,
   "powered": 7184
  },
  "request": {
@@ -1701,9 +1712,9 @@
    "isMainDisplay_177863",
    "Ev"
   ],
-  "opaque187": [
-   "opaque187_160122",
-   "Ev"
+  "setDisplayMode": [
+   "setDisplayMode_133692",
+   "Ejj"
   ],
   "opaque188": [
    "opaque188_200749",
@@ -1869,9 +1880,9 @@
    "opaque228_121163",
    "Ev"
   ],
-  "opaque229": [
-   "opaque229_334550",
-   "Ev"
+  "readExternalMode": [
+   "readExternalMode_85687",
+   "EPvjjPKyjS0_j"
   ],
   "opaque230": [
    "opaque230_374177",
@@ -2013,7 +2024,7 @@
    "opaque264_202160",
    "Ev"
   ],
-  "opaque265": [
+  "getFramebufferID": [
    "opaque265_106590",
    "Ev"
   ],

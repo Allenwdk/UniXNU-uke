@@ -1,0 +1,446 @@
+diff --git a/iokit/Kernel/IOServicePM.cpp b/iokit/Kernel/IOServicePM.cpp
+index cd18d0d..37d4222 100644
+--- a/iokit/Kernel/IOServicePM.cpp
++++ b/iokit/Kernel/IOServicePM.cpp
+@@ -70,6 +70,30 @@ static void tellKernelClientApplier(OSObject * object, void * arg);
+ static void tellAppClientApplier(OSObject * object, void * arg);
+ static const char * getNotificationPhaseString(uint32_t phase);
+ 
++// Bounded, opt-in observations for the Uke USB power-state handoff only.
++static uint32_t gUkeUsbPmRows[16], gUkeUsbPmLimits[16];
++static uint64_t gUkePmEnqueued, gUkePmDequeued, gUkePmDispatchEntered, gUkePmDispatchReturned;
++static uint32_t gUkePmDispatchType;
++static char gUkePmDispatchName[48];
++
++static bool
++uke_usb_pm_enabled()
++{
++	unsigned enabled = 0;
++	return PE_parse_boot_argn("usb", &enabled, sizeof(enabled)) && enabled == 1;
++}
++
++static bool
++uke_usb_pm_trace(IOService *service, unsigned category, unsigned limit)
++{
++	if (!service || category >= 16 || !uke_usb_pm_enabled() ||
++	    strcmp(service->getMetaClass()->getClassName(), "QcomDwc3Xdci") != 0) {
++		return false;
++	}
++	__atomic_store_n(&gUkeUsbPmLimits[category], limit, __ATOMIC_RELAXED);
++	return __atomic_fetch_add(&gUkeUsbPmRows[category], 1, __ATOMIC_RELAXED) < limit;
++}
++
+ static uint64_t
+ computeTimeDeltaNS( const AbsoluteTime * start )
+ {
+@@ -1162,23 +1186,41 @@ IOService::registerPowerDriver(
+ 	IOPMPSEntry *       powerStatesCopy = NULL;
+ 	IOPMPowerStateIndex stateOrder;
+ 	IOReturn            error = kIOReturnSuccess;
++	const bool usbTrace = uke_usb_pm_trace(this, 0, 12);
+ 
+ 	if (!initialized) {
++		if (usbTrace) IOLog("[usb pm] register return not-initialized\n");
+ 		return IOPMNotYetInitialized;
+ 	}
+ 
++	if (usbTrace) {
++		IOLog("[usb pm] register count=%lu initialized=%u driver_ready=%u\n",
++		    numberOfStates, initialized, powerDriver && powerDriver->initialized);
++		IOLog("[usb pm] contract input_stride=%lu compact_stride=%lu input=%p\n",
++		    (unsigned long)sizeof(*powerStates), (unsigned long)sizeof(IOPMPSEntry), powerStates);
++		for (unsigned i = 0; powerStates && i < numberOfStates && i < 5; ++i) {
++			IOLog("[usb pm] input state=%u version=%lu cap=%lx output=%lx input=%lx order=%lu\n",
++			    i, powerStates[i].version, (unsigned long)powerStates[i].capabilityFlags,
++			    (unsigned long)powerStates[i].outputPowerCharacter,
++			    (unsigned long)powerStates[i].inputPowerRequirement,
++			    powerStates[i].version >= kIOPMPowerStateVersion2 ? powerStates[i].stateOrder : i);
++		}
++	}
+ 	if (!powerStates || (numberOfStates < 2)) {
+ 		OUR_PMLog(kPMLogControllingDriverErr5, numberOfStates, 0);
++		if (usbTrace) IOLog("[usb pm] register return invalid-table\n");
+ 		return kIOReturnBadArgument;
+ 	}
+ 
+ 	if (!powerDriver || !powerDriver->initialized) {
+ 		OUR_PMLog(kPMLogControllingDriverErr4, 0, 0);
++		if (usbTrace) IOLog("[usb pm] register return invalid-driver\n");
+ 		return kIOReturnBadArgument;
+ 	}
+ 
+ 	if (powerStates[0].version > kIOPMPowerStateVersion2) {
+ 		OUR_PMLog(kPMLogControllingDriverErr1, powerStates[0].version, 0);
++		if (usbTrace) IOLog("[usb pm] register return invalid-version=%lu\n", powerStates[0].version);
+ 		return kIOReturnBadArgument;
+ 	}
+ 
+@@ -1186,6 +1228,7 @@ IOService::registerPowerDriver(
+ 		// Make a copy of the supplied power state array.
+ 		powerStatesCopy = IONewData(IOPMPSEntry, numberOfStates);
+ 		if (!powerStatesCopy) {
++			if (usbTrace) IOLog("[usb pm] register table allocation failed\n");
+ 			error = kIOReturnNoMemory;
+ 			break;
+ 		}
+@@ -1224,11 +1267,13 @@ IOService::registerPowerDriver(
+ 			}
+ 		}
+ 		if (kIOReturnSuccess != error) {
++			if (usbTrace) IOLog("[usb pm] register state-order invalid count=%lu\n", numberOfStates);
+ 			break;
+ 		}
+ 
+ 		request = acquirePMRequest( this, kIOPMRequestTypeRegisterPowerDriver );
+ 		if (!request) {
++			if (usbTrace) IOLog("[usb pm] register request allocation failed\n");
+ 			error = kIOReturnNoMemory;
+ 			break;
+ 		}
+@@ -1238,13 +1283,16 @@ IOService::registerPowerDriver(
+ 		request->fArg1 = (void *) powerStatesCopy;
+ 		request->fArg2 = (void *) numberOfStates;
+ 
++		if (usbTrace) IOLog("[usb pm] register enqueue type=%u request=%p\n", request->getType(), request);
+ 		submitPMRequest( request );
++		if (usbTrace) IOLog("[usb pm] register return queued-success\n");
+ 		return kIOReturnSuccess;
+ 	}while (false);
+ 
+ 	if (powerStatesCopy) {
+ 		IODeleteData(powerStatesCopy, IOPMPSEntry, numberOfStates);
+ 	}
++	if (usbTrace) IOLog("[usb pm] register return error=%x\n", error);
+ 
+ 	return error;
+ }
+@@ -1268,6 +1316,11 @@ IOService::handleRegisterPowerDriver( IOPMRequest * request )
+ 	assert(powerStates);
+ 	assert(powerDriver);
+ 	assert(numberOfStates > 1);
++	if (uke_usb_pm_trace(this, 1, 12)) {
++		IOLog("[usb pm] handle register count=%u existing=%u parents_known=%u flags=%lx\n",
++		    (unsigned)numberOfStates, (unsigned)fNumberOfPowerStates, fParentsKnowState,
++		    (unsigned long)fParentsCurrentPowerFlags);
++	}
+ 
+ 	if (!fNumberOfPowerStates) {
+ 		OUR_PMLog(kPMLogControllingDriver, numberOfStates, kIOPMPowerStateVersion1);
+@@ -1279,6 +1332,15 @@ IOService::handleRegisterPowerDriver( IOPMRequest * request )
+ 
+ 		lowestPowerState   = fPowerStates[0].stateOrderToIndex;
+ 		fHighestPowerState = fPowerStates[numberOfStates - 1].stateOrderToIndex;
++		if (uke_usb_pm_trace(this, 1, 12)) {
++			for (unsigned i = 0; i < numberOfStates && i < 5; ++i) {
++				IOLog("[usb pm] installed state=%u order=%u cap=%lx output=%lx input=%lx\n",
++				    i, (unsigned)fPowerStates[i].stateOrder,
++				    (unsigned long)fPowerStates[i].capabilityFlags,
++				    (unsigned long)fPowerStates[i].outputPowerFlags,
++				    (unsigned long)fPowerStates[i].inputPowerFlags);
++			}
++		}
+ 
+ 		IOPMrootDomain * rootDomain = getPMRootDomain();
+ 		if (rootDomain) {
+@@ -1378,8 +1440,15 @@ IOService::handleRegisterPowerDriver( IOPMRequest * request )
+ 			tempDesire = fControllingDriver->driverInitialPowerStateForDomainState(fParentsCurrentPowerFlags);
+ 			adjustPowerState(tempDesire);
+ 		}
++		if (uke_usb_pm_trace(this, 1, 12)) {
++			IOLog("[usb pm] installed complete count=%u highest=%u current=%u desired=%u max=%u parents_known=%u flags=%lx\n",
++			    (unsigned)fNumberOfPowerStates, (unsigned)fHighestPowerState,
++			    (unsigned)fCurrentPowerState, (unsigned)fDesiredPowerState, (unsigned)fMaxPowerState,
++			    fParentsKnowState, (unsigned long)fParentsCurrentPowerFlags);
++		}
+ 	} else {
+ 		OUR_PMLog(kPMLogControllingDriverErr2, numberOfStates, 0);
++		if (uke_usb_pm_trace(this, 1, 12)) IOLog("[usb pm] registration rejected existing=%u incoming=%u\n", (unsigned)fNumberOfPowerStates, (unsigned)numberOfStates);
+ 		IODeleteData(powerStates, IOPMPSEntry, numberOfStates);
+ 	}
+ 
+@@ -1765,6 +1834,12 @@ IOService::adjustPowerState( IOPMPowerStateIndex clamp )
+ {
+ 	PM_ASSERT_IN_GATE();
+ 	computeDesiredState(clamp, false);
++	if (uke_usb_pm_trace(this, 3, 12)) {
++		IOLog("[usb pm] adjust current=%u desired=%u max=%u count=%u parents_known=%u flags=%lx machine=%u driver=%u\n",
++		    (unsigned)fCurrentPowerState, (unsigned)fDesiredPowerState, (unsigned)fMaxPowerState,
++		    (unsigned)fNumberOfPowerStates, fParentsKnowState, (unsigned long)fParentsCurrentPowerFlags,
++		    (unsigned)fMachineState, fControllingDriver != NULL);
++	}
+ 	if (fControllingDriver && fParentsKnowState && inPlane(gIOPowerPlane)) {
+ 		IOPMPowerChangeFlags changeFlags = kIOPMSelfInitiated;
+ 
+@@ -2658,6 +2733,11 @@ IOService::handleRequestPowerState( IOPMRequest * request )
+ {
+ 	const OSSymbol * client   = (const OSSymbol *)    request->fArg1;
+ 	IOPMPowerStateIndex state = (IOPMPowerStateIndex) request->fArg0;
++	if (uke_usb_pm_trace(this, 2, 8)) {
++		IOLog("[usb pm] handle request client=%s state=%u count=%u machine=%u\n",
++		    client->getCStringNoCopy(), (unsigned)state, (unsigned)fNumberOfPowerStates,
++		    (unsigned)fMachineState);
++	}
+ 
+ 	PM_ASSERT_IN_GATE();
+ 	if (request->fArg2) {
+@@ -4279,7 +4359,10 @@ IOService::driverSetPowerState( void )
+ 		if (reserved && reserved->uvars && reserved->uvars->userServer) {
+ 			result = reserved->uvars->userServer->serviceSetPowerState(fControllingDriver, this, fHeadNotePowerArrayEntry->capabilityFlags, powerState);
+ 		} else {
++			const bool usbTrace = uke_usb_pm_trace(this, 5, 8);
++			if (usbTrace) IOLog("[usb pm] set enter state=%u old=%u\n", (unsigned)powerState, oldPowerState);
+ 			result = fControllingDriver->setPowerState( powerState, this );
++			if (usbTrace) IOLog("[usb pm] set return state=%u result=%x\n", (unsigned)powerState, result);
+ 		}
+ 		clock_get_uptime(&end);
+ 		OUR_PMLogFuncEnd(kPMLogProgramHardware, (uintptr_t) this, (UInt32) result);
+@@ -7714,13 +7797,21 @@ IOService::serviceMaxCapabilityForDomainState( IOPMPowerFlags domainState )
+ 	IOPMPowerStateIndex powerState = kPowerStateZero;
+ 	int32_t promote;
+ 
++	const bool usbTrace = uke_usb_pm_trace(this, 4, 12);
++	if (usbTrace) {
++		IOLog("[usb pm] max enter flags=%lx count=%u parents_known=%u current=%u\n",
++		    (unsigned long)domainState, (unsigned)fNumberOfPowerStates,
++		    fParentsKnowState, (unsigned)fCurrentPowerState);
++	}
+ 	promote = getPMRootDomain()->considerRunMode(this, fPMDriverClass);
+ 
+ 	if ((promote < 0) && (0 == (kIOPMAOTPower & domainState))) {
++		if (usbTrace) IOLog("[usb pm] max return promoted-off flags=%lx promote=%d\n", (unsigned long)domainState, promote);
+ 		return kPowerStateZero;
+ 	}
+ 
+ 	if (!assertPMDriverCall(&callEntry, kIOPMDriverCallMethodMaxCapabilityForDomainState)) {
++		if (usbTrace) IOLog("[usb pm] max return driver-call-rejected flags=%lx\n", (unsigned long)domainState);
+ 		return kPowerStateZero;
+ 	}
+ 
+@@ -7738,6 +7829,10 @@ IOService::serviceMaxCapabilityForDomainState( IOPMPowerFlags domainState )
+ 		IOPMPowerFlags newDomainState = (domainState & ~kIOPMAOTPower) | kIOPMPowerOn;
+ 		powerState = maxCapabilityForDomainState(newDomainState);
+ 	}
++	if (usbTrace) {
++		IOLog("[usb pm] max return flags=%lx state=%u promote=%d\n",
++		    (unsigned long)domainState, (unsigned)powerState, promote);
++	}
+ 	deassertPMDriverCall(&callEntry);
+ 
+ 	return powerState;
+@@ -7974,6 +8069,10 @@ IOService::actionPMRequestQueue(
+ {
+ 	bool more;
+ 
++	if (uke_usb_pm_trace(this, 8, 12)) {
++		IOLog("[usb pm] request handoff type=%u initialized=%u pmm=%p\n",
++		    request->getType(), initialized, pwrMgt);
++	}
+ 	if (initialized) {
+ 		// Work queue will immediately execute the request if the per-service
+ 		// request queue is empty. Note pwrMgt is the target's IOServicePM.
+@@ -8111,6 +8210,11 @@ IOService::isPMBlocked( IOPMRequest * request, int count )
+ 	fWaitReason = reason;
+ 
+ 	if (reason) {
++		if (uke_usb_pm_trace(this, 11, 16)) {
++			IOLog("[usb pm] blocked type=%u machine=%u reason=%u driver_busy=%u driver_timer=%d pending_acks=%u responses=%u\n",
++			    request->getType(), (unsigned)fMachineState, (unsigned)reason,
++			    fDriverCallBusy, fDriverTimer, fHeadNotePendingAcks, fResponseArray != NULL);
++		}
+ 		if (count) {
+ 			PM_LOG1("[B %02x] %p [%p %s] state %d, reason %d\n",
+ 			    request->getType(), OBFUSCATE(request),
+@@ -9058,6 +9162,12 @@ IOPMRequestQueue::queuePMRequest( IOPMRequest * request )
+ 	uint64_t now = mach_continuous_time();
+ 
+ 	assert(request);
++	IOService *target = request->getTarget();
++	if (uke_usb_pm_enabled()) __atomic_fetch_add(&gUkePmEnqueued, 1, __ATOMIC_RELAXED);
++	if (uke_usb_pm_trace(target, 6, 12)) {
++		IOLog("[usb pm] global enqueue type=%u target=%s request=%p\n",
++		    request->getType(), target->getName(), request);
++	}
+ 	request->setTimestamp(now);
+ 	IOLockLock(fLock);
+ 	queue_enter(&fQueue, request, typeof(request), fCommandChain);
+@@ -9074,6 +9184,7 @@ IOPMRequestQueue::queuePMRequestChain( IOPMRequest ** requests, IOItemCount coun
+ 	uint64_t now = mach_continuous_time();
+ 
+ 	assert(requests && count);
++	if (uke_usb_pm_enabled()) __atomic_fetch_add(&gUkePmEnqueued, count, __ATOMIC_RELAXED);
+ 	IOLockLock(fLock);
+ 	while (count--) {
+ 		next = *requests;
+@@ -9109,7 +9220,20 @@ IOPMRequestQueue::checkForWork( void )
+ 		IOLockUnlock(fLock);
+ 		target = request->getTarget();
+ 		assert(target);
+-		more |= (*dqAction)( target, request, this );
++		const uint32_t usbRequestType = request->getType();
++		const bool usbEnabled = uke_usb_pm_enabled();
++		if (usbEnabled) {
++			__atomic_fetch_add(&gUkePmDequeued, 1, __ATOMIC_RELAXED);
++			strlcpy(gUkePmDispatchName, target->getName(), sizeof(gUkePmDispatchName));
++			__atomic_store_n(&gUkePmDispatchType, request->getType(), __ATOMIC_RELAXED);
++			__atomic_fetch_add(&gUkePmDispatchEntered, 1, __ATOMIC_RELEASE);
++		}
++		const bool usbTrace = uke_usb_pm_trace(target, 7, 16);
++		if (usbTrace) IOLog("[usb pm] global dequeue type=%u target=%s\n", request->getType(), target->getName());
++		const bool requestMore = (*dqAction)( target, request, this );
++		if (usbEnabled) __atomic_fetch_add(&gUkePmDispatchReturned, 1, __ATOMIC_RELEASE);
++		if (usbTrace) IOLog("[usb pm] global dispatch type=%u more=%u\n", usbRequestType, requestMore);
++		more |= requestMore;
+ 		IOLockLock( fLock );
+ 	}
+ 
+@@ -9183,6 +9307,10 @@ IOPMWorkQueue::queuePMRequest( IOPMRequest * request, IOServicePM * pwrMgt )
+ 		// Attach the new quiesce blocker to the blocked quiesce request
+ 		request->attachNextRequest(fQuiesceRequest);
+ 	}
++	if (uke_usb_pm_trace(request->getTarget(), 9, 16)) {
++		IOLog("[usb pm] work enqueue type=%u blocked=%u work_length=%u\n",
++		    request->getType(), request->isWorkBlocked(), fQueueLength);
++	}
+ 
+ 	// Add new request to the tail of the per-service request queue.
+ 	// Then immediately check the request queue to minimize latency
+@@ -9221,15 +9349,20 @@ IOPMWorkQueue::checkRequestQueue( queue_head_t * requestQueue, bool * empty )
+ 	do {
+ 		request = (typeof(request))queue_first(requestQueue);
+ 		if (request->isWorkBlocked()) {
++			if (uke_usb_pm_trace(request->getTarget(), 12, 16)) IOLog("[usb pm] dependency blocked type=%u next=%p root=%p\n",
++			    request->getType(), request->getNextRequest(), request->getRootRequest());
+ 			break; // request dispatch blocked on attached request
+ 		}
+ 		target = request->getTarget();
++		const bool usbTrace = uke_usb_pm_trace(target, 10, 16);
++		if (usbTrace) IOLog("[usb pm] work dispatch type=%u blocked=%u\n", request->getType(), request->isWorkBlocked());
+ 		if (fInvokeAction) {
+ 			done = (*fInvokeAction)( target, request, this );
+ 		} else {
+ 			PM_LOG("PM request 0x%x dropped\n", request->getType());
+ 			done = true;
+ 		}
++		if (usbTrace) IOLog("[usb pm] work result type=%u done=%u\n", request->getType(), done);
+ 		if (!done) {
+ 			break; // PM state machine blocked
+ 		}
+@@ -9620,3 +9753,101 @@ IOServicePM::pmTrace(
+ 	IOTimeStampConstant(IODBG_POWER(event) | eventFunc, nameAsArg, (uintptr_t)Owner->getRegistryEntryID(), (uintptr_t)(OBFUSCATE(param1)), (uintptr_t)(OBFUSCATE(param2)));
+ #endif
+ }
++
++// USB bring-up observations from an independent thread. These deliberately do
++// not take the PM work-loop gate: a stuck gate must not stop the recorder.
++// Rows are best-effort snapshots, not an atomic transaction across the fields.
++void
++IOServicePM::ukeUsbSnapshot() const
++{
++	IOLog("[usb pm] snapshot name=%s unlocked=1 current=%u desired=%u max=%u count=%u highest=%u parents_known=%u flags=%lx machine=%u wait=%u driver_busy=%u timer=%d acks=%u request_empty=%u\n",
++	    Owner ? Owner->getName() : "none", (unsigned)CurrentPowerState,
++	    (unsigned)DesiredPowerState, (unsigned)MaxPowerState, (unsigned)NumberOfPowerStates,
++	    (unsigned)HighestPowerState, ParentsKnowState, (unsigned long)ParentsCurrentPowerFlags,
++	    MachineState, WaitReason, DriverCallBusy, DriverTimer, HeadNotePendingAcks,
++	    queue_empty(&RequestHead));
++}
++
++extern "C" int boot_flight_worker_stack(thread_t, uint64_t *, unsigned *, uint64_t *, uint64_t[12]) __attribute__((weak_import));
++extern "C" void boot_flight_cpu_status(uint64_t[32]) __attribute__((weak_import));
++
++static void
++uke_usb_pm_thread_snapshot(const char *role, IOWorkLoop *loop)
++{
++	thread_t thread = loop ? (thread_t)loop->getThread() : THREAD_NULL;
++	if (!thread || !boot_flight_worker_stack) {
++		IOLog("[usb pm] worker role=%s available=0\n", role);
++		return;
++	}
++	thread_reference(thread);
++	uint64_t tid = 0, event = 0, frames[12] = {};
++	unsigned state = 0;
++	const int locked = boot_flight_worker_stack(thread, &tid, &state, &event, frames);
++	thread_deallocate(thread);
++	IOLog("[usb pm] worker role=%s tid=%llu locked=%u state=%x event=%llx\n",
++	    role, (unsigned long long)tid, locked, state, (unsigned long long)event);
++	if (locked) {
++		for (unsigned i = 0; i < 12; i += 4) {
++			IOLog("[usb pm] stack role=%s group=%u pc=%llx/%llx/%llx/%llx\n", role, i / 4,
++			    (unsigned long long)frames[i], (unsigned long long)frames[i + 1],
++			    (unsigned long long)frames[i + 2], (unsigned long long)frames[i + 3]);
++		}
++	}
++}
++
++extern "C" void
++uke_usb_pm_snapshot(IOService *service)
++{
++	if (!service || !uke_usb_pm_enabled()) return;
++	OSObject *object = service->copyProperty("IOPowerManagement");
++	IOServicePM *pm = OSDynamicCast(IOServicePM, object);
++	IOLog("[usb pm] snapshot begin ticks=%llu pm_present=%u enqueued=%llu dequeued=%llu dispatch_in=%llu dispatch_out=%llu last_type=%u\n",
++	    (unsigned long long)mach_continuous_time(), pm != NULL,
++	    (unsigned long long)__atomic_load_n(&gUkePmEnqueued, __ATOMIC_RELAXED),
++	    (unsigned long long)__atomic_load_n(&gUkePmDequeued, __ATOMIC_RELAXED),
++	    (unsigned long long)__atomic_load_n(&gUkePmDispatchEntered, __ATOMIC_ACQUIRE),
++	    (unsigned long long)__atomic_load_n(&gUkePmDispatchReturned, __ATOMIC_ACQUIRE),
++	    __atomic_load_n(&gUkePmDispatchType, __ATOMIC_RELAXED));
++	char dispatchName[sizeof(gUkePmDispatchName)];
++	memcpy(dispatchName, gUkePmDispatchName, sizeof(dispatchName));
++	dispatchName[sizeof(dispatchName) - 1] = 0;
++	IOLog("[usb pm] snapshot last_target=%s\n", dispatchName);
++	IOLog("[usb pm] queues enabled request=%u reply=%u work=%u completion=%u\n",
++	    gIOPMRequestQueue && gIOPMRequestQueue->isEnabled(), gIOPMReplyQueue && gIOPMReplyQueue->isEnabled(),
++	    gIOPMWorkQueue && gIOPMWorkQueue->isEnabled(), gIOPMCompletionQueue && gIOPMCompletionQueue->isEnabled());
++	if (pm) pm->ukeUsbSnapshot();
++	OSSafeReleaseNULL(object);
++	IOService *root = IOService::getPMRootDomain();
++	object = root ? root->copyProperty("IOPowerManagement") : NULL;
++	pm = OSDynamicCast(IOServicePM, object);
++	if (pm) pm->ukeUsbSnapshot();
++	OSSafeReleaseNULL(object);
++#if WORK_QUEUE_STATS
++	if (gIOPMWorkQueue) {
++		IOLog("[usb pm] work stats check=%llu scan=%llu empty=%llu no_progress=%llu busy=%u invokes=%u\n",
++		    (unsigned long long)gIOPMWorkQueue->fStatCheckForWork,
++		    (unsigned long long)gIOPMWorkQueue->fStatScanEntries,
++		    (unsigned long long)gIOPMWorkQueue->fStatQueueEmpty,
++		    (unsigned long long)gIOPMWorkQueue->fStatNoWorkDone,
++		    gIOPMBusyRequestCount, gIOPMWorkInvokeCount);
++	}
++#endif
++	for (unsigned i = 0; i < 16; ++i) {
++		const uint32_t count = __atomic_load_n(&gUkeUsbPmRows[i], __ATOMIC_RELAXED);
++		const uint32_t limit = __atomic_load_n(&gUkeUsbPmLimits[i], __ATOMIC_RELAXED);
++		IOLog("[usb pm] coverage category=%u calls=%u limit=%u omitted=%u\n",
++		    i, count, limit, count > limit ? count - limit : 0);
++	}
++	uke_usb_pm_thread_snapshot("native-pm", gIOPMWorkLoop);
++	uke_usb_pm_thread_snapshot("apple-usb", service->getWorkLoop());
++	if (boot_flight_cpu_status) {
++		uint64_t cpu[32] = {};
++		boot_flight_cpu_status(cpu);
++		for (unsigned i = 0; i < 8; ++i) {
++			IOLog("[usb pm] cpu=%u state_pri=%llx signal=%llx active=%llx idle=%llu\n", i,
++			    (unsigned long long)cpu[4 * i], (unsigned long long)cpu[4 * i + 1],
++			    (unsigned long long)cpu[4 * i + 2], (unsigned long long)cpu[4 * i + 3]);
++		}
++	}
++	IOLog("[usb pm] snapshot end\n");
++}
+diff --git a/iokit/Kernel/IOServicePMPrivate.h b/iokit/Kernel/IOServicePMPrivate.h
+index 5dd3886..a81dd5e 100644
+--- a/iokit/Kernel/IOServicePMPrivate.h
++++ b/iokit/Kernel/IOServicePMPrivate.h
+@@ -371,6 +371,12 @@ private:
+ 	uint64_t                                PMDriverClass;
+ #define fPMDriverClass              pwrMgt->PMDriverClass
+ 
++public:
++	// Ungated diagnostic snapshot; does not participate in PM dispatch.
++	void ukeUsbSnapshot() const;
++
++private:
++
+ // Serialize IOServicePM state for debug output.
+ 	IOReturn gatedSerialize( OSSerialize * s ) const;
+ 	virtual bool serialize( OSSerialize * s ) const APPLE_KEXT_OVERRIDE;

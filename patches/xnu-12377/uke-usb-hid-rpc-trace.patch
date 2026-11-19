@@ -1,0 +1,72 @@
+diff --git a/iokit/Kernel/IOUserServer.cpp b/iokit/Kernel/IOUserServer.cpp
+index 52b357b..473ae26 100644
+--- a/iokit/Kernel/IOUserServer.cpp
++++ b/iokit/Kernel/IOUserServer.cpp
+@@ -96,6 +96,7 @@ enum{
+ };
+ 
+ TUNABLE(SInt64, gIODKDebug, "dk", kIODKEnable);
++TUNABLE(bool, uke_usb_hid_trace, "uke-usb-hid-trace", false);
+ 
+ #if DEBUG || DEVELOPMENT
+ uint64_t driverkit_checkin_timed_out = 0;
+@@ -3560,6 +3561,9 @@ IOUserServer::rpc(IORPC rpc)
+ 	mach_msg_id_t      machid;
+ 	uint32_t           sendSize, replySize;
+ 	bool               oneway;
++	bool               traceHid = false;
++	bool               rootQueue = false;
++	uint64_t           traceRegistryID = 0;
+ 	uint64_t           msgid;
+ 	IODispatchQueue  * queue;
+ 	IOService        * service;
+@@ -3593,6 +3597,7 @@ IOUserServer::rpc(IORPC rpc)
+ 	}
+ 	if (!queue) {
+ 		queue = fRootQueue;
++		rootQueue = true;
+ 	}
+ 	if (queue && (kIODispatchQueueStopped != queue)) {
+ 		port = queue->ivars->serverPort;
+@@ -3601,13 +3606,28 @@ IOUserServer::rpc(IORPC rpc)
+ 		sendPort = ipc_port_copy_send_mqueue(port);
+ 	}
+ 	IOLockUnlock(gIOUserServerLock);
++	oneway = (0 != (kIORPCMessageOneway & message->flags));
++
++	// Trace transport RPCs without reading report data or changing queue selection.
++	if (uke_usb_hid_trace && service && strcmp(service->getName(), "AppleUserUSBHostHIDDevice") == 0) {
++		static unsigned traceRows;
++		traceHid = __atomic_load_n(&traceRows, __ATOMIC_RELAXED) < 128 &&
++		    __atomic_fetch_add(&traceRows, 1, __ATOMIC_RELAXED) < 128;
++		if (traceHid) {
++			traceRegistryID = service->getRegistryEntryID();
++			IOLog("[usb hid] rpc begin service=%llx msg=%llx oneway=%u root=%u port=%u\n",
++			    traceRegistryID, msgid, oneway, rootQueue, sendPort != nullptr);
++		}
++	}
+ 	if (!sendPort) {
+ 		return kIOReturnNotReady;
+ 	}
+ 
+-	oneway = (0 != (kIORPCMessageOneway & message->flags));
+-
+ 	ret = copyOutObjects(mach, message, sendSize, false);
++	if (traceHid && ret != kIOReturnSuccess) {
++		IOLog("[usb hid] rpc copyout service=%llx msg=%llx status=%08x\n",
++		    traceRegistryID, msgid, (unsigned int)ret);
++	}
+ 
+ 	mach->msgh.msgh_bits = MACH_MSGH_BITS_COMPLEX |
+ 	    MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, (oneway ? 0 : MACH_MSG_TYPE_MAKE_SEND_ONCE));
+@@ -3627,6 +3647,10 @@ IOUserServer::rpc(IORPC rpc)
+ 	}
+ 
+ 	ipc_port_release_send(sendPort);
++	if (traceHid) {
++		IOLog("[usb hid] rpc mach service=%llx msg=%llx status=%08x moved=%u\n",
++		    traceRegistryID, msgid, (unsigned int)ret, message_moved);
++	}
+ 
+ 	if (MACH_MSG_SUCCESS != ret) {
+ 		if (kIODKLogIPC & gIODKDebug) {

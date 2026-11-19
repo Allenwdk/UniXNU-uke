@@ -171,8 +171,8 @@ sha256 = "1294992888e8c7c7fcd8a6d0a672cc666eff3c95e666ce5840db7e03edcc500d"
 [kernel.prelink]
 # Owner-authenticated SystemOS startup replaces Apple-hardware Ignition preparation.
 # Retain Image4 code as a dependency; do not start its hardware-key service.
-# As on sheng, USB host only probes for AppleOnboardSerial and AppleSMC with optional metaclass casts.
-roots = ["com.apple.AppleFSCompression.AppleFSCompressionTypeZlib", "com.apple.driver.AppleARMPlatform", "com.apple.driver.AppleARMWatchdogTimer", "com.apple.driver.AppleAudioClockLibs", "com.apple.driver.AppleEffaceableStorage", "com.apple.driver.AppleIISController", "com.apple.driver.AppleM2ScalerCSCDriver", "com.apple.driver.AppleMobileFileIntegrity", "com.apple.driver.ApplePMGR", "com.apple.driver.IODARTFamily", "com.apple.filesystems.apfs", "com.apple.iokit.CoreAnalyticsFamily", "com.apple.iokit.IOAVFamily", "com.apple.iokit.IOAudio2Family", "com.apple.iokit.IOCECFamily", "com.apple.iokit.IOCryptoAcceleratorFamily", "com.apple.iokit.IOGPUFamily", "com.apple.iokit.IOHDCPFamily", "com.apple.iokit.IOMobileGraphicsFamily", "com.apple.iokit.IOReportFamily", "com.apple.iokit.IOSlowAdaptiveClockingFamily", "com.apple.iokit.IOStorageFamily", "com.apple.iokit.IOSurface", "com.apple.kec.Libm", "com.apple.kec.corecrypto", "com.apple.kext.AppleMatch", "com.apple.kext.CoreTrust", "com.apple.security.AppleImage4", "com.apple.security.sandbox", "com.apple.iokit.IOHIDFamily", "com.apple.iokit.IOHIDEventDriver", "com.apple.iokit.IOUSBDeviceFamily", "com.apple.driver.AppleUSBXDCI", "com.apple.driver.AppleUSBDeviceMux", "com.apple.iokit.IOUSBHostFamily", "com.apple.driver.usb.AppleUSBXHCI", "!com.apple.driver.AppleOnboardSerial", "!com.apple.driver.AppleSMC"]
+# Follow sheng for USB hub, HID and mass-storage matching. AppleOnboardSerial and AppleSMC are optional host metaclass casts.
+roots = ["com.apple.AppleFSCompression.AppleFSCompressionTypeZlib", "com.apple.driver.AppleARMPlatform", "com.apple.driver.AppleARMWatchdogTimer", "com.apple.driver.AppleAudioClockLibs", "com.apple.driver.AppleEffaceableStorage", "com.apple.driver.AppleIISController", "com.apple.driver.AppleM2ScalerCSCDriver", "com.apple.driver.AppleMobileFileIntegrity", "com.apple.driver.ApplePMGR", "com.apple.driver.IODARTFamily", "com.apple.filesystems.apfs", "com.apple.filesystems.lifs", "com.apple.iokit.CoreAnalyticsFamily", "com.apple.iokit.IOAVFamily", "com.apple.iokit.IOAudio2Family", "com.apple.iokit.IOCECFamily", "com.apple.iokit.IOCryptoAcceleratorFamily", "com.apple.iokit.IOGPUFamily", "com.apple.iokit.IOHDCPFamily", "com.apple.iokit.IOMobileGraphicsFamily", "com.apple.iokit.IOReportFamily", "com.apple.iokit.IOSlowAdaptiveClockingFamily", "com.apple.iokit.IOStorageFamily", "com.apple.iokit.IOSurface", "com.apple.kec.Libm", "com.apple.kec.corecrypto", "com.apple.kext.AppleMatch", "com.apple.kext.CoreTrust", "com.apple.security.AppleImage4", "com.apple.security.sandbox", "com.apple.iokit.IOHIDFamily", "com.apple.iokit.IOHIDEventDriver", "com.apple.iokit.IOUSBDeviceFamily", "com.apple.driver.AppleUSBXDCI", "com.apple.driver.AppleUSBDeviceMux", "com.apple.iokit.IOUSBHostFamily", "com.apple.driver.usb.AppleUSBXHCI", "com.apple.driver.usb.AppleUSBHub", "com.apple.driver.usb.AppleUSBHostCompositeDevice", "com.apple.driver.usb.IOUSBHostHIDDevice", "com.apple.iokit.IOUSBMassStorageDriver", "com.apple.iokit.IOSCSIArchitectureModelFamily", "com.apple.iokit.IOSCSIBlockCommandsDevice", "!com.apple.driver.AppleOnboardSerial", "!com.apple.driver.AppleSMC"]
 extra_args = ["--fileset-reference", "refer/apple-fileset-reference/2f9eabe43241bb9b64d367151d79d660e81e3ec7fee8399c3f37a0f5ba3b5aa8.macho", "--allow-missing"]
 
 [firmware]
@@ -238,6 +238,9 @@ text_fixups = [
   "dyld_shared_cache_arm64e.01,43ef494,00000000000000000000000000000000,f85fbca9a264fb17c00000b4e10300aa",
   "dyld_shared_cache_arm64e.01,43ef4a4,00000000000000000000000000000000,e00313aaf30301aa7f68f497e00313aa",
   "dyld_shared_cache_arm64e.01,43ef4b4,0000000000000000,f37bc1a8ff0f5fd6",
+  # MobileGestalt DiskUsage reads NAND size from disk0, which is SystemOS on Uke.
+  # TotalDiskCapacity uses the mounted Data volume's statfs size (x26 + x20).
+  "dyld_shared_cache_arm64e.11,75f4c2c,ae000094f50300aa,5503148b1f2003d5",
 ]
 
 # NativeAdrenoMetal is delivered by the matching --gpu-addon and --owner-trust-cache inputs.
@@ -294,6 +297,8 @@ kernel_args = [
   # Staged apps and unencrypted Data metadata use the upstream board defaults
   # in BootWatchdogPolicy.c; explicit boot arguments can override them.
   "sheng-aks=1",
+  # The USB pairing flow requires the owned AppleKeyStore to report no passcode.
+  "sheng-aks-sls=3",
   "sheng-disable-watchdogd=1",
   "sheng-smp=1",
   "sheng-cpufreq=4",

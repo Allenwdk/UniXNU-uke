@@ -1,0 +1,20 @@
+diff --git a/iokit/Kernel/IOWorkLoop.cpp b/iokit/Kernel/IOWorkLoop.cpp
+index 21e6251..f6ab23f 100644
+--- a/iokit/Kernel/IOWorkLoop.cpp
++++ b/iokit/Kernel/IOWorkLoop.cpp
+@@ -605,6 +605,15 @@ IOWorkLoop::_maintRequest(void *inC, void *inD, void *, void *)
+ 					if (__atomic_fetch_add(&classified, 1, __ATOMIC_RELAXED) < 16) {
+ 						IOLog("[usb mux] IOSocketEventSource classified active\n");
+ 					}
++				} else if (className && (strcmp(className, "AppleUSBRequestCompleter") == 0 ||
++				    strcmp(className, "AppleUSBHostRequestCompleter") == 0)) {
++					// Both classes drain USB completion requests in the base
++					// AppleUSBRequestCompleter::checkForWork override.
++					inEvent->flags |= IOEventSource::kActive;
++					static unsigned classifiedCompleters;
++					if (__atomic_fetch_add(&classifiedCompleters, 1, __ATOMIC_RELAXED) < 16) {
++						IOLog("[usb hid] %s classified active\n", className);
++					}
+ 				}
+ 			}
+ #endif

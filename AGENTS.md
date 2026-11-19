@@ -15,6 +15,9 @@ Read these pages before editing:
 4. [Components](https://unixnu.com/reference/components)
 5. [Device trees](https://unixnu.com/porting/device-tree)
 
-Record hardware results in porting.toml and run
-`python3 scripts/porting-record.py check --device .` from the UniXNU checkout
-before publishing.
+For source changes being published, record the relevant hardware result in
+porting.toml and run `python3 scripts/porting-record.py check --device .` from
+the UniXNU checkout. Routine authorized flashing is an exception: do not update
+porting.toml or create a flash receipt solely for deployment; report the
+four-partition write, slot selection, and reboot result in the conversation.
+After reboot, do not poll the device unless the user asks.

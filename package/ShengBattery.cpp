@@ -19,6 +19,9 @@
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSSymbol.h>
 #include <pexpert/pexpert.h>
+#include "QcomUcsi.h"
+#include "UkeDpAltMode.h"
+#include "UkeUsbBoard.h"
 extern "C" {
 #include "ShengAdsp.h"
 #include "ShengBattmgr.h"
@@ -27,6 +30,14 @@ extern "C" {
 // The USB-C owner (32779) shares this channel: QcomDwc3 asks what is on the cable over UCSI.
 extern "C" ShengAdspChannel *sheng_adsp_channel(const char *, uint32_t, uint32_t, int, const ShengAdspClient *, void *) __attribute__((weak_import));
 extern "C" int sheng_adsp_send(ShengAdspChannel *, const void *, uint32_t) __attribute__((weak_import));
+extern "C" void qcom_dwc3_vbus(int);
+extern "C" uint32_t qcom_ucsi_start(uint8_t *);
+extern "C" uint32_t qcom_ucsi_receive(const uint8_t *, uint32_t, uint8_t *);
+extern "C" uint32_t qcom_ucsi_tick(uint8_t *);
+extern "C" bool qcom_ucsi_polling();
+extern "C" void qcom_ucsi_stop();
+extern "C" bool qcom_ucsi_connection(uint32_t *, uint32_t *);
+extern "C" void qcom_ucsi_apply_connection(int lane);
 // [0] stage (1 class up, 2 channel registered, 3 channel up, 4 published; negative: the step that failed), [1] percent, [2] mV,
 // [3] mA, [4] temperature (raw), [5] flags (bit 0 present, 1 external, 2 charging, 3 full, 4 notifications enabled), [6] refresh
 // cycles, [7] answers, [8] timeouts | errors << 16, [9] notifications, [10] USB type (raw), [11] full mAh, [12] design mAh,
@@ -46,6 +57,9 @@ extern "C" {volatile int32_t native_charger_stats[16];}
 
 namespace {
 constexpr uint32_t kRequestMs = 2000, kRefreshMs = 60000, kRetryMs = 5000, kSlowEvery = 10, kRing = 16, kMessage = 560;
+// XM_PROP_CC_ORIENTATION in the stock Uke qti_battery_charger module.
+constexpr uint32_t kCcOrientationProperty = 52, kCcTimeoutMs = 300;
+constexpr unsigned kAltModeAckLimit = 32, kAltModeLogLimit = 48, kAltModeTimeoutMs = 5000;
 }
 
 // Keep the upstream interrupt producer, action dispatch and work-loop gate.
@@ -71,10 +85,28 @@ class ShengBattery : public IOPMPowerSource {
     OSDeclareDefaultStructors(ShengBattery)
     IOWorkLoop *loop = nullptr;
     IOTimerEventSource *request = nullptr, *refresh = nullptr;
+    IOTimerEventSource *ucsiTimer = nullptr;
+    IOTimerEventSource *ccTimer = nullptr;
+    IOTimerEventSource *altModeTimer = nullptr;
+    UkeDpAltMode::Command altModePending = UkeDpAltMode::Command::None;
+    uint64_t altModeDeadline = 0;
+    UkeDpAltMode::Notification altModeEvents[kAltModeAckLimit];
+    unsigned altModeHead = 0, altModeCount = 0, altModeLogs = 0;
+    bool altModeEnabled = false, altModeQuarantined = false, altModeAux = false;
+    uint8_t ucsiOut[QCOM_UCSI_MAX_MESSAGE];
+    uint32_t ucsiPending = 0, ucsiResponse = 0;
+    unsigned ucsiRetries = 0;
+    bool ucsiActive = false;
+    bool ucsiNotifyPending = false;
+    int usbOnline = -1;
+    uint32_t ccGeneration = 0, ccRequestGeneration = 0;
+    int ccLane = -1;
+    bool ccPending = false, ccUnavailable = false;
     IOInterruptEventSource *inbox = nullptr;
     IOSimpleLock *ringLock = nullptr;
     struct {uint32_t length; uint8_t data[kMessage];} ring[kRing];
     uint32_t ringHead = 0, ringCount = 0;
+    bool altModeDropped = false; // protected by ringLock
     volatile uint32_t channelUp = 0, channelChanged = 0, channelLost = 0;
     bool wasUp = false, published = false;
     uint32_t transportGeneration = 0;
@@ -82,11 +114,193 @@ class ShengBattery : public IOPMPowerSource {
     uint64_t requestDeadline = 0;
     ShengBattmgr bm;
     ShengAdspChannel *channel = nullptr;
+
+    void updateUsbRole() {
+        uint32_t generation, status;
+        if (!ucsiActive || !qcom_ucsi_connection(&generation, &status)) return;
+        if (!(status & (1u << 19))) {
+            ccGeneration = 0;
+            ccLane = -1;
+            qcom_ucsi_apply_connection(-1);
+            return;
+        }
+        if (ccGeneration == generation || !ccTimer || ccUnavailable) {
+            qcom_ucsi_apply_connection(ccGeneration == generation ? ccLane : -1);
+            return;
+        }
+        if (ccPending || bm.in_flight || bm.notification_pending) return;
+        uint8_t request[SHENG_BATTMGR_REQUEST_BYTES] = {};
+        ucsi_put32(request, SHENG_BATTMGR_OWNER);
+        ucsi_put32(request + 4, SHENG_BATTMGR_TYPE_REQUEST);
+        ucsi_put32(request + 8, SHENG_BATTMGR_OP_BOARD_GET);
+        ucsi_put32(request + 16, kCcOrientationProperty);
+        const int result = sheng_adsp_send(channel, request, sizeof request);
+        if (result) {
+            printf("[usb otg] CC query send rc=%d generation=%u\n", result, generation);
+            ccUnavailable = true;
+            qcom_ucsi_apply_connection(-1);
+            return;
+        }
+        ccRequestGeneration = generation;
+        ccPending = true;
+        ccTimer->setTimeoutMS(kCcTimeoutMs);
+    }
+
+    static void ccAction(OSObject *owner, IOTimerEventSource *) {
+        ShengBattery *self = OSDynamicCast(ShengBattery, owner);
+        if (!self || !self->ccPending) return;
+        self->ccPending = false;
+        // These replies have no transaction ID. Ignore late results until
+        // the transport reconnects instead of assigning them to a new plug.
+        self->ccUnavailable = true;
+        printf("[usb otg] CC query timed out generation=%u\n", self->ccRequestGeneration);
+        self->updateUsbRole();
+        self->pump();
+    }
+
+    void stopUcsi() {
+        ucsiTimer->cancelTimeout();
+        ucsiActive = ucsiNotifyPending = false;
+        ucsiPending = ucsiRetries = ucsiResponse = 0;
+        usbOnline = -1;
+        if (ccTimer) ccTimer->cancelTimeout();
+        ccGeneration = ccRequestGeneration = 0;
+        ccPending = false;
+        ccLane = -1;
+        qcom_ucsi_stop();
+    }
+
+    void sendUcsi(uint32_t bytes) {
+        if (!bytes && ucsiNotifyPending) {
+            ucsiNotifyPending = false;
+            bytes = ucsi_read_request(ucsiOut);
+        }
+        if (bytes) {
+            const int result = sheng_adsp_send(channel, ucsiOut, bytes);
+            if (result) {
+                if (++ucsiRetries >= 5) {
+                    printf("[usb otg] UCSI send failed rc=%d bytes=%u\n", result, bytes);
+                    stopUcsi();
+                    return;
+                }
+                ucsiPending = bytes;
+                ucsiTimer->setTimeoutMS(kUcsiPollMs);
+                return;
+            }
+            ucsiResponse = ucsi_get32(ucsiOut + 8);
+            ucsiPending = ucsiRetries = 0;
+            ucsiTimer->setTimeoutMS(kRequestMs);
+        } else if (qcom_ucsi_polling()) {
+            ucsiTimer->setTimeoutMS(kUcsiPollMs);
+        }
+    }
+
+    static void ucsiAction(OSObject *owner, IOTimerEventSource *) {
+        ShengBattery *self = OSDynamicCast(ShengBattery, owner);
+        if (!self || !self->wasUp || !self->ucsiActive) return;
+        if (self->ucsiResponse) {
+            printf("[usb otg] UCSI response timed out\n");
+            self->stopUcsi();
+        } else {
+            self->sendUcsi(self->ucsiPending ? self->ucsiPending : qcom_ucsi_tick(self->ucsiOut));
+        }
+    }
+
+    void resetAltMode() {
+        altModeTimer->cancelTimeout();
+        altModePending = UkeDpAltMode::Command::None;
+        altModeEnabled = altModeQuarantined = false;
+        altModeHead = altModeCount = altModeLogs = 0;
+        if (altModeAux) qcom_uke_dp_update(-1, false, false);
+    }
+
+    void quarantineAltMode(const char *cause, int result = 0) {
+        if (altModeQuarantined) return;
+        printf("[dp altmode] %s cmd=%x rc=%d; waiting for PMIC transport reconnect\n",
+               cause, static_cast<unsigned>(altModePending), result);
+        altModeTimer->cancelTimeout();
+        altModePending = UkeDpAltMode::Command::None;
+        altModeEnabled = false;
+        altModeQuarantined = true;
+        altModeCount = 0;
+        if (altModeAux) qcom_uke_dp_update(-1, false, false);
+    }
+
+    void sendAltMode(UkeDpAltMode::Command command) {
+        uint8_t data[UkeDpAltMode::kRequestBytes];
+        UkeDpAltMode::writeRequest(data, command);
+        altModePending = command;
+        const int result = sheng_adsp_send(channel, data, sizeof data);
+        if (result) {
+            quarantineAltMode("PAN send failed", result);
+            return;
+        }
+        clock_interval_to_deadline(kAltModeTimeoutMs, kMillisecondScale, &altModeDeadline);
+        altModeTimer->setTimeoutMS(kAltModeTimeoutMs);
+    }
+
+    void receiveAltMode(const uint8_t *data, uint32_t length) {
+        using UkeDpAltMode::Command;
+        if (!wasUp || altModeQuarantined || __atomic_load_n(&channelLost, __ATOMIC_ACQUIRE)) return;
+        if (UkeDpAltMode::isWriteResponse(data, length)) {
+            if (altModePending == Command::None) return;
+            if (altModePending == Command::EnableNotifications) {
+                altModeEnabled = true;
+                printf("[dp altmode] PAN notifications enabled\n");
+            } else {
+                const auto &event = altModeEvents[altModeHead];
+                if (altModeAux && event.validRoute) {
+                    if (event.lanes == 2) qcom_uke_dp_update(event.orientation, event.hpd, event.irq);
+                    else {
+                        if (event.lanes == 4) printf("[dp route] four-lane route unsupported\n");
+                        qcom_uke_dp_update(-1, false, false);
+                    }
+                }
+                altModeHead = (altModeHead + 1) % kAltModeAckLimit;
+                --altModeCount;
+            }
+            altModePending = Command::None;
+            altModeTimer->cancelTimeout();
+        } else {
+            UkeDpAltMode::Notification event;
+            if (!UkeDpAltMode::decodeNotification(data, length, event)) return;
+            if (altModeLogs < kAltModeLogLimit) {
+                printf("[dp altmode] notify svid=%04x orientation=%u mux=%u pin=%u lanes=%u hpd=%u irq=%u valid=%u\n",
+                       event.svid, event.orientation, event.mux, event.pin, event.lanes,
+                       event.hpd, event.irq, event.validRoute);
+                ++altModeLogs;
+            }
+            if (altModeCount == kAltModeAckLimit) {
+                quarantineAltMode("PAN acknowledgment backlog overflow");
+                return;
+            }
+            altModeEvents[(altModeHead + altModeCount) % kAltModeAckLimit] = event;
+            ++altModeCount;
+        }
+        // The firmware ACK is a receipt for port 0. It is independent of
+        // programming the PHY or delivering HPD to the display controller.
+        if (altModeEnabled && altModeCount && altModePending == Command::None) {
+            sendAltMode(Command::AckNotification);
+        }
+    }
+
+    static void altModeAction(OSObject *owner, IOTimerEventSource *) {
+        ShengBattery *self = OSDynamicCast(ShengBattery, owner);
+        if (!self || !self->wasUp) return;
+        self->drainInbox();
+        if (self->altModePending != UkeDpAltMode::Command::None &&
+            mach_absolute_time() >= self->altModeDeadline) {
+            // A late response cannot be matched to a different PAN command.
+            self->quarantineAltMode("PAN response timed out");
+        }
+    }
+
     static void dspState(void *context, int up) {
         __atomic_fetch_add(&native_battery_dispatch[0], 1u, __ATOMIC_RELAXED);
         ShengBattery *self = static_cast<ShengBattery *>(context);
         IOSimpleLockLock(self->ringLock);
         self->ringCount = self->ringHead = 0;
+        self->altModeDropped = false;
         IOSimpleLockUnlock(self->ringLock);
         if (!up) __atomic_store_n(&self->channelLost, 1u, __ATOMIC_RELEASE);
         __atomic_store_n(&self->channelUp, up ? 1u : 0u, __ATOMIC_RELEASE);
@@ -106,6 +320,7 @@ class ShengBattery : public IOPMPowerSource {
             self->ringCount++;
         } else {
             native_battery_stats[14] = native_battery_stats[14] + 1;
+            if (self->altModeTimer && UkeDpAltMode::isOwner(data, length)) self->altModeDropped = true;
         }
         IOSimpleLockUnlock(self->ringLock);
         __atomic_fetch_add(&native_battery_dispatch[2], 1u, __ATOMIC_RELAXED);
@@ -129,7 +344,7 @@ class ShengBattery : public IOPMPowerSource {
     }
     void pump() {
         uint8_t out[SHENG_BATTMGR_REQUEST_BYTES];
-        if (!wasUp || bm.poisoned || !bm.enabled) return;
+        if (!wasUp || bm.poisoned || !bm.enabled || ccPending) return;
         const uint32_t n = sheng_battmgr_next(&bm, out);
         if (!n) return;
         if (sheng_adsp_send(channel, out, n)) {
@@ -158,6 +373,10 @@ class ShengBattery : public IOPMPowerSource {
         OSSafeReleaseNULL(symbol);
     }
     void recordRaw() {
+        if (ucsiTimer && ((bm.valid >> BmUsbOnline) & 1) && usbOnline != bm.value[BmUsbOnline]) {
+            usbOnline = bm.value[BmUsbOnline];
+            qcom_dwc3_vbus(usbOnline);
+        }
         static const int fields[8] = {BmCapacity, BmGauge1Remaining, BmGauge1Full, BmGauge2Remaining, BmGauge2Full, BmTemperature, BmCurrent, -1};
         for (unsigned i = 0; i < 7; ++i) native_battery_raw[i] = (bm.valid >> fields[i]) & 1 ? bm.value[fields[i]] : -999999;
         native_battery_raw[7] = (int32_t)bm.valid;
@@ -249,6 +468,7 @@ class ShengBattery : public IOPMPowerSource {
     }
     void handle(int result) {
         if (result == BmCycleDone) publish();
+        updateUsbRole();
         pump();
         counters();
     }
@@ -271,12 +491,15 @@ class ShengBattery : public IOPMPowerSource {
                 self->bm.poisoned = 1;
                 self->request->cancelTimeout();
                 self->refresh->cancelTimeout();
+                if (self->ucsiTimer) self->stopUcsi();
+                if (self->altModeTimer) self->resetAltMode();
                 self->stale(true);
                 if (self->published) self->updateStatus();
                 self->wasUp = false;
             }
             const bool up = __atomic_load_n(&self->channelUp, __ATOMIC_ACQUIRE) != 0;
             if (up && !self->wasUp) {
+                self->ccUnavailable = false;
                 const uint32_t generation = sheng_adsp_generation();
                 if (generation != self->transportGeneration) {
                     sheng_battmgr_init(&self->bm);
@@ -288,6 +511,11 @@ class ShengBattery : public IOPMPowerSource {
                     sheng_battmgr_refresh(&self->bm, 1);
                     self->refresh->setTimeoutMS(kRefreshMs);
                 }
+                if (self->ucsiTimer) {
+                    self->ucsiActive = true;
+                    self->sendUcsi(qcom_ucsi_start(self->ucsiOut));
+                }
+                if (self->altModeTimer) self->sendAltMode(UkeDpAltMode::Command::EnableNotifications);
             }
             self->wasUp = up;
             printf("UKE BATTERY: inbox up=%u generation=%u poisoned=%u\n", (unsigned)up,
@@ -303,6 +531,8 @@ class ShengBattery : public IOPMPowerSource {
             uint8_t data[kMessage];
             uint32_t length = 0;
             IOSimpleLockLock(self->ringLock);
+            const bool altModeDropped = self->altModeDropped;
+            self->altModeDropped = false;
             if (self->ringCount) {
                 auto &slot = self->ring[self->ringHead];
                 length = slot.length;
@@ -311,7 +541,52 @@ class ShengBattery : public IOPMPowerSource {
                 self->ringCount--;
             }
             IOSimpleLockUnlock(self->ringLock);
+            if (altModeDropped) self->quarantineAltMode("PAN message lost at inbox");
             if (!length) break;
+            if (UkeDpAltMode::isOwner(data, length)) {
+                if (self->altModeTimer) self->receiveAltMode(data, length);
+                continue;
+            }
+            if (length == 24 && ucsi_get32(data) == SHENG_BATTMGR_OWNER &&
+                ucsi_get32(data + 4) == SHENG_BATTMGR_TYPE_REQUEST &&
+                ucsi_get32(data + 8) == SHENG_BATTMGR_OP_BOARD_GET &&
+                ucsi_get32(data + 12) == kCcOrientationProperty) {
+                if (self->ccPending) {
+                    self->ccTimer->cancelTimeout();
+                    self->ccPending = false;
+                    self->ccGeneration = self->ccRequestGeneration;
+                    const uint32_t orientation = ucsi_get32(data + 16), result = ucsi_get32(data + 20);
+                    self->ccLane = !result && (orientation == 1 || orientation == 2) ? static_cast<int>(orientation) - 1 : -1;
+                    printf("[usb otg] CC report value=%u rc=%u lane=%d generation=%u\n",
+                           orientation, result, self->ccLane, self->ccGeneration);
+                    self->updateUsbRole();
+                    self->pump();
+                }
+                continue;
+            }
+            if (length >= 12 && ucsi_get32(data) == QCOM_UCSI_OWNER) {
+                if (self->ucsiActive) {
+                    const uint32_t opcode = ucsi_get32(data + 8);
+                    if (opcode == kUcsiOpNotify && (self->ucsiPending || self->ucsiResponse)) {
+                        self->ucsiNotifyPending = true;
+                        continue;
+                    }
+                    if (self->ucsiPending || (opcode != kUcsiOpNotify && opcode != self->ucsiResponse)) continue;
+                    if ((opcode == kUcsiOpWrite && length != 16) ||
+                        (opcode == kUcsiOpRead && length != 64 && length != QCOM_UCSI_MAX_MESSAGE)) continue;
+                    if (opcode != kUcsiOpNotify && ucsi_get32(data + length - 4) != 0) {
+                        printf("[usb otg] UCSI transport rejected opcode=%x rc=%u\n",
+                               opcode, ucsi_get32(data + length - 4));
+                        self->stopUcsi();
+                        continue;
+                    }
+                    self->ucsiTimer->cancelTimeout();
+                    self->ucsiResponse = 0;
+                    self->sendUcsi(qcom_ucsi_receive(data, length, self->ucsiOut));
+                    self->updateUsbRole();
+                }
+                continue;
+            }
             if (self->messageLogs < 8) {
                 char hex[49] = {};
                 const unsigned n = length < 24 ? length : 24;
@@ -363,14 +638,23 @@ public:
     void free() override {
         if (request) request->cancelTimeout();
         if (refresh) refresh->cancelTimeout();
+        if (ucsiTimer) ucsiTimer->cancelTimeout();
+        if (ccTimer) ccTimer->cancelTimeout();
+        if (altModeTimer) altModeTimer->cancelTimeout();
         if (loop) {
             if (inbox) loop->removeEventSource(inbox);
             if (request) loop->removeEventSource(request);
             if (refresh) loop->removeEventSource(refresh);
+            if (ucsiTimer) loop->removeEventSource(ucsiTimer);
+            if (ccTimer) loop->removeEventSource(ccTimer);
+            if (altModeTimer) loop->removeEventSource(altModeTimer);
         }
         OSSafeReleaseNULL(inbox);
         OSSafeReleaseNULL(request);
         OSSafeReleaseNULL(refresh);
+        OSSafeReleaseNULL(ucsiTimer);
+        OSSafeReleaseNULL(ccTimer);
+        OSSafeReleaseNULL(altModeTimer);
         OSSafeReleaseNULL(loop);
         if (ringLock) IOSimpleLockFree(ringLock);
         IOPMPowerSource::free();
@@ -386,6 +670,23 @@ public:
         if (!loop || !ringLock || !inbox || !request || !refresh ||
             loop->addEventSource(inbox) != kIOReturnSuccess || loop->addEventSource(request) != kIOReturnSuccess || loop->addEventSource(refresh) != kIOReturnSuccess)
             return false;
+        if (uke_usb_otg_enabled()) {
+            ucsiTimer = IOTimerEventSource::timerEventSource(this, &ShengBattery::ucsiAction);
+            if (ucsiTimer && loop->addEventSource(ucsiTimer) != kIOReturnSuccess) OSSafeReleaseNULL(ucsiTimer);
+            if (!ucsiTimer) printf("[usb otg] UCSI timer unavailable\n");
+            if (ucsiTimer) {
+                ccTimer = IOTimerEventSource::timerEventSource(this, &ShengBattery::ccAction);
+                if (ccTimer && loop->addEventSource(ccTimer) != kIOReturnSuccess) OSSafeReleaseNULL(ccTimer);
+            }
+        }
+        unsigned enableAltMode = 0;
+        if (PE_parse_boot_argn("uke-dp-altmode", &enableAltMode, sizeof enableAltMode) && enableAltMode == 1) {
+            altModeTimer = IOTimerEventSource::timerEventSource(this, &ShengBattery::altModeAction);
+            if (altModeTimer && loop->addEventSource(altModeTimer) != kIOReturnSuccess) OSSafeReleaseNULL(altModeTimer);
+            if (!altModeTimer) printf("[dp altmode] timer unavailable\n");
+            unsigned enableAux = 0;
+            altModeAux = altModeTimer && PE_parse_boot_argn("uke-dp-aux", &enableAux, sizeof enableAux) && enableAux == 1;
+        }
         native_battery_stats[0] = 1;
         const ShengAdspClient client = {&ShengBattery::dspState, &ShengBattery::dspReceive};
         channel = sheng_adsp_channel ? sheng_adsp_channel("PMIC_RTR_ADSP_APPS", 1024, 4, 0, &client, this) : nullptr;

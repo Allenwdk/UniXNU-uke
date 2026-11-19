@@ -1,0 +1,34 @@
+diff --git a/iokit/Kernel/IOWorkLoop.cpp b/iokit/Kernel/IOWorkLoop.cpp
+--- a/iokit/Kernel/IOWorkLoop.cpp
++++ b/iokit/Kernel/IOWorkLoop.cpp
+@@ -27,6 +27,7 @@
+  */
+ 
+ #include <pexpert/pexpert.h>
++#include <IOKit/IOLib.h>
+ #include <IOKit/IOWorkLoop.h>
+ #include <IOKit/IOEventSource.h>
+ #include <IOKit/IOInterruptEventSource.h>
+@@ -591,6 +592,22 @@
+ 			inEvent->retain();
+ 			inEvent->setWorkLoop(this);
+ 			inEvent->setNext(NULL);
++
++#if defined(HAS_APPLE_PAC) && __has_feature(ptrauth_member_function_pointer_type_discrimination)
++			// The prelinked USB mux socket source overrides checkForWork(),
++			// but leaves classification to the work loop. arm64e member
++			// function conversion can return the same thunk for both objects.
++			if (!(inEvent->flags & (IOEventSource::kActive | IOEventSource::kPassive))) {
++				const char *className = inEvent->getMetaClass()->getClassName();
++				if (className && strcmp(className, "IOSocketEventSource") == 0) {
++					inEvent->flags |= IOEventSource::kActive;
++					static unsigned classified;
++					if (__atomic_fetch_add(&classified, 1, __ATOMIC_RELAXED) < 16) {
++						IOLog("[usb mux] IOSocketEventSource classified active\n");
++					}
++				}
++			}
++#endif
+ 
+ 			/* Check if this is a passive or active event source being added */
+ 			if (eventSourcePerformsWork(inEvent)) {

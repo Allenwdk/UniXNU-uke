@@ -22,6 +22,47 @@ extern "C" kmod_info_t g_kernel_kmod_info;
 #if __has_feature(ptrauth_calls)
 extern "C" void native_legacy_display_sample27(const char *);
 #endif
+struct NativeExternalDisplayLink;
+extern "C" IOReturn native_legacy_external_publish(IOService *) __attribute__((weak_import));
+extern "C" IOReturn native_legacy_external_connect(const NativeExternalDisplayLink *) __attribute__((weak_import));
+static bool primaryFrameRetired;
+
+static void prepareExternalDisplay(IOPlatformExpert *platform, IORegistryEntry *tree) {
+    unsigned enabled=0;
+    if(!&native_legacy_external_publish || !platform || !tree ||
+       !PE_parse_boot_argn("uke-dp-desktop",&enabled,sizeof(enabled)) || enabled!=1)return;
+    auto *nub=new IOPlatformDevice;
+    if(!nub || !nub->init()){OSSafeReleaseNULL(nub);return;}
+    nub->setName("UkeDPDisplay");
+    nub->setName("dp-display",gIODTPlane);
+    constexpr char type[]="ext-display-subsystem";
+    auto *property=OSData::withBytes(type,sizeof(type));
+    const uint32_t externalIndex=1;
+    auto *identity=OSData::withBytes(&externalIndex,sizeof(externalIndex));
+    const bool configured=property && identity && nub->setProperty("device_type",property) &&
+                          nub->setProperty("external",identity);
+    OSSafeReleaseNULL(property);
+    OSSafeReleaseNULL(identity);
+    bool attached=configured && nub->attach(platform);
+    bool started=attached && nub->start(platform);
+    bool inTree=started && nub->attachToParent(tree,gIODTPlane);
+    const auto result=inTree?native_legacy_external_publish(nub):kIOReturnNoResources;
+    if(result==kIOReturnSuccess) {
+        nub->release(); // The external framebuffer and both registry planes own the provider.
+        return;
+    }
+    printf("[dp desktop] provider failed attach=%u start=%u dt=%u status=%x\n",attached,started,inTree,result);
+    if(inTree)nub->detachFromParent(tree,gIODTPlane);
+    if(started)nub->stop(platform);
+    if(attached)nub->detach(platform);
+    nub->release();
+}
+
+IOReturn uke_dp_set_external_display(const NativeExternalDisplayLink *link) {
+    if(!&native_legacy_external_connect)return kIOReturnUnsupported;
+    if(link && !__atomic_load_n(&primaryFrameRetired,__ATOMIC_ACQUIRE))return kIOReturnNotFound;
+    return native_legacy_external_connect(link);
+}
 /* The panic screen copies its message here (scripts/xnu-panic-screen.c, address resolved by the patcher): the screen parks the
  * panic's CPU but the probe's heartbeat thread keeps running on another one, so the message reaches the log there even when the
  * panel cannot be read and the pram hand-off does not land. */
@@ -320,6 +361,8 @@ __attribute__((noinline)) void native_legacy_retirement_observed(IOService *disp
     native_legacy_retired_current=current;native_legacy_retired_pending=pending;
     native_legacy_retired_generation=completed;native_legacy_presented_generation=presented;native_legacy_retired_frames=frames;
     native_legacy_retirement_calls=native_legacy_retirement_calls+1;
+    if(native_legacy_retirement_calls==1 && reinterpret_cast<uintptr_t>(display)==native_legacy_object)
+        __atomic_store_n(&primaryFrameRetired,true,__ATOMIC_RELEASE);
     if(native_legacy_retirement_calls<=4)
         printf("UKE: retire %u generation=%u presented=%u\n",
             native_legacy_retirement_calls,(unsigned)completed,(unsigned)presented);
@@ -877,6 +920,7 @@ void native_legacy_display_late_probe(void) {
                             }
                         }
                         finishUnitScalePolicy(true);
+                        prepareExternalDisplay(parent,displayTreeParent);
                         OSSafeReleaseNULL(displayTreeParent);
                         native_legacy_display_checkpoint();return;
                     }

@@ -1,0 +1,74 @@
+diff --git a/iokit/IOKit/IOService.h b/iokit/IOKit/IOService.h
+index 50570af..5c9f40b 100644
+--- a/iokit/IOKit/IOService.h
++++ b/iokit/IOKit/IOService.h
+@@ -2393,6 +2393,7 @@ private:
+ 	void updatePowerClient( const OSSymbol * client, IOPMPowerStateIndex powerState );
+ 	void removePowerClient( const OSSymbol * client );
+ 	IOReturn requestPowerState( const OSSymbol * client, IOPMPowerStateIndex state, IOPMRequestTag tag = 0 );
++	void ukeUSBUpdateAttachedPortPower(IOService *port, bool active);
+ 	IOReturn requestDomainPower( IOPMPowerStateIndex ourPowerState, IOOptionBits options = 0 );
+ 	IOReturn configurePowerStatesReport( IOReportConfigureAction action, void *result );
+ 	IOReturn updatePowerStatesReport( IOReportConfigureAction action, void *result, void *destination );
+diff --git a/iokit/Kernel/IOService.cpp b/iokit/Kernel/IOService.cpp
+index b266443..657ef3a 100644
+--- a/iokit/Kernel/IOService.cpp
++++ b/iokit/Kernel/IOService.cpp
+@@ -880,6 +880,38 @@ IOService::free( void )
+ 	super::free();
+ }
+ 
++// Keep the port active while a USB device is attached to the Uke controller.
++// This also covers devices behind Apple hubs, which can idle their own ports.
++void
++IOService::ukeUSBUpdateAttachedPortPower(IOService *port, bool active)
++{
++	if (!port || strcmp(getMetaClass()->getClassName(), "IOUSBHostDevice") != 0) {
++		return;
++	}
++	const char *portClass = port->getMetaClass()->getClassName();
++	if (strcmp(portClass, "AppleUSB20XHCIPort") != 0 &&
++	    strcmp(portClass, "AppleUSB30XHCIPort") != 0 &&
++	    strcmp(portClass, "AppleUSB20HubPort") != 0 &&
++	    strcmp(portClass, "AppleUSB30HubPort") != 0) {
++		return;
++	}
++
++	IOService *provider = port->getProvider();
++	while (provider && strcmp(provider->getMetaClass()->getClassName(), "QcomDwc3Xhci") != 0) {
++		provider = provider->getProvider();
++	}
++	if (!provider) {
++		return;
++	}
++
++	char clientName[48];
++	snprintf(clientName, sizeof(clientName), "UkeUSBAttached-%llx", getRegistryEntryID());
++	OSSharedPtr<const OSSymbol> client(OSSymbol::withCString(clientName), OSNoRetain);
++	IOReturn result = client ? port->requestPowerState(client.get(), active ? 3 : 0) : kIOReturnNoMemory;
++	IOLog("[usb otg] %s attached port power device=%llx hold=%u result=%08x\n",
++	    portClass, getRegistryEntryID(), active, (unsigned int)result);
++}
++
+ /*
+  * Attach in service plane
+  */
+@@ -936,6 +968,10 @@ IOService::attach( IOService * provider )
+ 		(void) getProvider();
+ 	}
+ 
++	if (ok) {
++		ukeUSBUpdateAttachedPortPower(provider, true);
++	}
++
+ 	return ok;
+ }
+ 
+@@ -1002,6 +1038,7 @@ IOService::detach( IOService * provider )
+ 	}
+ 
+ 	unlockForArbitration();
++	ukeUSBUpdateAttachedPortPower(provider, false);
+ 
+ 	if (newProvider && adjParent) {
+ 		newProvider->lockForArbitration();

@@ -718,7 +718,7 @@ class ShengBacklight : public IOService {
     }
     // Run with the existing work-loop gate held. Exclude both backlight's timer
     // path and the primary IRQ consumer while a WCD command owns SE0.
-    static IOReturn withWcdBus(OSObject *owner, void *arg, void *, void *, void *) {
+    static IOReturn withWcdBus(OSObject *owner, void *arg, void *context, void *, void *) {
         auto *self = static_cast<ShengBacklight *>(owner);
         auto &io = gIo[0];
         auto &backlight = self->engine[0];
@@ -745,7 +745,7 @@ class ShengBacklight : public IOService {
         bus.address = 0x0e;
         bus.tx_fifo_words = backlight.bus.tx_fifo_words;
         bus.rx_fifo_words = backlight.bus.rx_fifo_words;
-        const bool success = (*static_cast<UkeWcdBusAction *>(arg))(bus);
+        const bool success = (*static_cast<UkeWcdBusAction *>(arg))(bus, context);
 
         state = IOSimpleLockLockDisableInterrupt(io.lock);
         wr(io.va, GENI_M_IRQ_EN, savedMask);
@@ -757,8 +757,8 @@ class ShengBacklight : public IOService {
     }
 
 public:
-    IOReturn runWcdAction(UkeWcdBusAction action) {
-        return loop->runAction(&ShengBacklight::withWcdBus, this, &action);
+    IOReturn runWcdAction(UkeWcdBusAction action, void *context) {
+        return loop->runAction(&ShengBacklight::withWcdBus, this, &action, context);
     }
 
     bool startBacklight(const bool usable[2]) {
@@ -853,10 +853,10 @@ OSDefineMetaClassAndStructors(ShengBacklight, IOService)
 #endif
 
 static ShengBacklight *volatile gWcdBusOwner;
-IOReturn uke_backlight_with_wcd_bus(UkeWcdBusAction action) {
+IOReturn uke_backlight_with_wcd_bus(UkeWcdBusAction action, void *context) {
     if (!action) return kIOReturnBadArgument;
     auto *owner = __atomic_load_n(&gWcdBusOwner, __ATOMIC_ACQUIRE);
-    return owner ? owner->runWcdAction(action) : kIOReturnNotReady;
+    return owner ? owner->runWcdAction(action, context) : kIOReturnNotReady;
 }
 
 // Called by BacklightProbe.cpp once this file's classes are registered (its static initializer runs between preModLoad and postModLoad).

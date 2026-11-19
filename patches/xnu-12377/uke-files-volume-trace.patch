@@ -1,0 +1,113 @@
+diff --git a/bsd/vfs/vfs_attrlist.c b/bsd/vfs/vfs_attrlist.c
+index de5e05a..d0365ac 100644
+--- a/bsd/vfs/vfs_attrlist.c
++++ b/bsd/vfs/vfs_attrlist.c
+@@ -3563,6 +3563,8 @@ out:
+ 	return error;
+ }
+ 
++extern bool uke_files_volume_trace_take(proc_t p);
++
+ static int
+ getattrlistat_internal(vfs_context_t ctx, user_addr_t path,
+     struct attrlist *alp, user_addr_t attributeBuffer, size_t bufferSize,
+@@ -3599,8 +3601,14 @@ getattrlistat_internal(vfs_context_t ctx, user_addr_t path,
+ 	}
+ 
+ 	error = nameiat(&nd, fd);
+-
++	proc_t p = vfs_context_proc(ctx);
++	const bool traceVolume = (alp->volattr || (alp->commonattr & ATTR_CMN_FSID)) &&
++	    uke_files_volume_trace_take(p);
+ 	if (error) {
++		if (traceVolume) {
++			printf("[files volume] pid=%d getattrlist namei=%d common=%x vol=%x\n",
++			    proc_getpid(p), error, alp->commonattr, alp->volattr);
++		}
+ 		return error;
+ 	}
+ 
+@@ -3617,6 +3625,16 @@ getattrlistat_internal(vfs_context_t ctx, user_addr_t path,
+ 	error = getattrlist_internal(ctx, vp, alp, attributeBuffer,
+ 	    bufferSize, options, segflg, NULL, NOCRED, nd.ni_pathbuf);
+ 
++	mount_t traceMount = traceVolume ? vnode_mount(vp) : NULL;
++	if (traceMount) {
++		const char *pathbuf = nd.ni_pathbuf;
++		const char *object = pathbuf && !strcmp(pathbuf, "/") ? "root" :
++		    pathbuf && !strcmp(pathbuf, "/private/var") ? "data" : "other";
++		printf("[files volume] pid=%d getattrlist error=%d object=%s common=%x vol=%x flags=%08x fsid=%x:%x\n",
++		    proc_getpid(p), error, object, alp->commonattr, alp->volattr, vfs_flags(traceMount),
++		    vfs_statfs(traceMount)->f_fsid.val[0], vfs_statfs(traceMount)->f_fsid.val[1]);
++	}
++
+ 	/* Retain the namei reference until the getattrlist completes. */
+ 	nameidone(&nd);
+ 	vnode_put(vp);
+diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
+index e9548ab..46a2477 100644
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -133,6 +133,7 @@
+ #include <libkern/OSAtomic.h>
+ #include <os/atomic_private.h>
+ #include <pexpert/pexpert.h>
++#include <kern/startup.h>
+ #include <IOKit/IOBSD.h>
+ 
+ // deps for MIG call
+@@ -3719,6 +3720,19 @@ quotactl(__unused proc_t p, __unused struct quotactl_args *uap, __unused int32_t
+ }
+ #endif /* QUOTA */
+ 
++TUNABLE(bool, uke_files_volume_trace, "uke-files-volume-trace", false);
++
++bool uke_files_volume_trace_take(proc_t p);
++
++bool
++uke_files_volume_trace_take(proc_t p)
++{
++	static unsigned rows;
++	return uke_files_volume_trace && p && strcmp(p->p_comm, "Files") == 0 &&
++	       __atomic_load_n(&rows, __ATOMIC_RELAXED) < 192 &&
++	       __atomic_fetch_add(&rows, 1, __ATOMIC_RELAXED) < 192;
++}
++
+ static int
+ statfs_internal(proc_t p, struct mount *mp, user_addr_t bufp)
+ {
+@@ -3769,6 +3783,11 @@ statfs(proc_t p, struct statfs_args *uap, __unused int32_t *retval)
+ 	nameidone(&nd);
+ 
+ 	error = statfs_internal(p, mp, uap->buf);
++	if (uke_files_volume_trace_take(p)) {
++		printf("[files volume] pid=%d statfs error=%d type=%s flags=%08x fsid=%x:%x\n",
++		    proc_getpid(p), error, mp->mnt_vtable->vfc_name, vfs_flags(mp),
++		    mp->mnt_vfsstat.f_fsid.val[0], mp->mnt_vfsstat.f_fsid.val[1]);
++	}
+ 	vnode_put(vp);
+ 
+ 	return error;
+@@ -3902,6 +3921,11 @@ statfs64(__unused struct proc *p, struct statfs64_args *uap, __unused int32_t *r
+ 		strlcpy(&sfsp->f_mntonname[0], "/", sizeof("/"));
+ 	}
+ 	error = copyout(sfsp, uap->buf, sizeof(*sfsp));
++	if (uke_files_volume_trace_take(p)) {
++		printf("[files volume] pid=%d statfs64 error=%d type=%s flags=%08x fsid=%x:%x\n",
++		    proc_getpid(p), error, sfsp->f_fstypename, sfsp->f_flags,
++		    sfsp->f_fsid.val[0], sfsp->f_fsid.val[1]);
++	}
+ 	vnode_put(vp);
+ 
+ out:
+@@ -4227,6 +4251,10 @@ getfsstat64(__unused proc_t p, struct getfsstat64_args *uap, int *retval)
+ 	fst.maxcount = maxcount;
+ 
+ 	vfs_iterate(VFS_ITERATE_NOSKIP_UNMOUNT, getfsstat64_callback, &fst);
++	if (uke_files_volume_trace_take(p)) {
++		printf("[files volume] pid=%d getfsstat64 error=%d count=%d max=%d flags=%x\n",
++		    proc_getpid(p), fst.error, fst.count, maxcount, fst.flags);
++	}
+ 
+ 	if (fst.error) {
+ 		KAUTH_DEBUG("ERROR - %s gets %d", p->p_comm, fst.error);

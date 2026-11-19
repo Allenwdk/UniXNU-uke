@@ -1894,9 +1894,9 @@
    "parameters": ""
   },
   "287": {
-   "name": "opaque287_4678",
+   "name": "isochronousInterrupt",
    "returns": "void",
-   "parameters": ""
+   "parameters": "IOInterruptEventSource *,int"
   },
   "288": {
    "name": "opaque288_41375",
@@ -1904,9 +1904,9 @@
    "parameters": ""
   },
   "289": {
-   "name": "opaque289_148465",
+   "name": "ioInterrupt",
    "returns": "void",
-   "parameters": ""
+   "parameters": "IOInterruptEventSource *,int"
   },
   "290": {
    "name": "opaque290_15984",
@@ -1929,9 +1929,9 @@
    "parameters": ""
   },
   "294": {
-   "name": "opaque294_60888",
-   "returns": "void",
-   "parameters": ""
+   "name": "ringDoorbell",
+   "returns": "IOReturn",
+   "parameters": "uint32_t,uint32_t"
   },
   "295": {
    "name": "opaque295_131051",
