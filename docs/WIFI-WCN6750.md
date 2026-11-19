@@ -206,3 +206,11 @@ Pinned24A446 binary analysis identifies the system-service fallback as built-in 
 ## 2026-11-08 handoff refresh after V4.8 deployment
 
 Canonical current handoff: ../../docs/status/wifi-wcn6750-handoff-2026-11-08.md. V4.8 CRC977C5379420FA182 was flashed to all four boot/vendor_boot slots, selectedA and rebooted at06:51:46+08:00; no post-reboot user observation/readback yet. V4.7 passed AMFI category5 but has85 control sessions and81 persisted INFO timeouts. Current next action is V4.8 RX/worker/TX evidence against the V4.7 063724 ring, not restarting P0/P1 or treating the old TWRP capture state as current. No device action occurred during this documentation update.
+
+## November 19 signed-service recovery
+
+On `93c30b07eb1b…`, WCN6750 firmware reached ready at 34.053 s and `en0` started at 36.848 s. The same boot recorded repeated AMFI launch-constraint rejections for the installed `unixnu-wpa_supplicant` starting at 31.434 s, 107 seconds before DP startup. Firmware initialization continued. The failing executable differed from the previously accepted V4.9.7 release.
+
+The recovery image replaced the addon's `wifi-bin/unixnu-wpa_supplicant` with the exact signed V4.9.7 artifact, CDHash `2941c69fcc5c43148546935e5cebc0f03ce9cf4b`, file SHA-256 `27fccfded4b004cfd316604cd51d99133807ffd4c74dc92c587d442e47b51d79`. The existing bundle already paired this executable with its signed launchd cache and authorization record. Compare the signed launch cache, signature, Wi-Fi configuration and owner trust bundle before replacement. Verify the executable with `scripts/build-wifi-userspace.py` against the recorded CDHash, stage its `bin` directory using the core `scripts/addon-add-dir.py` with prefix `wifi-bin`, then compare the addon entries and vendor payload after packing. Only the supplicant file should differ from the quiet DP base.
+
+Host checks passed for the executable signature, control wire, native control callbacks, concurrent endpoint and association event. The device owner confirmed normal Wi-Fi operation after flashing `b92e39d1aeade0b687a3ce1793f0a2bb631aa405e1664e2ee5361ae65c68dfaf`. That report is a basic-function check. A fresh device trace with scan, association and DHCP timings for this image has yet to be recorded.

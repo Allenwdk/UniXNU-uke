@@ -27,8 +27,8 @@ commit = "a13e9760d1d00c35d76f64acc23cc202d53622e6"
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
-# Native extended desktop, scanout fences and XR10 direct scanout.
-commit = "be8881bd3776ddccc612232a4dd5e95e65685fcf"
+# XR10 direct scanout with native panel handoff and opt-in DP diagnostics.
+commit = "45ff642ef6dcff0565117b36bb0206f1981917ed"
 
 [[source]]
 name = "AdrenoMetal"

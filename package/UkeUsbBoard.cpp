@@ -288,7 +288,7 @@ bool programWcdAux(GeniI2c &bus, void *context) {
             if (regs.update(switchEnable, auxEnable, auxEnable)) {
                 IODelay(15);
                 if (regs.read(switchStatus, observed) && (observed & 0xcc) == (lane == 0 ? 0x48 : 0x84)) {
-                    printf("[dp route] WCD AUX lane=%d status=%02x\n", lane, observed);
+                    if (native_legacy_dp_debug()) printf("[dp route] WCD AUX lane=%d status=%02x\n", lane, observed);
                     return true;
                 }
             }
@@ -643,7 +643,7 @@ void readDpEdid(DpAux &aux, DpDisplayInfo *info) {
     if (!readDpEdidBlock(aux, 0, block)) return;
     const auto *timing = block + 54;
     const unsigned pixelKHz = (timing[0] | unsigned(timing[1]) << 8) * 10;
-    printf("[dp aux] EDID vendor=%02x%02x product=%02x%02x first=%ux%u pixel_khz=%u extensions=%u\n",
+    if (native_legacy_dp_debug()) printf("[dp aux] EDID vendor=%02x%02x product=%02x%02x first=%ux%u pixel_khz=%u extensions=%u\n",
            block[8], block[9], block[11], block[10], timing[2] | (timing[4] & 0xf0u) << 4,
            timing[5] | (timing[7] & 0xf0u) << 4, pixelKHz, block[126]);
     if (!info) return;
@@ -672,7 +672,7 @@ void readDpEdid(DpAux &aux, DpDisplayInfo *info) {
         (void)aux.write(0x30, &segmentZero, 1, DpAux::kI2c | DpAux::kNoAddress);
     }
     if (!info->desktop)
-        printf("[dp video] EDID eligible modes HBR2=%ux%u@%u kHz HBR=%ux%u@%u kHz RBR=%ux%u@%u kHz\n",
+        if (native_legacy_dp_debug()) printf("[dp video] EDID eligible modes HBR2=%ux%u@%u kHz HBR=%ux%u@%u kHz RBR=%ux%u@%u kHz\n",
                info->modes.hbr2.width, info->modes.hbr2.height, info->modes.hbr2.pixel,
                info->modes.hbr.width, info->modes.hbr.height, info->modes.hbr.pixel,
                info->modes.rbr.width, info->modes.rbr.height, info->modes.rbr.pixel);
@@ -748,7 +748,7 @@ bool startDpPhy(const Registers &phy, bool reverse, uint8_t rate) {
     }
     for (unsigned base : kDpTxBanks) phy.write(base + 0x5c, 0x0a);
     setDpLevels(phy, rate, {});
-    printf("[dp phy] native rate=%02x spare=%08x ivco=%08x cmn=%08x status=%08x\n",
+    if (native_legacy_dp_debug()) printf("[dp phy] native rate=%02x spare=%08x ivco=%08x cmn=%08x status=%08x\n",
            rate,phy.read(kDpPhy+0xc8),phy.read(kDpSerdes+0xf4),phy.read(kDpSerdes+0x1d0),phy.read(status));
     return true;
 }
@@ -872,7 +872,7 @@ public:
             ready = slot.iova != 0;
         }
         IOFreeData(pages, pagesCount * sizeof(uint64_t));
-        if (ready) printf("[dp ext] buffers %ux%u stride=%u iova=%08x/%08x\n",
+        if (ready && native_legacy_dp_debug()) printf("[dp ext] buffers %ux%u stride=%u iova=%08x/%08x\n",
                           mode.width, mode.height, pitch, slots[0].iova, slots[1].iova);
         return ready;
     }
@@ -1022,7 +1022,7 @@ class DpuDpScanout {
                 vbif.update(reg, qosMask(), xinQosValue(priority,xin));
             }
         }
-        printf("[dp dpu] VBIF XIN%u version=%08x readLimit=%02x->%02x clock=%08x/%08x\n",
+        if (native_legacy_dp_debug()) printf("[dp dpu] VBIF XIN%u version=%08x readLimit=%02x->%02x clock=%08x/%08x\n",
                xin,version,oldLimit>>limitShift(),(vbif.read(limitReg()) & (0xffu<<limitShift()))>>limitShift(),
                mdp.read(pipe + 0x330),mdp.read(pipe + 0x334));
         return true;
@@ -1074,7 +1074,7 @@ public:
             oldFifoSize = before & kPp2FifoMask;
             mdp.update(kPp2Fifo, kPp2FifoMask, pp2FifoSize(mode.width));
             fifoProgrammed = true;
-            printf("[dp dpu] PP2 FIFO %08x->%08x\n", before, mdp.read(kPp2Fifo));
+            if (native_legacy_dp_debug()) printf("[dp dpu] PP2 FIFO %08x->%08x\n", before, mdp.read(kPp2Fifo));
         }
         const uint32_t dimensions = mode.height << 16 | mode.width;
         outputSize=inputSize=dimensions;
@@ -1130,11 +1130,13 @@ public:
             mdp.write(reg, 1u << 10); // Clear the previous hardware signature.
             mdp.write(reg, 0x80000101u | dataSelect);
         };
-        armMisr(kMixer + 0x310, 0);
-        armMisr(kIntf + 0x180, 1u << 24);
+        if (native_legacy_dp_debug()) {
+            armMisr(kMixer + 0x310, 0);
+            armMisr(kIntf + 0x180, 1u << 24);
+        }
         // OEM holds the override only while updating the VBIF client.
         mdp.update(pipe + 0x330, 1, oldClock & 1);
-        printf("[dp dpu] armed %s/LM2/PP2/CTL2/INTF0 rev=%08x\n",xr10Pipe?"VIG0":"DMA0",revision);
+        if (native_legacy_dp_debug()) printf("[dp dpu] armed %s/LM2/PP2/CTL2/INTF0 rev=%08x\n",xr10Pipe?"VIG0":"DMA0",revision);
         return true;
     }
 
@@ -1144,7 +1146,7 @@ public:
         // initial commit. The OEM video encoder then enables the INTF.
         mdp.write(kFlush,initialMask());
         mdp.write(kTiming,1);
-        printf("[dp dpu] native commit periph=%08x pending=%08x\n",mdp.read(kPeriphFlushReg),mdp.read(kFlush));
+        if (native_legacy_dp_debug()) printf("[dp dpu] native commit periph=%08x pending=%08x\n",mdp.read(kPeriphFlushReg),mdp.read(kFlush));
     }
     uint32_t frame() const {return mdp.read(UkeDpDpu::kFrame);}
     bool initialCommitRetired() const {return !(mdp.read(UkeDpDpu::kFlush)&initialMask());}
@@ -1334,7 +1336,7 @@ struct DpDesktopScanout {
         if(!dpu.queueFlip(address,pendingFrame,pitch,&target,xr10,sw,sh))return kIOReturnBusy;
         pendingDirect=slot;
         clock_interval_to_deadline(80,kMillisecondScale,&pendingDeadline);
-        if(++directFrames<=3 || directFrames%120==0)
+        if(native_legacy_dp_debug() && (++directFrames<=3 || directFrames%120==0))
             printf("[dp dpu] direct IOSurface frame=%u slot=%d pitch=%u offset=%u dst=%u,%u %ux%u xr10=%u src=%ux%u\n",
                    directFrames,slot,pitch,offset,target.x,target.y,target.width,target.height,unsigned(xr10),sw,sh);
         return kIOReturnSuccess;
@@ -1352,8 +1354,8 @@ struct DpDesktopScanout {
     static IOReturn submit(void *owner) {
         auto &self=*static_cast<DpDesktopScanout *>(owner);
         const unsigned slot=self.shown^1;
-        const unsigned frame=++self.submitted;
-        if(frame<=6 || frame%120<=1) {
+        const unsigned frame=native_legacy_dp_debug()?++self.submitted:0;
+        if(frame && (frame<=6 || frame%120<=1)) {
             const auto *pixels=static_cast<const uint32_t *>(self.buffers.pixels(slot));
             const unsigned stride=self.buffers.stride()/4;
             unsigned lit=0;
@@ -1392,25 +1394,51 @@ struct DpDesktopScanout {
     }
 };
 
+// CTL0 owns the built-in framebuffer until a trained DP session needs VIG0.
+// Release it only after CTL2 no longer scans the shared pipe.
+struct PanelDmaLease {
+    bool acquired=false;
+
+    bool acquire(UkeDpWait wait,void *context) {
+        uint64_t deadline=0;
+        clock_interval_to_deadline(3000,kMillisecondScale,&deadline);
+        do {
+            const auto result=native_legacy_panel_route_dma(true);
+            if(result==kIOReturnSuccess){acquired=true;return true;}
+            // A live 120 Hz panel can retire its pending flip between short
+            // retries. The HPD wait can otherwise sample the same busy phase.
+            if(result==kIOReturnBusy) {
+                IOSleep(1);
+            } else {
+                if(result!=kIOReturnNotReady || wait(context)==UkeDpActivity::Disconnect)break;
+            }
+        } while(mach_absolute_time()<deadline);
+        printf("[dp xr10] panel DMA1 handoff unavailable\n");
+        return false;
+    }
+
+    ~PanelDmaLease() {
+        if(!acquired)return;
+        for(unsigned attempt=0;attempt<80;++attempt) {
+            const auto result=native_legacy_panel_route_dma(false);
+            if(result==kIOReturnSuccess)return;
+            if(result!=kIOReturnBusy)break;
+            IOSleep(1);
+        }
+        printf("[dp xr10] panel VIG0 restore unavailable\n");
+    }
+};
+
 bool showDpVideo(DpPixelClock &clock, const Registers &link, DpAux &aux,
                  const UkeDpVideo::Mode &mode, const DpDisplayInfo &display,
                  uint8_t rate, UkeDpWait wait, void *context) {
     UkeDpVideo::TransferUnit tu{};
     if (!wait || !UkeDpVideo::transferUnit(mode, rate, tu)) return false;
+    const bool debug=native_legacy_dp_debug();
     const bool desktop=display.desktop,scanout=display.modes.wideBus;
     unsigned directXr10=0;
     PE_parse_boot_argn("uke-dp-xr10",&directXr10,sizeof(directXr10));
     const bool xr10=desktop && directXr10==1;
-    if(xr10 && !native_legacy_panel_dma_left_ready()) {
-        uint64_t deadline=0;
-        clock_interval_to_deadline(3000,kMillisecondScale,&deadline);
-        while(!native_legacy_panel_dma_left_ready() && mach_absolute_time()<deadline)
-            if(wait(context)==UkeDpActivity::Disconnect)return false;
-        if(!native_legacy_panel_dma_left_ready()) {
-            printf("[dp xr10] panel DMA1 handoff unavailable\n");
-            return false;
-        }
-    }
     if(scanout && !UkeDpVideo::wideBusCompatible(mode))return false;
     const unsigned pixelClock=UkeDpVideo::streamPixelClock(mode,scanout);
     Registers p0;
@@ -1433,9 +1461,11 @@ bool showDpVideo(DpPixelClock &clock, const Registers &link, DpAux &aux,
         printf("[dp ext] scanout buffer preparation failed\n");
         if (scanout) return false;
     }
+    PanelDmaLease panel;
     DpuDpScanout dpu;
     if (scanout) {
         external.paint(mode, desktop);
+        if(xr10 && !panel.acquire(wait,context))return false;
         if (!dpu.start(mode,external,xr10))return false;
     }
 
@@ -1452,7 +1482,6 @@ bool showDpVideo(DpPixelClock &clock, const Registers &link, DpAux &aux,
         {0x28, mode.height << 16 | mode.width},
         {0x2c, 0x21}, // 8 bpc RGB, synchronous clock.
         {0x30, tu.delay << 16 | tu.valid}, {0x34, tu.boundary2()}, {0x4c, tu.size - 1},
-        {0xd0, scanout ? 0x501u : 0u}, // OEM DPTX controller MISR, one frame.
         {0x180, 0}, // DP_COMPRESSION_MODE_CTRL: native RGB8 SST is uncompressed.
     };
     const unsigned displayStart = vstart * htotal + hstart;
@@ -1477,9 +1506,11 @@ bool showDpVideo(DpPixelClock &clock, const Registers &link, DpAux &aux,
     auto restore = [](const Registers &regs, const auto &rows, const auto &saved) {
         for (unsigned i = 0; i < sizeof rows / sizeof rows[0]; ++i) regs.write(rows[i].reg, saved[i]);
     };
+    const uint32_t oldMisr=debug && scanout?link.read(0xd0):0;
     link.write(stateCtrl, 0);
     apply(link, linkConfig, oldLink);
-    printf("[dp video] stream %ux%u clock=%u rate=%02x rcg=%u/%u msa=%u/%u tu=%u/%u delay=%u boundary2=%08x\n",
+    if (debug && scanout) link.write(0xd0, 0x501); // OEM DPTX controller MISR, one frame.
+    if (native_legacy_dp_debug()) printf("[dp video] stream %ux%u clock=%u rate=%02x rcg=%u/%u msa=%u/%u tu=%u/%u delay=%u boundary2=%08x\n",
            mode.width, mode.height, mode.pixel, rate, clock.m, clock.n, ratio.mvid, ratio.nvid,
            tu.valid, tu.size, tu.delay, tu.boundary2());
     constexpr unsigned dscDto=0x7c,dscCount=0x84;
@@ -1497,10 +1528,12 @@ bool showDpVideo(DpPixelClock &clock, const Registers &link, DpAux &aux,
         p0.write(dscCount,0);
         p0.write(timingEnable,oldEnable|dpuInput);
         dpu.enable();
-        printf("[dp dpu] P0 timing=%08x async=%08x\n",p0.read(timingEnable),p0.read(asyncFifo));
-        const auto intfTiming=UkeDpDpu::timing(mode,true);
-        printf("[dp dpu] widebus pixel_khz=%u horizontal=%u mvid=%u nvid=%u p0=%08x\n",
-               pixelClock,intfTiming.hsync>>16,ratio.mvid,ratio.nvid,p0.read(p0Config[0].reg));
+        if (native_legacy_dp_debug()) printf("[dp dpu] P0 timing=%08x async=%08x\n",p0.read(timingEnable),p0.read(asyncFifo));
+        if (debug) {
+            const auto intfTiming=UkeDpDpu::timing(mode,true);
+            printf("[dp dpu] widebus pixel_khz=%u horizontal=%u mvid=%u nvid=%u p0=%08x\n",
+                   pixelClock,intfTiming.hsync>>16,ratio.mvid,ratio.nvid,p0.read(p0Config[0].reg));
+        }
     } else {
         apply(p0, p0Config, oldP0);
         p0.update(bist, 1, 1);
@@ -1515,16 +1548,16 @@ bool showDpVideo(DpPixelClock &clock, const Registers &link, DpAux &aux,
         if ((link.read(mainLinkReady) & 1) && frameReady) {ready = true; break;}
         IOSleep(1);
     }
-    if (scanout)
+    if (scanout && (!ready || debug))
         printf("[dp dpu] video %ux%u ready=%u frame=%u->%u link=%08x fsr=%08x\n",
                mode.width, mode.height, ready, firstFrame, dpu.frame(), link.read(mainLinkReady),
                native_ufs_dpu_live(1));
-    else
+    else if (!scanout && (!ready || debug))
         printf("[dp video] TPG %ux%u clock=%u rate=%02x tu=%u/%u delay=%u ready=%u state=%08x\n",
                mode.width, mode.height, mode.pixel, rate, tu.valid, tu.size, tu.delay, ready, link.read(mainLinkReady));
-    if (scanout) dpu.sample(link, aux, "startup");
+    if (debug && scanout) dpu.sample(link, aux, "startup");
     DpSinkCrc receiver(aux);
-    if (ready && scanout) {
+    if (debug && ready && scanout) {
         receiver.start();
         receiver.sample("startup");
         receiver.symbolErrors();
@@ -1544,7 +1577,8 @@ bool showDpVideo(DpPixelClock &clock, const Registers &link, DpAux &aux,
         // starts. Retry that ordering only, once the original service exists.
         if(desktop && desktopStatus==kIOReturnNotFound) {
             desktopStatus=uke_dp_set_external_display(&connection);
-            if(desktopStatus!=kIOReturnNotFound)printf("[dp desktop] connect status=%x\n",desktopStatus);
+            if(desktopStatus!=kIOReturnNotFound && (desktopStatus!=kIOReturnSuccess || debug))
+                printf("[dp desktop] connect status=%x\n",desktopStatus);
         }
         const auto activity = wait(context);
         if (activity == UkeDpActivity::Disconnect) break;
@@ -1559,7 +1593,7 @@ bool showDpVideo(DpPixelClock &clock, const Registers &link, DpAux &aux,
             printf("[dp dpu] scanout failed fsr=%08x\n", native_ufs_dpu_live(1));
             break;
         }
-        if (scanout && dpu.frame()-lastSample>=120) {
+        if (debug && scanout && dpu.frame()-lastSample>=120) {
             dpu.sample(link,aux,"running");
             if (sampleCount++ % 3 == 0) {
                 receiver.sample("running");
@@ -1574,19 +1608,24 @@ bool showDpVideo(DpPixelClock &clock, const Registers &link, DpAux &aux,
                 break;
             }
             lastFlip = dpu.frame();
-            printf("[dp dpu] swap slot=%u iova=%08x frame=%u\n", slot, external.address(slot), lastFlip);
+            if (native_legacy_dp_debug()) printf("[dp dpu] swap slot=%u iova=%08x frame=%u\n", slot, external.address(slot), lastFlip);
         }
     }
     if (desktopStatus==kIOReturnSuccess) uke_dp_set_external_display(nullptr);
-    receiver.stop();
-    if (scanout) dpu.sample(link,aux,"final");
+    if (debug && scanout) {
+        receiver.stop();
+        dpu.sample(link,aux,"final");
+    }
     const bool idle = ready && aux.waitVideoIdle(link);
     link.write(stateCtrl, 0);
     if (scanout) {
         const bool retired = dpu.stop();
         if(desktop)desktopScanout.releaseDirect(retired);
-        printf("[dp dpu] stopped idle=%u retired=%u\n", idle, retired);
-        if (!retired) external.retainWhileBusy();
+        if (!idle || !retired || debug) printf("[dp dpu] stopped idle=%u retired=%u\n", idle, retired);
+        if (!retired) {
+            external.retainWhileBusy();
+            panel.acquired=false; // VIG0 may still be owned by CTL2.
+        }
         p0.write(timingEnable,oldEnable);
         p0.write(asyncFifo,oldFifo);
         p0.write(dscDto,oldDto);
@@ -1596,8 +1635,9 @@ bool showDpVideo(DpPixelClock &clock, const Registers &link, DpAux &aux,
         p0.update(timingEnable, 1, 0);
         p0.update(bist, 1, 0);
         restore(p0, p0Config, oldP0);
-        printf("[dp video] TPG stopped idle=%u\n", idle);
+        if (!idle || debug) printf("[dp video] TPG stopped idle=%u\n", idle);
     }
+    if (debug && scanout) link.write(0xd0, oldMisr & ~((1u << 9) | (1u << 10)));
     restore(link, linkConfig, oldLink);
     return ready;
 }
@@ -1627,7 +1667,7 @@ bool trainDpPattern(const Registers &link, const Registers &phy, DpAux &aux, uin
         else IODelay(delay);
         if (aux.read(0x202, status.bytes, sizeof status.bytes) != sizeof status.bytes) break;
         const bool success = equalization ? status.equalized() : status.clockRecovered();
-        printf("[dp train] TPS%u attempt=%u lanes=%02x align=%02x request=%02x swing=%u pre=%u\n",
+        if (native_legacy_dp_debug()) printf("[dp train] TPS%u attempt=%u lanes=%02x align=%02x request=%02x swing=%u pre=%u\n",
                pattern, attempt, status.bytes[0], status.bytes[2], status.bytes[4], levels.swing, levels.pre);
         if (success) return true;
         if ((equalization && !status.clockRecovered()) || (!equalization && levels.swing == 3)) break;
@@ -1669,7 +1709,7 @@ bool attemptDpTrain(const Registers &disp, const Registers &phy, DpAux &aux, int
     link.write(mainCtrl,sst|2);
     link.write(mainCtrl,sst);
     link.write(mainCtrl,sst|1);
-    printf("[dp train] native SST ctrl=%08x levels=%08x\n",link.read(mainCtrl),link.read(mainLinkLevels));
+    if (native_legacy_dp_debug()) printf("[dp train] native SST ctrl=%08x levels=%08x\n",link.read(mainCtrl),link.read(mainLinkLevels));
 
     const uint8_t params[] = {rate, static_cast<uint8_t>(2u | (enhanced ? 0x80u : 0))};
     const uint8_t coding[] = {0, 1}; // SSC disabled, ANSI 8b/10b.
@@ -1680,7 +1720,7 @@ bool attemptDpTrain(const Registers &disp, const Registers &phy, DpAux &aux, int
     const bool equalized = recovered && trainDpPattern(link, phy, aux, rate, eqPattern, caps[0xe], levels);
     const uint8_t off = 0;
     const bool cleared = !configured || aux.write(0x102, &off, 1);
-    printf("[dp train] result lane=%d rate=%02x configured=%u cr=%u eq=%u cleared=%u\n",
+    if (!equalized || !cleared || native_legacy_dp_debug()) printf("[dp train] result lane=%d rate=%02x configured=%u cr=%u eq=%u cleared=%u\n",
            lane, rate, configured, recovered, equalized, cleared);
     const bool trained = equalized && cleared;
     DpPixelClock pixelClock(disp);
@@ -1691,7 +1731,7 @@ bool attemptDpTrain(const Registers &disp, const Registers &phy, DpAux &aux, int
         constexpr unsigned mainLinkReady = 0x40;
         const uint32_t before = link.read(mainLinkReady);
         const bool reset = aux.resetTransmitter();
-        printf("[dp video] DPTX0 reset=%u ready=%08x->%08x\n", reset, before, link.read(mainLinkReady));
+        if (!reset || native_legacy_dp_debug()) printf("[dp video] DPTX0 reset=%u ready=%08x->%08x\n", reset, before, link.read(mainLinkReady));
     }
     link.write(configCtrl, oldConfig);
     link.write(laneMap, oldMapping);
@@ -1714,7 +1754,7 @@ void trainDpLink(const Registers &disp, const Registers &phy, DpAux &aux, int la
     if (display && display->desktop) {
         const auto &mode=display->preferred;
         const auto rate=UkeDpVideo::nativeRate(mode,caps[1]);
-        printf("[dp video] native EDID %ux%u clock=%u rate=%02x max=%02x\n",
+        if (native_legacy_dp_debug()) printf("[dp video] native EDID %ux%u clock=%u rate=%02x max=%02x\n",
                mode.width,mode.height,mode.pixel,rate,caps[1]);
         if (!rate) return;
         (void)attemptDpTrain(disp,phy,aux,lane,caps,rate,&mode,display,wait,context);
@@ -1731,7 +1771,7 @@ void trainDpLink(const Registers &disp, const Registers &phy, DpAux &aux, int la
             mode = &display->modes.atRate(rate);
             if (!mode->pixel) continue;
         }
-        printf("[dp train] trying lane=%d rate=%02x max=%02x\n", lane, rate, caps[1]);
+        if (native_legacy_dp_debug()) printf("[dp train] trying lane=%d rate=%02x max=%02x\n", lane, rate, caps[1]);
         const bool trained = attemptDpTrain(disp, phy, aux, lane, caps, rate, mode, display, wait, context);
         phy.write(kDpPhyPower, 2); // qmp_combo_dp_power_off; USB COM stays in combined mode.
         IOSleep(1);
@@ -1882,7 +1922,7 @@ void uke_usb_dp_read_dpcd(int lane, UkeDpWait wait, void *context) {
         printf("[dp aux] retry DPCD lane=%d attempt=%u after TIMEOUT\n",lane,attempt);
         bytes=aux.read(0,caps,sizeof caps);
     }
-    printf("[dp aux] DPCD lane=%d status=%08x phy_irq=%08x bytes=%u rev=%02x rate=%02x lanes=%u\n",
+    if (bytes!=sizeof caps || native_legacy_dp_debug()) printf("[dp aux] DPCD lane=%d status=%08x phy_irq=%08x bytes=%u rev=%02x rate=%02x lanes=%u\n",
            lane, aux.status, aux.phyStatus(), bytes, caps[0], caps[1], caps[2] & 0x1f);
     unsigned enableTrain = 0;
     if (bytes == sizeof caps && PE_parse_boot_argn("uke-dp-train", &enableTrain, sizeof enableTrain) && enableTrain == 1) {

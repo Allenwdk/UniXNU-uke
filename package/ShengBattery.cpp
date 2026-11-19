@@ -22,6 +22,7 @@
 #include "QcomUcsi.h"
 #include "UkeDpAltMode.h"
 #include "UkeUsbBoard.h"
+#include "NativeExternalDisplay.h"
 extern "C" {
 #include "ShengAdsp.h"
 #include "ShengBattmgr.h"
@@ -246,7 +247,7 @@ class ShengBattery : public IOPMPowerSource {
             if (altModePending == Command::None) return;
             if (altModePending == Command::EnableNotifications) {
                 altModeEnabled = true;
-                printf("[dp altmode] PAN notifications enabled\n");
+                if(native_legacy_dp_debug())printf("[dp altmode] PAN notifications enabled\n");
             } else {
                 const auto &event = altModeEvents[altModeHead];
                 if (altModeAux && event.validRoute) {
@@ -265,7 +266,7 @@ class ShengBattery : public IOPMPowerSource {
             UkeDpAltMode::Notification event;
             if (!UkeDpAltMode::decodeNotification(data, length, event)) return;
             if (altModeLogs < kAltModeLogLimit) {
-                printf("[dp altmode] notify svid=%04x orientation=%u mux=%u pin=%u lanes=%u hpd=%u irq=%u valid=%u\n",
+                if(native_legacy_dp_debug())printf("[dp altmode] notify svid=%04x orientation=%u mux=%u pin=%u lanes=%u hpd=%u irq=%u valid=%u\n",
                        event.svid, event.orientation, event.mux, event.pin, event.lanes,
                        event.hpd, event.irq, event.validRoute);
                 ++altModeLogs;
