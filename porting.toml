@@ -5,7 +5,7 @@ schema_version = 1
 name = "uke"
 soc = "SM7675"
 os_profile = "ipados-27.0.1-24A446"
-summary = "Xiaomi Pad 7 runs iPadOS 27.0.1 with accelerated internal graphics, Wi-Fi, touch and USB host storage. Native extended desktop is device-observed on the earlier copy path; the XR10 HiDPI direct-scanout candidate has passed host checks and been flashed for hardware validation."
+summary = "Xiaomi Pad 7 runs iPadOS 27.0.1 with accelerated internal graphics, Wi-Fi, touch and USB host storage. Native XR10 HiDPI extended desktop and both panel outputs were device-observed. The current image has DP diagnostics off by default, and its restored Wi-Fi service passed the owner test."
 
 [[area]]
 id = "configuration"
@@ -56,8 +56,9 @@ procedure = [
   "Build the kernel and payload from the recorded source pins and matching local firmware and signed root inputs.",
 ]
 findings = [
+  "The display source pins include the OEM split-panel handoff and gate DP diagnostics behind uke-dp-debug=1.",
   "Uke uses sheng-derived host and peripheral services against the 24A446 ABI. The stock DTB and ABL handoff stay in the boot pair.",
-  "XR10 direct scanout remains opt-in via uke-dp-xr10=1.",
+  "XR10 direct scanout remains opt-in via uke-dp-xr10=1. The accepted image leaves uke-dp-debug unset.",
 ]
 completion = ["Boot artifacts contain the expected board ADT, runtime archives and prelink bindings."]
 limits = [
@@ -96,9 +97,9 @@ completion = [
   "UEFI hands the ADT, initrd and panel to XNU without overlapping the firmware or reserved ranges.",
 ]
 limits = [
-  "The XR10 boot pair was written successfully. Its firmware handoff and subsequent boot await the next device observation.",
+  "The later split-panel and Wi-Fi service recovery images were used on the device. Broad repeated-boot, sleep and resume qualification remains open.",
 ]
-next_action = ["Record UEFI handoff and first XNU progress from the XR10 image."]
+next_action = ["Trace UEFI and the framebuffer handoff if a future cold boot or suspend test fails."]
 
 [[area.evidence]]
 kind = "source"
@@ -252,7 +253,7 @@ result = "Historical Uke user test confirmed Files, USB drive I/O and the later 
 
 [[area]]
 id = "display"
-status = "host-verified"
+status = "device-verified"
 components = [
   "GopFramebuffer",
   "NativeUfs",
@@ -279,6 +280,7 @@ paths = [
   "docs/INPUT-BACKLIGHT-20261110.md",
   "package/DisplayCallTrace27.cpp",
   "package/UkeDp*.h",
+  "feeds.toml",
   "package/UkeQmpDp.h",
   "package/tests/uke_dp_*.cpp",
   "scripts/check-external-display-abi.py",
@@ -296,6 +298,8 @@ procedure = [
   "Connect a sink, select Extend, check full-frame damage and counters, and repeat disconnect and reconnect.",
 ]
 findings = [
+  "During a dual-output run, the panel scanned at 120 Hz and DP at 60 Hz while the measured external presentation rate fell from 35.5 to 22.0 frames/s.",
+  "The owner confirmed both displays work after the VIG1 right-source and opaque mixer stage fix. The panel DMA1 handoff preserved all four measured pixel signatures.",
   "The prior full-damage image removed flicker and black blocks. Its log showed the 3840×2160 b3a8 compositor output at 12.15–12.99 new frames/s, with 73.8 ms median CPU frame preparation.",
   "The XR10 candidate maps the original color plane, uses QSEED for 3:2 scaling and CSC for XR10-to-SDR, and preserves producer fences and CTL latch retirement.",
 ]
@@ -303,10 +307,10 @@ completion = [
   "Native extended desktop, correct levels and stable frames at the sink timing, with both internal panel halves intact and reliable reconnect.",
 ]
 limits = [
-  "The original driver passed both constituent atomic tests separately. Recovery exposed no usable external DP mode for combined testing. The flashed XR10 candidate awaits hardware acceptance.",
+  "Dual-display output is device-observed on the split-stage image. Sustained cadence and a matched quiet-build performance comparison remain open.",
 ]
 next_action = [
-  "Confirm the direct IOSurface route and measure external producer cadence and latch cadence on the flashed image.",
+  "Correlate each display presentation with its own IOSurface producer fence and CTL latch on a matched workload.",
 ]
 
 [[area.evidence]]
@@ -320,6 +324,13 @@ revision = "d61336190c478c9884334f85433eea44e5fee6d0"
 kind = "source"
 reference = "docs/USB-DP-20261119.md"
 result = "Matched pre-XR10 readback identifies 1440p wire timing, HiDPI geometry and CPU-copy throughput on vendor_boot 9a0fc473220661d6c6a350ad3563da520ef7e060af11dab8801b36784017c7d9."
+
+[[area.evidence]]
+kind = "device"
+reference = "docs/USB-DP-20261119.md"
+result = "The owner confirmed dual-screen output on vendor_boot 93c30b07eb1b. Same-boot readback found four matching panel signatures before and after handoff."
+command = "Connect HDMI in Extend mode and compare DMA1, mixer and interface registers across the same-boot capture."
+revision = "dd0e3ec0e882d2aa2d0acf976e14c88f3db643fd"
 
 [[area]]
 id = "input"
@@ -460,6 +471,7 @@ procedure = [
   "Validate the firmware and board data, then check WLFW, scan, association, DHCP and TCP on an open and a protected AP.",
 ]
 findings = [
+  "The current image restores the signed V4.9.7 supplicant matched by the existing signed launch cache and authorization record. The device owner confirmed Wi-Fi works again.",
   "The V4.9.7 baseline passed Settings Wi-Fi, open and password-protected association, DHCP and app/Safari access. Scan-result expiry uses the continuous clock.",
 ]
 completion = ["Settings lists Wi-Fi and en0 carries bidirectional traffic after association."]
@@ -472,6 +484,13 @@ reference = "docs/BACKLIGHT-PASS-WIFI-CONTROL-20261111.md"
 result = "A matched 879437D238BB23B0 capture showed six successful WMI scans, association, DHCP ACK and bidirectional TCP."
 command = "Read the same-boot log and read-only Data capture."
 revision = "bdc9a9def4f21c8a4a438b46860882ab2933eb49"
+
+[[area.evidence]]
+kind = "device"
+reference = "docs/WIFI-WCN6750.md"
+result = "The owner confirmed Wi-Fi recovery on vendor_boot b92e39d1aead. Host checks verified the exact accepted supplicant signature and the control protocol."
+command = "Boot b92e39d1aead and test Wi-Fi while keeping the packaged launch cache and configuration."
+revision = "dd0e3ec0e882d2aa2d0acf976e14c88f3db643fd"
 
 [[area]]
 id = "cellular"
@@ -514,6 +533,7 @@ procedure = [
   "Run python3 scripts/check-uke-dsp-host.py. Boot the staged candidate and record UKE ADSP and UKE AUDIO lines.",
 ]
 findings = [
+  "The shared display and battery archive links the quiet DP diagnostic policy for Alt Mode notifications.",
   "Device captures reached ADSP, GLINK and APM readiness. Audio mode 1 is a control-path readiness check.",
 ]
 completion = [
@@ -566,6 +586,7 @@ procedure = [
   "With the power profile selected, capture battery percentage, charge status and cable transitions together with regulator, timeout and display reports.",
 ]
 findings = [
+  "The shared PMIC GLINK Alt Mode notifications use the quiet DP diagnostic policy while retaining the same role and power handling.",
   "The user verified battery percent and charge UI on D4EFA944BD2B2081. The subsequent battery service handles field timeouts independently.",
 ]
 completion = [
@@ -611,6 +632,7 @@ procedure = [
   "Build the 24A446 ABI shim and run the controller UCSI and board role/link host tests. Test keyboard, mouse and USB storage through the dock, then exercise USB-C orientation and Alt Mode.",
 ]
 findings = [
+  "Routine DP Alt Mode and training diagnostics default to off. Link failures still report their errors.",
   "UCSI negotiates connector data role, retrieves alternate modes and handles DisplayPort HPD. Hubs, keyboard, mouse and drive transfer were accepted on earlier device builds.",
 ]
 completion = [
@@ -659,6 +681,7 @@ procedure = [
   "Run ./unixnu build kernel and ./unixnu build payload from the core checkout. Package boot and vendor_boot together and round-trip unpack the vendor payload.",
 ]
 findings = [
+  "The latest image replaced only the add-on supplicant with the verified V4.9.7 file. Boot image, kernel, ADT, arguments, trust cache and GPU contents match the quiet DP base.",
   "The XR10 package used 984 bytes of boot arguments and added zero unresolved prelink bindings. The two-slot boot pair was written successfully.",
   "CI resolves the XNU revision and four-layer patch order through UniXNU. All 149 patches applied on a clean XNU 12377.121.6 checkout.",
 ]
@@ -666,9 +689,9 @@ completion = [
   "Validated boot and vendor images fit the destination partitions and the boot chain hands off a matching payload.",
 ]
 limits = [
-  "Successful transport records only the four writes, slot selection and reboot. Runtime acceptance remains pending.",
+  "The owner confirmed Wi-Fi operation on the repack. Host artifact verification and the device observation cover different parts of the release.",
 ]
-next_action = ["Attach device boot and XR10 acceptance to the exact vendor_boot hash once observed."]
+next_action = ["Keep the signed Wi-Fi service paired with its launch cache in future addon builds."]
 
 [[area.evidence]]
 kind = "host"
@@ -716,11 +739,12 @@ procedure = [
   "Capture the persistent ring through read-only Recovery, select the fresh boot UUID, and symbolize against the exact linked kernel.",
 ]
 findings = [
+  "Same-boot records from the split-panel image isolated GPU fence waits from link timing. Normal DP operation avoids periodic receiver and pixel-signature sampling.",
   "The ring includes older boots. Image-matched backtraces and CRC-valid sequence filtering are needed before associating a panic or performance sample with a trial.",
 ]
 completion = ["A single boot has a usable event sequence and exact kernel and boot-image identity."]
 limits = [
-  "The current XR10 image has build and flash evidence. No same-boot device trace is recorded yet.",
+  "The split-panel image has a same-boot trace. The quiet image defaults to bounded operational logging and retains the opt-in capture mode.",
 ]
 next_action = ["Collect the next same-boot trace if XR10 cadence, levels or reconnect behavior fail."]
 
