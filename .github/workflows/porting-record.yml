@@ -12,6 +12,7 @@ jobs:
           path: device
       - uses: actions/checkout@v4
         with:
-          repository: UniXNU/UniXNU
+          repository: Allenwdk/UniXNU
+          ref: main
           path: unixnu
       - run: python3 unixnu/scripts/porting-record.py check --device device
