@@ -4,6 +4,7 @@
 // in Sm7675Platform/remoteproc. Board addresses come from uke-live.dts.
 // Mode 1 surveys only; mode 2 authenticates/starts WPSS and discovers WLFW.
 // It does not publish a network interface before an ath11k data path exists.
+#include "WcnPower.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
@@ -1048,9 +1049,10 @@ extern "C" void uke_wpss_probe(void) {
     unsigned mode = 3;
     PE_parse_boot_argn("uke-wifi", &mode, sizeof mode);
     if (!mode || mode > 3 || native_wifi_wpss_stats[0]) return;
+    (void)uke_wcn_power_get(UKE_WCN_WLAN);
     gClientLock = IOLockAlloc();
     if (gClientLock && mode == 2) uke_wifi_qrtr_start();  // the router link registers before the DSP can open it
     thread_t thread = nullptr;
-    if (!gClientLock || kernel_thread_start(wpssThread, nullptr, &thread) != KERN_SUCCESS) {fail(StMapped, -7); return;}
+    if (!gClientLock || kernel_thread_start(wpssThread, nullptr, &thread) != KERN_SUCCESS) {(void)uke_wcn_power_put(UKE_WCN_WLAN); fail(StMapped, -7); return;}
     thread_deallocate(thread);
 }

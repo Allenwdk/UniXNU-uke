@@ -2,6 +2,8 @@
 // Cliffs USB device path from the OEM live FDT and MiCode uke-v-oss.
 // WCD939x fixed peripheral route follows the Senemos 0006-uke-usb-v7-api reference.
 #include "UkeUsbBoard.h"
+#include "UkeBluetoothClock.h"
+#include "WcnPower.h"
 #include "BootResetCore.h"
 #include "GeniI2c.h"
 #include "NativeExternalDisplay.h"
@@ -17,6 +19,7 @@
 #include <IOKit/IOLib.h>
 #include <kern/clock.h>
 #include <pexpert/pexpert.h>
+#include <sys/errno.h>
 #include <vm/vm_kern.h>
 
 IOReturn uke_dp_set_external_display(const NativeExternalDisplayLink *);
@@ -29,6 +32,15 @@ extern "C" uint32_t uke_ufs_dpu_map_external(unsigned slot, const uint64_t *page
 extern "C" uint32_t native_ufs_dpu_live(unsigned reg) __attribute__((weak_import));
 
 namespace {
+LCK_MTX_DECLARE(gUsbRailMutex, &uke_apps_smmu_group);
+struct RailLock {
+    RailLock() {lck_mtx_lock(&gUsbRailMutex);}
+    ~RailLock() {lck_mtx_unlock(&gUsbRailMutex);}
+};
+uint32_t gRadioOwners;
+uint32_t gBluetoothVoted;
+bool gRailTcsUncertain;
+
 void sync() {__asm__ volatile("dsb sy" ::: "memory");}
 
 struct Registers {
@@ -92,7 +104,9 @@ constexpr bool supportedRscVersion(uint32_t id) {return ((id >> 16) & 0xff) == 3
 static_assert(supportedRscVersion(0x00030200), "Uke apps RSC DRV-2 reports version 3.2");
 static_assert(!supportedRscVersion(0x00020200), "USB uses the version 3 status offsets");
 
-bool voteRails(bool superSpeed) {
+template <typename Callback>
+bool withRailTcs(const Callback &callback) {
+    if (gRailTcsUncertain) return false;
     Registers db, rsc;
     constexpr unsigned kDbSize = 0x20000, kDrvOffset = 0xd00, kUsbTcs = 2;
     if (!db.map(0x81c60000, kDbSize) || !rsc.map(0x17a20000, 0x10000)) return false;
@@ -126,6 +140,7 @@ bool voteRails(bool superSpeed) {
                 printf("[usb] uke rpmh timeout resource=%s cmd=%u address=%08x status=%08x tcs=%08x irq=%08x\n",
                        resource, i, addr[i], rsc.read(offset), rsc.read(tcs + kV3TcsStatus),
                        rsc.read(kDrvOffset + layout.irq_status));
+                gRailTcsUncertain = true;
                 return false;
             }
         }
@@ -133,6 +148,15 @@ bool voteRails(bool superSpeed) {
         for (unsigned i = 0; i < done; ++i) rsc.write(kDrvOffset + writes[i].offset, writes[i].value);
         return true;
     };
+    if (ok) ok = callback(copy, kDbSize, rscId, submit);
+    IOFreeData(copy, kDbSize);
+    return ok;
+}
+
+bool voteRails(bool superSpeed) {
+    RailLock guard;
+    return withRailTcs([&](const uint8_t *copy, size_t kDbSize, uint32_t rscId, const auto &submit) {
+    bool ok = true;
     const struct {const char *name; unsigned mv; bool superSpeed;} rails[] = {
         {"ldob2", 880, false}, {"ldob4", 1200, false}, {"ldob7", 1800, false},
         {"ldob17", 3075, false}, {"ldob3", 880, true},
@@ -164,9 +188,9 @@ bool voteRails(bool superSpeed) {
     } else {
         ok = false;
     }
-    IOFreeData(copy, kDbSize);
     printf("[usb] uke rails votes=%x rsc=%08x complete=%u\n", native_usb_stats[9], rscId, ok);
     return ok;
+    });
 }
 
 bool repeater(bool host) {
@@ -1779,7 +1803,91 @@ void trainDpLink(const Registers &disp, const Registers &phy, DpAux &aux, int la
         if (trained) break;
     }
 }
+// OEM WCN6750 Bluetooth suppliers: AON, digital, RF common and RF 0P8
+// resolve to the same S3B provider. L7B also feeds USB/audio and S2B feeds UFS.
+struct WcnRail {const char *name; unsigned mv; bool platform; bool wlan;};
+constexpr WcnRail kBluetoothRails[] = {
+    {"ldob7", 1800, true, false}, {"smpb3", 984, false, true},
+    {"smpb1", 1856, false, true}, {"smpb2", 1256, true, true},
+    {"smpe3", 1600, false, false},
+};
+
+template <typename Submit>
+bool releaseBluetoothRails(const uint8_t *copy, size_t size, const Submit &submit) {
+    for (unsigned i = sizeof(kBluetoothRails) / sizeof(*kBluetoothRails); i-- > 0;) {
+        const auto &rail = kBluetoothRails[i];
+        const uint32_t bit = 1u << i;
+        if (!(gBluetoothVoted & bit)) continue;
+        if (!rail.platform && !(rail.wlan && (gRadioOwners & (1u << UKE_WCN_WLAN)))) {
+            QcomRpmhResource resource{};
+            const uint32_t disabled = 0;
+            if (qcom_cmd_db_find(copy, size, rail.name, &resource)) return false;
+            const uint32_t enable = resource.address + 4;
+            if (!submit(rail.name, &enable, &disabled, 1)) return false;
+        }
+        gBluetoothVoted &= ~bit;
+    }
+    return true;
+}
+
+
 } // namespace
+
+int uke_wcn_power_get(unsigned radio) {
+    if (radio > UKE_WCN_BLUETOOTH) return EINVAL;
+    RailLock guard;
+    const uint32_t owner = 1u << radio;
+    if (gRadioOwners & owner) return 0;
+    if (radio == UKE_WCN_BLUETOOTH) {
+        const bool ok = withRailTcs([](const uint8_t *copy, size_t size, uint32_t, const auto &submit) {
+            for (unsigned i = 0; i < sizeof(kBluetoothRails) / sizeof(*kBluetoothRails); ++i) {
+                const auto &rail = kBluetoothRails[i];
+                QcomRpmhResource resource{};
+                const bool found = !qcom_cmd_db_find(copy, size, rail.name, &resource);
+                const uint32_t addresses[] = {resource.address, resource.address + 4};
+                const uint32_t values[] = {rail.mv, 1};
+                if (!found || !submit(rail.name, addresses, values, 2)) {
+                    if (!gRailTcsUncertain) releaseBluetoothRails(copy, size, submit);
+                    return false;
+                }
+                gBluetoothVoted |= 1u << i;
+            }
+            return true;
+        });
+        if (!ok) return EIO;
+    }
+    gRadioOwners |= owner;
+    return 0;
+}
+
+int uke_wcn_power_put(unsigned radio) {
+    if (radio > UKE_WCN_BLUETOOTH) return EINVAL;
+    RailLock guard;
+    const uint32_t owner = 1u << radio;
+    if (radio == UKE_WCN_BLUETOOTH && gBluetoothVoted &&
+        !withRailTcs([](const uint8_t *copy, size_t size, uint32_t, const auto &submit) {
+            return releaseBluetoothRails(copy, size, submit);
+        })) return EIO;
+    gRadioOwners &= ~owner;
+    return 0;
+}
+
+unsigned uke_wcn_power_owners() {
+    RailLock guard;
+    return gRadioOwners;
+}
+
+bool uke_bluetooth_clock_vote(volatile uint32_t *reg, bool enabled) {
+    // QUP1 AHB/core gates are shared with the other serial engines. Retain
+    // those gates across IBS sleep and release only the owned SE2 gate.
+    AppsSmmuLock guard;
+    constexpr uint32_t core = 0xfu, se2 = 1u << 6;
+    const uint32_t wanted = enabled ? (*reg | core | se2) : (*reg & ~se2);
+    *reg = wanted;
+    sync();
+    return (*reg & (core | se2)) == (wanted & (core | se2));
+}
+
 
 bool uke_usb_reset_controller() {
     if (!gGcc.base) return false;

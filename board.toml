@@ -28,7 +28,7 @@ include = [
   "ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState",
   "Adreno740", "AdrenoMetal", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "AirNir", "Sm7675Platform",
   "GopFramebuffer", "QcomGeniSpi", "ShengNovatekTouch", "ShengHidInput",
-  "ShengUfs", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "SoftwareAES", "Ath12kWifi", "QcomDwc3",
+  "ShengUfs", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "SoftwareAES", "Ath12kWifi", "QcomDwc3", "QcaBluetooth",
 ]
 
 # The target OS image comes from the `ipados-27.0.1-24A446` profile (iPad17,3 / J820AP,
@@ -414,4 +414,4 @@ reg = "000000c8000000000000000200000000"
 
 # Driver defaults outside DarwinBoot CommandLine; explicit CLI arguments override.
 [adt.chosen.string]
-unixnu-driver-args = "offline-legacy-register=1 offline-legacy-gop=1 offline-legacy-unit-scale=2 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1 offline-legacy-phase=4 offline-legacy-noconsole=1 sheng-touch=4 sheng-touch-hid=1 sheng-buttons=1 sheng-backlight=1 sheng-touch-split=1 sheng-touch-poll=1 sheng-dpu-scanout=2 sheng-vsync=120 sheng-vsync-fixed=1"
+unixnu-driver-args = "offline-legacy-register=1 offline-legacy-gop=1 offline-legacy-unit-scale=2 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1 offline-legacy-phase=4 offline-legacy-noconsole=1 sheng-touch=4 sheng-touch-hid=1 sheng-buttons=1 sheng-backlight=1 sheng-touch-split=1 sheng-touch-poll=1 sheng-dpu-scanout=2 sheng-vsync=120 sheng-vsync-fixed=1 bluetooth=0 log-bluetooth=0"

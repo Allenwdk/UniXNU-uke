@@ -255,6 +255,10 @@ def main():
               # board to export /arm-io/wlan). No reg/interrupts: the board owns the
               # WPSS, the MSI vectors and the DMA window (WifiProbe/WifiAth11k), and
               # this is the fixed address the board reports to the stack.
+              node('bluetooth', [('device_type', b'bluetooth\0'),
+                                 ('compatible', b'qcom,wcn6750-bt\0'),
+                                 ('transport-encoding', struct.pack('<I', 1)),
+                                 ('transport-speed', struct.pack('<I', 3000000))]),
               node('wlan', [('compatible', b'qcom,wcn6750\0'),
                             ('local-mac-address', bytes([0x02, 0x00, 0x00, 0x75, 0x67, 0x50]))])]),
         # wifid's launchd job is limited to device trees that contain a node named

@@ -50,6 +50,15 @@
     // kernel. Only the node name is matched; sheng's verified node is the
     // reference for the rest (chip identity string and status). Without a node
     // named wlan, wifid never starts and Settings has no Wi-Fi pane.
+    bluetooth {
+        device_type = "bluetooth";
+        compatible = "qcom,wcn6750-bt";
+        unixnu,adt-name = "bluetooth";
+        transport-encoding = <1>;
+        transport-speed = <3000000>;
+        status = "okay";
+    };
+
     wlan {
         compatible = "qcom,wcn7850";
         unixnu,adt-name = "wlan";

@@ -24,10 +24,11 @@ static const char policy_watchdogd[]="<key>com.apple.watchdogd</key><true/><key>
 // sheng-disable-jobs=<label>[,<label>...] (restricted label characters, bounded length).
 static const char policy_tail[]="</dict></plist>\n";
 // sheng-lite=1: jobs that only reach for the network, iCloud or the photo library and have nothing to do on this tablet (no radios, no accounts),
-// all of which start at the first boot of a fresh Data and compete with SpringBoard for the CPU and for memory. The first four are the
+// all of which start at the first boot of a fresh Data and compete with SpringBoard for the CPU and for memory. The first three are the
 // cycle of synchronous XPC waits the isolation work found. Labels are the ones in the target's own LaunchDaemons.
+static const char lite_bluetooth_job[]="com.apple.bluetoothd";
 static const char lite_jobs[]=
- "com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd,"
+ "com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,"
  "com.apple.photoanalysisd,com.apple.mediaanalysisd,com.apple.mediastream.mstreamd,com.apple.icloud.searchpartyd,"
  "com.apple.findmy.findmybeaconingd,com.apple.familycircled,com.apple.financed,com.apple.softwareupdateservicesd,"
  "com.apple.ndoagent,com.apple.biomesyncd,com.apple.email.maild,com.apple.amsengagementd,com.apple.adid,com.apple.eyereliefd,"
@@ -193,7 +194,15 @@ int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  if(!enabled && !jobs[0] && !lite)return 0;
  policy[0]=0;strlcat(policy,policy_head,sizeof(policy));
  if(enabled)strlcat(policy,policy_watchdogd,sizeof(policy));
- if(lite)for(const char *c=lite_jobs;*c;) {if((error=append_job(&c)))return error;}
+ int bluetooth=0;
+ PE_parse_boot_argn("bluetooth",&bluetooth,sizeof(bluetooth));
+ if(lite) {
+  for(const char *c=lite_jobs;*c;) {if((error=append_job(&c)))return error;}
+  if(bluetooth!=1) {
+   const char *c=lite_bluetooth_job;
+   if((error=append_job(&c)))return error;
+  }
+ }
  for(const char *c=jobs;*c;) {if((error=append_job(&c)))return error;}
  strlcat(policy,policy_tail,sizeof(policy));
  const char *directory="/private/var/db/com.apple.xpc.launchd";
@@ -243,6 +252,8 @@ int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
   }
  }
  sheng_watchdog_policy_status=error;
+ if(lite && bluetooth==1 && !error)
+  printf("[bluetooth launch] lite policy skips the automatic bluetoothd disable\n");
  printf("sheng bring-up watchdogd launch policy: %d (hardware watchdog not implemented)\n",error);
  return error;
 }

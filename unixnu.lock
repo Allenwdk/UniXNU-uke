@@ -32,3 +32,6 @@ commit = "1f4f5265b319111142f1bf3a27d4484ef5a98314"
 
 [source."xnu"]
 commit = "ac9718fb1af618d5ce8678d0dc6e8a58f252216f"
+
+[source."QcaBluetooth"]
+commit = "a84d7d3117af0e8d723ce7350d247fbec3939a25"

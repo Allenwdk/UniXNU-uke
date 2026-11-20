@@ -1,0 +1,10 @@
+{
+  "version": "OS3.0.306.0.WOZCNXM",
+  "image": "BTFM.bin",
+  "image_sha256": "cb7c2872819f73dc7dc3afc20484afe43d2e9eca4abbaa5f637b02ac28a0df37",
+  "files": {
+    "msbtfw12.mbn": "3efbd7fa985702982ba3f2fb4e4e37dab2de51b26fa5574d6165f1cd4ec5506d",
+    "msbtfw12.tlv": "3e322d292ca5dac86913a9112d07cf1d1d3757991d8a2760837c36892d43e967",
+    "msnv12.bin": "52553c8a4041d4c564e55046c010609198fb3636a21d5a87a8e2df55023c0476"
+  }
+}

@@ -144,6 +144,7 @@ upstream/contig-search-report.patch
 
 # sheng c3c7468 + 20cf25d: all-user AppSync, preserving third-party process identity.
 sheng-appsync-runtime.patch
+uke-bluetooth-runtime.patch
 sheng-appsync-user-trust.patch
 
 # Fixed per-CPU IRQ and interrupt-mask observations, opt-in without GPU tracing.
