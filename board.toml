@@ -243,8 +243,28 @@ text_fixups = [
   "dyld_shared_cache_arm64e.11,75f4c2c,ae000094f50300aa,5503148b1f2003d5",
 ]
 
-# NativeAdrenoMetal is delivered by the matching --gpu-addon and --owner-trust-cache inputs.
+# NativeAdrenoMetal and its matching owner trust bundle are selected together in unixnu.local.toml.
 kernel_args = [
+  # Keep these options in the command line so both XNU and the Metal plugin's kern.bootargs reader see them.
+  "diag=1",
+  "gpu-trace=1",
+  "panel-sync=2",
+  "scanout-boost=1",
+  "uke-dp-desktop=0",
+  # Runtime options from the same Uke image, including its Bluetooth addon.
+  "bluetooth=1",
+  "usb=1",
+  "log-sys=1",
+  "uke-aks-wrap=1",
+  "uke-usb3=1",
+  "uke-usb-otg=1",
+  "uke-files-union-view=1",
+  "uke-dp-altmode=1",
+  "uke-dp-aux=1",
+  "uke-dp-train=1",
+  "uke-dp-video=1",
+  "uke-dp-ext-buffers=1",
+  "uke-dp-xr10=1",
   "-v",
   "serial=3",
   "boot-progress=2",

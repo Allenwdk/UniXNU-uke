@@ -117,7 +117,9 @@ def frontend_details(blob):
         elif kind==22:rows.append(dict(name='runtime_stage_wide',us=t0,runtime=t1,stage=a,argument=b))
         elif kind==13:
             rows.append(dict(name='gpu_pass_detail',us=t0,sequence=t1,fs_instructions=a&65535,fs_texture=a>>16,fs_sy=b&65535,fs_ss=b>>16,
-                             fs_waves=c&255,fs_gprs=(c>>8)&255,samples=(c>>16)&255,depth_stencil=c>>24,bandwidth=d,vertices=tid,fs_hash=cpu0))
+                             fs_waves=c&255,fs_gprs=(c>>8)&255,samples=(c>>16)&255,depth_stencil=c>>24,bandwidth=d,vertices=tid,fs_hash=cpu0,
+                             gmem_grid_tiles=cpu1&65535,panel_scissor_skipped_tiles=cpu1>>16,
+                             panel_tile_result=tid2))
         elif kind==16:
             rows.append(dict(name='attachment',us=t0,command=t1,texture=t2,resolve=t3,pass_index=a,attachment=b,load=c&255,store=(c>>8)&255,
                              samples=c>>16,pixel_format=d,width=tid,height=cpu0,surface=cpu1,original_samples=tid2))

@@ -34,8 +34,8 @@ commit = "8b6f4b73be88e500ae437f690f7fc33d4e1f0114"
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/Allenwdk/AdrenoMetal.git"
-# Exact producer handoff and compositor dirty regions on both outputs.
-commit = "3668ce91a26bf0b16da5aed0cd59e78b42ea09da"
+# Exact producer handoff and reduced panel encoding and trace overhead.
+commit = "145cd89b483c5e94026776652754edf0d780c0fc"
 
 [[source]]
 name = "ShengUfs"

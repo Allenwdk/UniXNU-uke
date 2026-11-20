@@ -58,7 +58,7 @@ procedure = [
 findings = [
   "The display source pins include the OEM split-panel handoff and gate DP diagnostics behind uke-dp-debug=1.",
   "Uke uses sheng-derived host and peripheral services against the 24A446 ABI. The stock DTB and ABL handoff stay in the boot pair.",
-  "XR10 direct scanout remains opt-in via uke-dp-xr10=1. The accepted image leaves uke-dp-debug unset.",
+  "The default payload uses panel-only desktop mode with exact scanout and frame diagnostics. The DisplayPort desktop can be selected with uke-dp-desktop=1.",
 ]
 completion = ["Boot artifacts contain the expected board ADT, runtime archives and prelink bindings."]
 limits = [
@@ -420,6 +420,8 @@ procedure = [
 ]
 findings = [
   "The previously accepted internal GPU release reached the desktop and rendered apps, icons and widgets. The dual-output dirty-region run on vendor_boot 99861d4cc6b8 recorded 1450 exact producer fence latches on the panel and 1532 on DP. All 1395 independently matched writers used the fence that released the corresponding swap.",
+  "The panel-only readback on vendor_boot 17d170cbf39b recorded 110115 skipped GMEM tiles out of 361665 and a 17.04 ms median touch presentation interval. All 1802 independently matched writers used the corresponding fence.",
+  "The follow-up encoding cleanup on vendor_boot 4cbfb64b3d25 passed image assembly. A default build reproduced its kernel, boot arguments, GPU addon and trust inputs. Runtime performance of the follow-up image awaits verification.",
 ]
 completion = [
   "Accelerated apps and system UI present correctly with ordered fences and consistent full-frame output.",
