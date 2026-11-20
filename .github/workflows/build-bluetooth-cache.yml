@@ -1,0 +1,61 @@
+name: Build Uke Bluetooth launchd cache
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/uke-bluetooth-cache]
+    paths: ['.github/workflows/build-bluetooth-cache.yml', 'scripts/build-bluetooth-runtime.py']
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  cache:
+    runs-on: macos-26
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Allenwdk/QcaBluetooth
+          ref: 9243c3c8f50a667135fa857464eeebf0d62d7254
+          path: QcaBluetooth
+      - uses: actions/download-artifact@v4
+        with:
+          name: uke-wifi-apple-cache
+          run-id: 42417214479
+          github-token: ${{ github.token }}
+          path: wifi
+      - uses: actions/download-artifact@v4
+        with:
+          name: uke-wifi-original-cache
+          run-id: 42417214479
+          github-token: ${{ github.token }}
+          path: stock
+      - name: Merge BlueTool policy and verify with Apple libxpc and codesign
+        run: |
+          python3 QcaBluetooth/tools/build-bluetool.py --output helpers
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import plistlib
+          import runpy
+
+          output = Path('bluetooth')
+          output.mkdir()
+          merge = runpy.run_path('scripts/build-bluetooth-runtime.py')['merge_cache']
+          _, report = merge(Path('wifi/launchd.plist').read_bytes(),
+                            Path('wifi/launchd.plist.sig').read_bytes(),
+                            Path('stock/launchd.plist'),
+                            plistlib.loads(Path('helpers/com.apple.BlueTool.plist').read_bytes()), output)
+          if not report['apple_libxpc_and_codesign_verified']:
+              raise SystemExit('Missing Apple launchd cache verification')
+          (output / 'cache-report.json').write_text(json.dumps(report, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uke-bluetooth-apple-cache
+          path: bluetooth/
+          if-no-files-found: error
+          retention-days: 14
