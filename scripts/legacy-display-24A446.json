@@ -1559,6 +1559,7 @@
   "_native_legacy_surface_plane_stride": "0xfffffe000a4337f0",
   "_native_legacy_surface_stride": "0xfffffe000a4331cc",
   "_native_legacy_surface_format": "0xfffffe000a433190",
+  "_native_legacy_surface_id": "0xfffffe000a43319c",
   "_native_legacy_surface_planes": "0xfffffe000a4331fc",
   "_native_legacy_ioav_timing": "0xfffffe0009f3d4e8",
   "_native_legacy_ioav_timing_colors": "0xfffffe0009f3e9d8",

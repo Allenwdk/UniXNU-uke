@@ -710,6 +710,7 @@ extern void native_touch_probe(void);
 extern void sheng_buttons_probe(void);
 extern void sheng_backlight_probe(void);
 extern void uke_wpss_probe(void);
+extern void uke_bluetooth_probe(void);
 // The DPU track's read-only snapshot and controlled-pipe test (package/DpuProbe.cpp):
 // a thread that waits for the firmware's scanout and then reads or (only with
 // uke-dpu-test=<n>) briefly writes the live pipes. Default off.
@@ -803,6 +804,7 @@ void native_legacy_display_late_probe(void) {
     sheng_buttons_probe();
     sheng_backlight_probe();
     uke_wpss_probe();
+    uke_bluetooth_probe();
     sheng_adsp_probe();
     sheng_battery_probe();
     uke_usb_probe();

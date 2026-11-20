@@ -710,3 +710,7 @@ A1C5回读175新槽/1873旧槽，camera后台不再出现；530普通GPU作业10
 ## 2026-11-07：同步版本部署准备
 
 2026-11-07 AdrenoMetal上游同步候选已正式payload打包。沿用wifi-dbgmask内核CRC1497FEF9FCB11D48且raw/final SHA均一致；新vendor_boot SHA f5f9c79a3ae4da939b3193a71ee400603d1bbff12699054397cdc362732a3a1b，46637056B。Metal98931e7/translator963f0e64，FLOW默认关闭；addon仅插件与gpu-build.json变化；原Apple/launchd信任模块、Turnip及Data种子保留。ADT仅256字节random-seed变化。新插件/Turnip逐4KiB签名、payload身份/参数999B/内核门禁通过。未重编kernel/Turnip。待按本轮刷机授权部署，实际启动/交互待验。证据uke-port/fixes/2026-11-07-adrenometal-upstream-deploy及同名release。
+
+## 2026-11-20 双屏精确围栏与内屏帧时间
+
+双屏局部重绘版 `99861d4cc6b8…` 回读到内屏 1,450 次、DP 1,532 次精确围栏锁存。能独立匹配 IOSurface 写入的 1,395 次使用了真实生产者围栏。用户观察到两屏局部重绘生效，外屏个别特效仍会卡住。纯内屏诊断版 `c56162f4203a…` 的触控锁存间隔 P50 / P90 / P99 为 16.86 / 41.66 / 116.59 ms，447 / 1,753 个间隔不超过 9 ms。详细阶段统计和采集范围保存在工作区的内屏 120 FPS 报告。

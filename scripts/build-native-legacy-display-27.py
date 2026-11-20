@@ -120,6 +120,7 @@ static constexpr unsigned kRequestRect0={R['rect0']},kRequestRect1={R['rect1']},
 #define NATIVE_LEGACY_CANCEL_SWAPS 1
 #define NATIVE_LEGACY_BOOT_SCANOUT_REQUESTED 1
 #define NATIVE_LEGACY_EXTERNAL_DISPLAY 1
+#define NATIVE_LEGACY_SURFACE_ID 1
 static constexpr unsigned kLegacyDefaultSurface={D['default_surface']};
 static constexpr unsigned kLegacyDigitalState={D['digital_state']}, kLegacyHpdClients={D['hpd_clients']};
 {''.join(renames)}class IOMobileFramebufferLegacy : public IOService {{
@@ -336,7 +337,7 @@ def compile_cpp(src, dst, extra=()):
     run_compile(cmd, r['directory'], Path(dst).stem)
 
 
-def compile_c(src, dst, recipe='osfmk/DEVELOPMENT/startup.o.json'):
+def compile_c(src, dst, recipe='osfmk/DEVELOPMENT/startup.o.json', extra=()):
     """A C board core with the flags of one kernel C file (osfmk for the cores, bsd for the VFS readers)."""
     rc = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837' / recipe).read_text().strip().rstrip(','))
     cmd, args, i = [], rc['arguments'], 0
@@ -355,7 +356,7 @@ def compile_c(src, dst, recipe='osfmk/DEVELOPMENT/startup.o.json'):
         i += 1
     cmd += ['-Wall', '-Wextra', '-Werror', '-mgeneral-regs-only', '-I', str(ROOT / '.cache/xnu-work/osfmk'), '-I', str(ROOT / 'kits/uke'),
             '-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'), '-I', str(ROOT / 'drivers/Ath12kWifi/include')]
-    run_compile(cmd, rc['directory'], Path(dst).stem)
+    run_compile([*cmd, *extra], rc['directory'], Path(dst).stem)
 
 
 compile_cpp(source, OUT / 'LegacyDisplayProbe.o', ('-I', str(OUT)))
@@ -530,6 +531,28 @@ board_dir = OUT / 'board'
 board_dir.mkdir(exist_ok=True)
 KITS = ROOT / 'kits/uke'
 board_objects = []
+bluetooth_module = ROOT / 'drivers/QcaBluetooth'
+require((bluetooth_module / 'include/qbt.h').is_file(), 'QcaBluetooth component checkout')
+run([sys.executable, bluetooth_module / 'tools/prepare-linux.py'])
+bluetooth_flags = tuple('-I' + str(bluetooth_module / folder)
+                        for folder in ('include', 'src', 'shim', 'out/linux'))
+bluetooth_sources = [bluetooth_module / name for name in (
+    'src/qbt_core.c', 'src/qbt_linux.c', 'src/qbt_geni.c', 'src/qbt_transport.c', 'out/linux/btqca.c')]
+bluetooth_sources += [KITS / name for name in (
+    'BluetoothProbe.cpp', 'BluetoothFirmware.c', 'BluetoothFirmware.h',
+    'WcnPower.h', 'UkeBluetoothClock.c', 'UkeBluetoothClock.h')]
+for bt_source in bluetooth_sources:
+    if bt_source.name == 'BluetoothFirmware.c':
+        continue  # The source-storage archive owns VFS firmware readers.
+    obj = board_dir / (bt_source.stem + '.o')
+    if bt_source.suffix == '.c':
+        compile_c(bt_source, obj, 'bsd/DEVELOPMENT/kern_exec.o.json',
+                  (*bluetooth_flags, '-Wno-sign-compare', '-Wno-unused-function', '-Wno-unused-parameter'))
+    elif bt_source.suffix == '.cpp':
+        compile_cpp(bt_source, obj, ('-I', str(bluetooth_module / 'include')))
+    else:
+        continue
+    board_objects.append(obj)
 for stem, extra in [('CpuFreqProbe', ()),
                     ('GpuMemoryPool', ()),
                     ('AdspProbe', ('-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'))),
@@ -800,6 +823,7 @@ sources += [Path(__file__).resolve(), KITS / 'CpuFreqProbe.cpp', KITS / 'GpuPowe
             ROOT / 'build/sheng-gmu/ShengGmuVotesSource.h', ROOT / 'scripts/prepare-uke-gmu.py',
             ROOT / 'scripts/data/uke-gpu-inputs.json']
 sources += [KITS / (stem + suffix) for stem, suffix in [('WifiProbe', '.cpp'), ('WifiAth11k', '.cpp'), ('WifiNet', '.cpp'), ('WifiQrtr', '.c'), ('WifiQmiSupport', '.c'), ('AdspFirmware', '.c'), ('UkeWpss', '.h'), ('UkeWpssMemory', '.h'), ('UkeClassRegistration', '.h')]]
+sources += bluetooth_sources
 sources += [qmi_module / 'include/nw_wcn6750_qmi.h', ROOT / 'scripts/build-wcn6750-qmi.py']
 sources += [KITS / 'BootResetCore.h', ROOT / 'scripts/build-ath11k-wifi.py',
            qmi_module / 'src/nw_wifi.c', qmi_module / 'src/nw_diag_ahb.c',

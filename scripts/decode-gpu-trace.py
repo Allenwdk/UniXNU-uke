@@ -18,10 +18,10 @@ FIELDS = {
  3: ('kernel_build', 'source_id'),
  10: ('submit', 'fence queue ring priority role loaded switching context submitted_us buffers'),
  11: ('retire', 'fence queue ring submitted_us gpu_start_ticks gpu_end_ticks stamped replays'),
- 20: ('display', 'request phase pointer surface_object physical slot shown pending queued'),
+ 20: ('display', 'request phase pointer surface_object physical slot shown pending queued surface_id caller_thread caller_pid'),
  21: ('display_surface', 'request physical width height stride format allocation mapped_bytes'),
  22: ('display_fence', 'request reason target submitted retired elapsed_ns ring0 ring1 query_reason repeated_queries'),
- 23: ('display_latch', 'request flush elapsed_ns shown pending'),
+ 23: ('display_latch', 'request flush elapsed_ns shown pending copy_us fence_us admitted_us gap_us format frame'),
  36: ('turnip_pass', 'command pass mode width height colors samples flags format swap draws ns'),
  37: ('turnip_gmem_side', 'count site image format linear mutableen tile_swap view_swap view_mutable mrt_buf_info a2d_dest_info resolve_dest_info'),
  44: ('turnip_attachment', 'pass index mode image format view_swap view_mutable tile_mode load_store_unpadded samples mrt_buf_info'),
@@ -32,6 +32,7 @@ FIELDS = {
  68: ('gpu_exec_high', 'sample'),
  69: ('gpu_shader_waits', 'sample'),
  70: ('recovery', 'fence completed replayed flags dead_reason guilty_ring loaded status fsr far fsynr ttbr0'),
+ 72: ('scanout_producer_ready', 'request fence'),
 }
 LATENCY_RECORD = struct.Struct('<QQII6Q')
 LATENCY_FIELDS = {
@@ -93,6 +94,8 @@ def frontend_details(blob):
         elif kind==1:
             rows.append(dict(name='command_summary',sequence=seq,created_us=t0,committed_us=t1,scheduled_us=t2,completed_us=t3,
                              passes=a,draws=b,kpx=c,blits=d,creator_thread=tid,creator_cpu_begin=cpu0,creator_cpu_commit=cpu1,commit_thread=tid2))
+        elif kind==3:
+            rows.append(dict(name='wait_scheduled',us=t1,begin_us=t0,command=t2,runtime=t3,thread=tid,caller=a))
         elif kind==7:
             rows.append(dict(name='gpu_pass',us=t0,sequence=t1,width=a&65535,height=a>>16,mode=b&255,
                              colors=(b>>8)&255,flags=(b>>16)&255,draws=c&65535,format=c>>16,kpx=d,
@@ -126,6 +129,11 @@ def frontend_details(blob):
             rows.append(dict(name='runtime_pass_counts' if kind==24 else 'runtime_texture_counts',us=t0,first=a,fields=fields))
         elif kind==26:
             rows.append(dict(name='gpu_pass_clock',us=t0,frequency_hz=a,exact_rational=bool(b)))
+        elif kind==27:
+            rows.append(dict(name='scanout_producer',us=t0,runtime=t1,command=t2,
+                             surface_id=a,format=b,width=c,height=d,thread=tid))
+        elif kind==28:
+            rows.append(dict(name='native_submit_fence',us=t0,runtime=t1,fence=a,driver_sequence=b,thread=tid))
         elif kind==23:
             rows.append(dict(name='render_mode_policy',us=t0,command=t1,pass_index=t2,
                              mode=a,width=b,height=c,transient_attachments=d))
@@ -265,6 +273,8 @@ def records(blob):
         name, names = FIELDS.get(event, ('unknown', ''))
         row = dict(sequence=seq, us=us, event=event, name=name, pid=pid,
                    fields=dict(zip(names.split(), values)), raw=values)
+        if event in (20, 21, 22, 23, 72):
+            row['display'] = 'displayport' if values[0] & (1 << 32) else 'internal'
         if event == 63:
             row['text'] = struct.pack('<4Q', *values[2:6]).split(b'\0')[0].decode('utf-8', errors='replace')
         if event == 65:
@@ -343,6 +353,74 @@ def execution_windows(rows):
                 highly_busy_windows=sum('effective_cp_cycles_per_us' in r for r in windows), windows=windows)
 
 
+def display_timings(rows, windows=None):
+    """Join each observed latch to its display request and global target fence."""
+    retired_jobs = {row['fields']['fence']: row for row in rows if row['event'] == 11}
+    requests = {}
+    previous_panel_latch = None
+    for row in rows:
+        if row['event'] not in (20, 22, 23):
+            continue
+        fields = row['fields']
+        request = fields['request']
+        if not request:
+            continue
+        display = row['display']
+        state = requests.setdefault(request, {})
+        if row['event'] == 20:
+            phase = fields['phase']
+            if phase == 1:
+                state.setdefault('validated_us', row['us'])
+            elif phase == 2:
+                state.setdefault('fence_start_us', row['us'])
+            elif phase == 6:
+                requests.pop(request)
+            if display != 'internal' or phase != 5 or 'latch' not in state:
+                continue
+            # The panel writes phase 5 after its final poll, including timeouts.
+            row = state.pop('latch')
+            fields = row['fields']
+        elif row['event'] == 22:
+            if fields['reason'] == 1:
+                state.update(fence_ready_us=row['us'], fence_target=fields['target'])
+            continue
+        elif display == 'internal':
+            state['latch'] = row
+            continue
+
+        us = row['us']
+        latch_us = fields['elapsed_ns'] / 1000
+        confirmed = True if display == 'displayport' or latch_us < 50000 or not fields['flush'] else None
+        timing = dict(display=display, request=request, latch_observed_us=us,
+                      latch_confirmed=confirmed, latch_wait_us=latch_us,
+                      during_touch=None if windows is None else in_windows(us, windows))
+        if 'validated_us' in state:
+            timing['validated_to_latch_us'] = us - state['validated_us']
+        if 'fence_target' in state:
+            target = state['fence_target']
+            timing['global_fence_target'] = target
+            if 'fence_start_us' in state:
+                timing['fence_wait_us'] = state['fence_ready_us'] - state['fence_start_us']
+            if target and (job := retired_jobs.get(target)):
+                job_fields = job['fields']
+                timing['global_fence_target_job'] = dict(
+                    pid=job['pid'], ring=job_fields['ring'], replays=job_fields['replays'],
+                    submit_to_retire_us=job['us'] - job_fields['submitted_us'])
+                start, end = job_fields['gpu_start_ticks'], job_fields['gpu_end_ticks']
+                if not job_fields['replays'] and job_fields['stamped'] == 31 and 0 < start < end:
+                    timing['global_fence_target_job']['gpu_elapsed_us'] = (end - start) / 19.2
+        if display == 'displayport':
+            timing.update(copy_us=fields['copy_us'], fence_wait_us=fields['fence_us'],
+                          validated_to_worker_queue_us=fields['admitted_us'], frame=fields['frame'])
+            if fields['gap_us']:
+                timing['interval_us'] = fields['gap_us']
+        else:
+            if confirmed and previous_panel_latch is not None:
+                timing['interval_us'] = us - previous_panel_latch
+            previous_panel_latch = us if confirmed else None
+        yield timing
+
+
 def decode(directory, out):
     out.mkdir(parents=True, exist_ok=True)
     summary = {}
@@ -355,6 +433,15 @@ def decode(directory, out):
         if perf['snapshots']:
             (out / 'execution-windows.json').write_text(json.dumps(perf, indent=2) + '\n')
             summary['execution'] = {k: v for k, v in perf.items() if k != 'windows'}
+        touch = directory / 'kernel.touch.bin'
+        windows = touch_windows(touch.read_bytes())['windows'] if touch.exists() else None
+        counts = {}
+        with (out / 'display-timing.jsonl').open('w') as stream:
+            for timing in display_timings(rows, windows):
+                stream.write(json.dumps(timing) + '\n')
+                display = timing['display']
+                counts[display] = counts.get(display, 0) + 1
+        summary['display_latch_samples'] = counts
     (out / 'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
     return summary
 

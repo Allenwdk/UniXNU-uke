@@ -20,22 +20,22 @@ commit = "e5c8d35c32381613e72d37b5dfdc3d65c923b39e"
 name = "Adreno740"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeAdreno.git"
-# GPU mapping and stall fixes with Uke support.
-commit = "a13e9760d1d00c35d76f64acc23cc202d53622e6"
+# Exact scanout producer fence validation.
+commit = "9222e39a13fd8c9a38eb82520e48a50516a76161"
 
 [[source]]
 name = "GopFramebuffer"
 kind = "driver"
 git = "https://github.com/Allenwdk/NativeMobileDisplay.git"
-# XR10 direct scanout with native panel handoff and opt-in DP diagnostics.
-commit = "45ff642ef6dcff0565117b36bb0206f1981917ed"
+# Per-surface fence and vblank latch for the panel and DisplayPort.
+commit = "8b6f4b73be88e500ae437f690f7fc33d4e1f0114"
 
 [[source]]
 name = "AdrenoMetal"
 kind = "driver"
 git = "https://github.com/Allenwdk/AdrenoMetal.git"
-# Uke complete damage repaint and producer submission ordering.
-commit = "124ced2608f34d8f56336f29b663d8c8d498755d"
+# Exact producer handoff and compositor dirty regions on both outputs.
+commit = "3668ce91a26bf0b16da5aed0cd59e78b42ea09da"
 
 [[source]]
 name = "ShengUfs"
@@ -110,3 +110,9 @@ name = "AppleKeyStoreState"
 kind = "driver"
 git = "https://github.com/UniXNU/AppleKeyStoreState.git"
 commit = "5454637729e39feaa361e6b658b6eec25c870f7e"
+
+[[source]]
+name = "QcaBluetooth"
+kind = "driver"
+git = "https://github.com/Allenwdk/QcaBluetooth.git"
+commit = "a84d7d3117af0e8d723ce7350d247fbec3939a25"
