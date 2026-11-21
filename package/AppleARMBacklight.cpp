@@ -17,6 +17,7 @@
 // timer on the service's own work loop. iPadOS 27 reads a nits range and sets brightness-nits (signed 16.16) instead, and ramps by itself.
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
+#include <IOKit/IOMessage.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOWorkLoop.h>
@@ -49,6 +50,7 @@ extern "C" {volatile uint32_t native_backlight_flow[4][8];}
 extern "C" {uint32_t native_backlight_signal[2][4];}
 extern "C" {volatile uint32_t native_backlight_irq_wait_us[2][2];}
 extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
+extern "C" volatile uint32_t native_legacy_swapstat[16] __attribute__((weak_import));
 
 namespace {
 constexpr uint64_t kGcc = 0x100000, kSeA = 0xa80000, kSeB = 0x890000;
@@ -89,6 +91,29 @@ EngineIo gIo[2];
 thread_call_t gIrqCall;
 // The newest brightness asked for: goal << 16 | fade milliseconds, with bit 63 set while the work loop has not taken it.
 volatile uint64_t gRequest;
+IOTimerEventSource *gSleepRequestTimer;
+bool gSystemAsleep;
+uint64_t gWakeAt;
+uint32_t gWakeFlips, gWakeLatches;
+
+bool deferWakeBrightness(IOTimerEventSource *timer) {
+    if (__atomic_load_n(&gSystemAsleep, __ATOMIC_ACQUIRE)) return true;
+    uint64_t began = __atomic_load_n(&gWakeAt, __ATOMIC_ACQUIRE);
+    if (!began) return false;
+    const bool counted = native_legacy_swapstat != nullptr;
+    const uint32_t flips = counted ? native_legacy_swapstat[9] - __atomic_load_n(&gWakeFlips, __ATOMIC_RELAXED) : 0;
+    const uint32_t latches = counted ? native_legacy_swapstat[10] - __atomic_load_n(&gWakeLatches, __ATOMIC_RELAXED) : 0;
+    uint64_t elapsed;
+    absolutetime_to_nanoseconds(mach_absolute_time() - began, &elapsed);
+    const uint64_t ms = elapsed / 1000000;
+    if (!ukeBacklightWakeReady(counted, flips, latches, ms)) {
+        timer->setTimeoutMS(20);
+        return true;
+    }
+    if (__atomic_compare_exchange_n(&gWakeAt, &began, 0u, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        IOLog("UKE BL: wake gate released ms=%llu flips=%u latches=%u\n", ms, flips, latches);
+    return false;
+}
 bool gRuntimeReady;
 // Per engine: written, read back, errors, retry count; no successful write is inferred from a failed transfer.
 extern "C" {volatile int32_t native_backlight_engine[2][4];}
@@ -509,7 +534,7 @@ class ShengBacklight : public IOService {
         },self);
     }
     // A brightness request on the work loop (setProperties arms this timer at once): the newest one asked for, if not yet taken.
-    static void requestFired(OSObject *owner, IOTimerEventSource *) {
+    static void requestFired(OSObject *owner, IOTimerEventSource *timer) {
         ShengBacklight *self = static_cast<ShengBacklight *>(owner);
         if (!self) return;
         if (!self->published) {
@@ -517,8 +542,15 @@ class ShengBacklight : public IOService {
             return;
         }
         native_backlight_request[2] = native_backlight_request[2] + 1;
-        const uint64_t request = __atomic_exchange_n(&gRequest, 0ull, __ATOMIC_ACQUIRE);
-        if (!(request >> 63)) return;
+        uint64_t pending = __atomic_load_n(&gRequest, __ATOMIC_ACQUIRE);
+        if (!(pending >> 63)) return;
+        if (((pending >> 16) & 0xffffu) && deferWakeBrightness(timer)) return;
+        if (!__atomic_compare_exchange_n(&gRequest, &pending, 0ull, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            // A newer request keeps ownership of the slot.
+            timer->setTimeoutUS(1);
+            return;
+        }
+        const uint64_t request = pending;
         const unsigned received = (unsigned)native_backlight_request[3] + 1;
         native_backlight_request[3] = (int32_t)received;
         const uint32_t goal = (uint32_t)(request >> 16) & 0xffff;
@@ -797,6 +829,7 @@ public:
         // owner before publishing a callout that the primary IRQ can queue.
         retain();
         __atomic_store_n(&gIrqCall,irqCall,__ATOMIC_RELEASE);
+        __atomic_store_n(&gSleepRequestTimer, request, __ATOMIC_RELEASE);
         printf("UKE BL flow: sources loop=%p irqCall=%p deadline=%p\n",loop,irqCall,tick);
         native_backlight_stats[0] = 2;
         loop->runAction(&ShengBacklight::begin, this);
@@ -897,4 +930,28 @@ extern "C" void sheng_backlight_start(void) {
 
 extern "C" bool native_backlight_runtime_ready(void) {
     return __atomic_load_n(&gRuntimeReady, __ATOMIC_ACQUIRE);
+}
+
+extern "C" void uke_sleep_backlight(unsigned message) {
+    switch (message) {
+    case kIOMessageSystemWillSleep:
+        __atomic_store_n(&gSystemAsleep, true, __ATOMIC_RELEASE);
+        __atomic_store_n(&gWakeAt, 0u, __ATOMIC_RELEASE);
+        return;
+    case kIOMessageSystemWillPowerOn:
+    case kIOMessageSystemHasPoweredOn:
+        if (!__atomic_load_n(&gSystemAsleep, __ATOMIC_ACQUIRE)) return;
+        __atomic_store_n(&gWakeFlips, native_legacy_swapstat ? native_legacy_swapstat[9] : 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&gWakeLatches, native_legacy_swapstat ? native_legacy_swapstat[10] : 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&gWakeAt, mach_absolute_time(), __ATOMIC_RELEASE);
+        break;
+    case kIOMessageSystemWillNotSleep:
+        __atomic_store_n(&gWakeAt, 0u, __ATOMIC_RELEASE);
+        break;
+    default:
+        return;
+    }
+    __atomic_store_n(&gSystemAsleep, false, __ATOMIC_RELEASE);
+    if (IOTimerEventSource *timer = __atomic_load_n(&gSleepRequestTimer, __ATOMIC_ACQUIRE))
+        timer->setTimeoutUS(1);
 }

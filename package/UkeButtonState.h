@@ -26,3 +26,13 @@ static inline uint32_t ukeButtonSample(UkeButtonState &s, bool ponOK, uint8_t po
 static inline bool ukeButtonDebouncing(const UkeButtonState &s) {
     return s.gpioKnown && (s.mask & 4u) != s.gpioCandidate;
 }
+
+static inline bool ukeButtonPowerWake(uint8_t pon, uint32_t latched) {
+    return ((pon | latched) & 0x80u) != 0;
+}
+
+static inline uint32_t ukeButtonWakeReport(uint32_t mask, bool ponValid, bool &suppressPower) {
+    if (!suppressPower) return mask;
+    if (ponValid && !(mask & 2u)) suppressPower = false;
+    return mask & ~2u;
+}

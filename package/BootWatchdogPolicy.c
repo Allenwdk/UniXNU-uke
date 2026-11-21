@@ -95,22 +95,34 @@ extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation
 static volatile unsigned uke_gunyah_wdt_pets;
 static volatile int uke_gunyah_wdt_last;
 static uint64_t uke_gunyah_wdt_deadline;
+static bool uke_gunyah_wdt_petting;
+
+void uke_gunyah_wdt_sleep_tick(void);
+void uke_gunyah_wdt_sleep_tick(void) {
+ if (!__atomic_load_n(&uke_gunyah_wdt_petting, __ATOMIC_ACQUIRE) ||
+     (uke_gunyah_wdt_deadline && mach_absolute_time() >= uke_gunyah_wdt_deadline)) return;
+ register uint64_t x0 __asm("x0")=0x86000007;
+ register uint64_t x1 __asm("x1")=0;
+ register uint64_t x2 __asm("x2")=0;
+ register uint64_t x3 __asm("x3")=0;
+ register uint64_t x4 __asm("x4")=0;
+ register uint64_t x5 __asm("x5")=0;
+ register uint64_t x6 __asm("x6")=0;
+ register uint64_t x7 __asm("x7")=0;
+ __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1),"r"(x2),"r"(x3),"r"(x4),"r"(x5),"r"(x6),"r"(x7) : "memory");
+ __atomic_store_n(&uke_gunyah_wdt_last, (int)x0, __ATOMIC_RELAXED);
+ __atomic_fetch_add(&uke_gunyah_wdt_pets, 1u, __ATOMIC_RELAXED);
+}
+
 static void uke_gunyah_wdt_pet_thread(void *arg, wait_result_t result) {
  (void)arg;(void)result;
+ __atomic_store_n(&uke_gunyah_wdt_petting, true, __ATOMIC_RELEASE);
  while (!uke_gunyah_wdt_deadline || mach_absolute_time() < uke_gunyah_wdt_deadline) {
-  register uint64_t x0 __asm("x0")=0x86000007;
-  register uint64_t x1 __asm("x1")=0;
-  register uint64_t x2 __asm("x2")=0;
-  register uint64_t x3 __asm("x3")=0;
-  register uint64_t x4 __asm("x4")=0;
-  register uint64_t x5 __asm("x5")=0;
-  register uint64_t x6 __asm("x6")=0;
-  register uint64_t x7 __asm("x7")=0;
-  __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1),"r"(x2),"r"(x3),"r"(x4),"r"(x5),"r"(x6),"r"(x7) : "memory");
-  uke_gunyah_wdt_last=(int)x0;++uke_gunyah_wdt_pets;
+  uke_gunyah_wdt_sleep_tick();
   assert_wait_timeout((event_t)&uke_gunyah_wdt_pet_thread,THREAD_UNINT,1000,NSEC_PER_MSEC);
   thread_block(THREAD_CONTINUE_NULL);
  }
+ __atomic_store_n(&uke_gunyah_wdt_petting, false, __ATOMIC_RELEASE);
 }
 // Printing lives on its own thread: kprintf can block on the video console
 // once the display stack owns the panel, and that must never stop the pets.
@@ -119,7 +131,8 @@ static void uke_gunyah_wdt_log_thread(void *arg, wait_result_t result) {
  for (;;) {
   uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
   printf("sheng bring-up Gunyah watchdog pets=%u last=%d t=%llus\n",
-   uke_gunyah_wdt_pets,uke_gunyah_wdt_last,(unsigned long long)(ns/1000000000ULL));
+   __atomic_load_n(&uke_gunyah_wdt_pets, __ATOMIC_RELAXED),
+   __atomic_load_n(&uke_gunyah_wdt_last, __ATOMIC_RELAXED),(unsigned long long)(ns/1000000000ULL));
   assert_wait_timeout((event_t)&uke_gunyah_wdt_log_thread,THREAD_UNINT,10000,NSEC_PER_MSEC);
   thread_block(THREAD_CONTINUE_NULL);
  }

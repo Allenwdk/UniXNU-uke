@@ -27,7 +27,7 @@
  
 --- /dev/null
 +++ b/pexpert/gen/uke_adt_driver_args.h
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,93 @@
 +/* SPDX-License-Identifier: BSD-2-Clause-Patent */
 +/* Uke iPadOS27 migration policy. Keep allowlist matched by the host regression. */
 +#ifndef UKE_ADT_DRIVER_ARGS_H
@@ -57,6 +57,8 @@
 +    "log-bluetooth",
 +    "uke-pencil",
 +    "timebase-hz",
++    "platform-sleep",
++    "platform-sleep-wake-after",
 +};
 +static int
 +uke_adt_driver_key(const char *key, unsigned length)

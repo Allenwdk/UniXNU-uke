@@ -1,0 +1,46 @@
+--- a/iokit/Kernel/IOPMrootDomain.cpp
++++ b/iokit/Kernel/IOPMrootDomain.cpp
+@@ -566,7 +566,7 @@
+ static uint32_t         gNoIdleFlag = 0;
+ static uint32_t         gSleepDisabledFlag = 0;
+ #if defined(__arm64__)
+-extern "C" void (*arm64_platform_sleep_hook)(boolean_t boot_cpu); // osfmk/arm64/cpu.c (sheng board patch)
++extern "C" bool uke_platform_sleep_ready(void) __attribute__((weak_import));
+ #endif
+ static uint32_t         gSwdPanic = 1;
+ static uint32_t         gSwdSleepTimeout = 0;
+@@ -7812,7 +7812,15 @@
+ 	// Conditions that prevent idle and demand system sleep.
+ 
+ 	do {
+-		if (gSleepDisabledFlag) {
++		bool sleepDisabled = gSleepDisabledFlag != 0;
++#if defined(__arm64__)
++		// ArmCpu registration is asynchronous. Keep the board default as a
++		// live interlock until the power key and the resume notifier are ready.
++		if (sleepDisabled && uke_platform_sleep_ready && uke_platform_sleep_ready()) {
++			sleepDisabled = false;
++		}
++#endif
++		if (sleepDisabled) {
+ 			err = kPMConfigPreventSystemSleep;
+ 			break;
+ 		}
+@@ -8509,17 +8517,6 @@
+ 					gSleepDisabledFlag = 0;
+ 				}
+ 			}
+-
+-#if defined(__arm64__)
+-			/* sheng: platform-sleep=1 with the CPU driver's sleep hook installed lifts sleep-disabled. */
+-			if (gSleepDisabledFlag && arm64_platform_sleep_hook != NULL) {
+-				uint32_t platformSleep = 0;
+-				if (PE_parse_boot_argn("platform-sleep", &platformSleep, sizeof(platformSleep)) && platformSleep == 1) {
+-					gSleepDisabledFlag = 0;
+-					IOLog("PMRD: sleep enabled by platform-sleep\n");
+-				}
+-			}
+-#endif
+ 			if (lowBatteryCondition || thermalEmergencyState) {
+ 				if (lowBatteryCondition) {
+ 					privateSleepSystem(kIOPMSleepReasonLowPower);

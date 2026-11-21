@@ -565,6 +565,7 @@ for stem, extra in [('CpuFreqProbe', ()),
                                     '-I', str(ROOT / 'drivers/ShengNovatekTouch'),
                                     '-I', str(PEN), '-DUKE_TOUCH_FIRMWARE_ZLIB')),
                     ('DpuProbe', ()), ('ButtonProbe', ()), ('BacklightProbe', ()),
+                    ('UkeSleep', ('-I', str(ROOT / 'drivers/ArmCpu'))),
                     ('GpuPowerProbe', tuple(x for d in ('drivers/Adreno740', 'kits/ArmSmmu4K', 'kits/AdrenoFirmware', 'kits/AdrenoPM4', 'kits/Sm7675Platform', 'build/sheng-gmu', 'build/sheng-gpu-smmu') for x in ('-I', str(ROOT / d))))]:
     compile_cpp(KITS / (stem + '.cpp'), board_dir / (stem + '.o'), extra)
     board_objects.append(board_dir / (stem + '.o'))
@@ -825,9 +826,10 @@ sources = [ROOT / 'drivers/GopFramebuffer/NativeLegacyDisplay.cpp', ROOT / 'driv
 if HID_SOURCE:
     sources.append(ROOT / 'drivers/ShengHidInput/NativeHidInput.cpp')
 sources += [ROOT / 'kits/uke/DisplayCallTrace27.cpp', ROOT / 'kits/uke/LegacyDisplayProbe.cpp']
-sources += [KITS / name for name in ('ButtonProbe.cpp', 'BacklightProbe.cpp', 'AppleARMBacklight.cpp',
+sources += [KITS / name for name in ('ButtonProbe.cpp', 'BacklightProbe.cpp', 'AppleARMBacklight.cpp', 'UkeSleep.cpp',
                                     'GeniI2c.c', 'GeniI2c.h', 'UkeButtonState.h', 'UkeBacklightState.h',
                                     'TouchProbe.cpp')]
+sources.append(ROOT / 'drivers/ArmCpu/ArmCpuSleep.h')
 sources += [PEN / name for name in ('UkePenFrames.h', 'UkePenPower.h', 'UkePenBle.h', 'UkePenFrameSysctl.c')]
 if HID_SOURCE:
     sources.append(PEN / 'UkePenBleBridge.cpp')

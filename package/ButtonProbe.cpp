@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Power and volume buttons of the sheng board (boot argument sheng-buttons=1), sent as the Consumer Power, Volume Increment and Volume
+// Power and volume buttons of the uke board (boot argument sheng-buttons=1), sent as the Consumer Power, Volume Increment and Volume
 // Decrement bits of the HID input device's report 2 (drivers/ShengHidInput).
 // The devicetree facts: power is the PMK8550 PON (SPMI SID 0, peripheral 0x13, interrupt 7 "pwrkey"), volume down its RESIN (interrupt 6),
 // volume up the uke PMXR2230 GPIO 6 (SID 1, peripheral 0x8d, active low with a pull-up, gpio-keys). All three are PMIC peripheral interrupts the
@@ -20,6 +20,7 @@ extern "C" {
 }
 
 extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
+extern "C" void uke_sleep_promote_power_wake(void) __attribute__((weak_import));
 // [0] stage (1 mapped, 2 configured, 3 armed, -9 masked after an interrupt storm, other negatives: the step that failed), [1] interrupts, [2] reports, [3] pressed mask,
 // [4] power APID, [5] GPIO APID, [6] interrupts of other APIDs cleared, [7] PDC version, [8] last error, [9] spurious interrupts
 extern "C" {volatile int32_t native_buttons_stats[10];}
@@ -44,6 +45,7 @@ void *volatile gSinkContext;
 IOLock *gSinkLock;
 volatile uint32_t gSinkEpoch;
 volatile uint32_t gPending[2];
+bool gSuppressWakePower;
 
 bool mapWindow(Window &w, uint64_t base, uint64_t size) {
     IODeviceMemory *memory = IODeviceMemory::withRange(base, size);
@@ -138,7 +140,7 @@ void buttonsIrq(void *) {
     thread_wakeup((event_t)&gEvents);
 }
 
-bool sample(UkeButtonState &state) {
+bool sample(UkeButtonState &state, uint32_t &report) {
     bool retry = false;
     for (unsigned i = 0; i < 2; ++i) {
         const int apid = i ? gGpio : gPon;
@@ -155,6 +157,12 @@ bool sample(UkeButtonState &state) {
     const int grc = br_read8(gObs.va, &gArb, gGpio, kRtSts, &gpio);
     uint64_t ns = 0; absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
     ukeButtonSample(state, !prc, pon, !grc, gpio, ns / 1000000);
+    bool suppress = __atomic_load_n(&gSuppressWakePower, __ATOMIC_ACQUIRE);
+    report = state.mask;
+    if (suppress) {
+        report = ukeButtonWakeReport(state.mask, !prc, suppress);
+        if (!suppress) __atomic_store_n(&gSuppressWakePower, false, __ATOMIC_RELEASE);
+    }
     if (prc || grc) native_buttons_stats[8] = prc ? prc : grc;
     return retry || prc || grc || ukeButtonDebouncing(state);
 }
@@ -214,15 +222,17 @@ void buttonsThread(void *, wait_result_t) {
     uint32_t seen = __atomic_load_n(&gEvents, __ATOMIC_ACQUIRE), last = ~0u, epoch = ~0u;
     UkeButtonState state = {};
     for (;;) {
-        const bool retry = sample(state);
-        native_buttons_stats[3] = (int32_t)state.mask;
+        uint32_t report = 0;
+        const bool retry = sample(state, report);
+        if (uke_sleep_promote_power_wake) uke_sleep_promote_power_wake();
+        native_buttons_stats[3] = (int32_t)report;
         IOLockLock(gSinkLock);
-        if (gSink && (state.mask != last || epoch != gSinkEpoch)) {
-            gSink(gSinkContext, state.mask);
-            last = state.mask; epoch = gSinkEpoch;
+        if (gSink && (report != last || epoch != gSinkEpoch)) {
+            gSink(gSinkContext, report);
+            last = report; epoch = gSinkEpoch;
             native_buttons_stats[2] = native_buttons_stats[2] + 1;
             if (native_buttons_stats[2] <= 64 || !(native_buttons_stats[2] % 32))
-                printf("UKE BTN: mask=%x irq=%d report=%d err=%d\n", state.mask,
+                printf("UKE BTN: mask=%x irq=%d report=%d err=%d\n", report,
                        native_buttons_stats[1], native_buttons_stats[2], native_buttons_stats[8]);
         }
         IOLockUnlock(gSinkLock);
@@ -236,6 +246,49 @@ void buttonsThread(void *, wait_result_t) {
     }
 }
 }  // namespace
+
+extern "C" bool uke_buttons_sleep_armed(void) {
+    return native_buttons_stats[0] == 3 &&
+        (*apidReg(gPon, kAccEnable) & 1u) != 0;
+}
+
+extern "C" uint32_t uke_buttons_sleep_intid(void) {
+    return 32 + kSpi;
+}
+
+// The ArmCpu hook invokes this on the boot CPU with interrupts masked.
+// Preserve the power latch for the normal IRQ and drain the other sources
+// sharing the arbiter line, as in the sheng sleep callback.
+extern "C" bool uke_buttons_sleep_check(void) {
+    if (!uke_buttons_sleep_armed()) return false;
+    bool wake = false;
+    for (uint32_t word = 0; word * 32 < gApids; ++word) {
+        uint32_t pending = gIntr.va[word];
+        while (pending) {
+            const int apid = (int)(word * 32 + __builtin_ctz(pending));
+            pending &= pending - 1;
+            if ((uint32_t)apid >= gApids) continue;
+            if (apid != gPon && apid != gGpio) {
+                *apidReg(apid, kIrqClear) = 0xff;
+                continue;
+            }
+            const uint32_t status = *apidReg(apid, kIrqStatus);
+            uint8_t pon = 0;
+            if (apid == gPon && (status & kPowerBit) == 0)
+                (void)br_read8(gObs.va, &gArb, gPon, kRtSts, &pon);
+            if (apid == gPon && ukeButtonPowerWake(pon, status)) {
+                wake = true;
+                continue;
+            }
+            *apidReg(apid, kIrqClear) = status;
+            const uint8_t owned = (uint8_t)status & (apid == gPon ? kResinBit : kGpioBit);
+            if (owned) (void)br_write8(gChn.va, apid, kLatchedClr, owned);
+        }
+    }
+    __asm__ volatile("dsb sy" ::: "memory");
+    if (wake) __atomic_store_n(&gSuppressWakePower, true, __ATOMIC_RELEASE);
+    return wake;
+}
 
 extern "C" void native_buttons_set_sink(void (*sink)(void *, uint32_t), void *context) {
     if (!gSinkLock) return;

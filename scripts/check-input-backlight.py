@@ -22,18 +22,38 @@ def irq_harness():
     source = (ROOT / 'package/ButtonProbe.cpp').read_text()
     start = source.index('void buttonsIrq(')
     end = source.index('\nbool sample(', start)
-    code = source[start:end].replace('__asm__ volatile("dsb sy" ::: "memory");', '__atomic_thread_fence(__ATOMIC_SEQ_CST);')
+    sleep = source.index('extern "C" bool uke_buttons_sleep_armed(')
+    sleep_end = source.index('extern "C" void native_buttons_set_sink(', sleep)
+    code = (source[start:end] + '\n' + source[sleep:sleep_end]).replace(
+        '__asm__ volatile("dsb sy" ::: "memory");', '__atomic_thread_fence(__ATOMIC_SEQ_CST);')
     return r'''
+#include "UkeButtonState.h"
 namespace ButtonIRQ {
 constexpr uint32_t kAccEnable = 0x100, kIrqStatus = 0x104, kIrqClear = 0x108;
 constexpr uint32_t kPdcCfg = 0x110, kPdcPin = 1;
 constexpr uint8_t kPowerBit = 0x80, kResinBit = 0x40, kGpioBit = 1;
+constexpr uint32_t kSpi = 481;
+constexpr uint8_t kRtSts = 0x10, kLatchedClr = 0x14;
 struct Window {uint32_t *va;};
 uint32_t intr[1], pdc[128], channels[8][128];
 Window gIntr = {intr}, gPdc = {pdc};
 uint32_t gApids = 7, gEvents, gPending[2];
 int gPon = 2, gGpio = 5;
 int32_t native_buttons_stats[10];
+Window gObs = {}, gChn = {};
+int gArb;
+uint8_t realTime, cleared[8];
+bool gSuppressWakePower;
+int br_read8(uint32_t *, const int *, int apid, uint8_t reg, uint8_t *out) {
+    CHECK(apid == gPon && reg == kRtSts);
+    *out = realTime;
+    return 0;
+}
+int br_write8(uint32_t *, int apid, uint8_t reg, uint8_t bits) {
+    CHECK(apid >= 0 && apid < 7 && reg == kLatchedClr);
+    cleared[apid] = bits;
+    return 0;
+}
 using event_t = void *;
 void thread_wakeup(event_t) {}
 uint32_t *apidReg(int apid, uint32_t reg) {CHECK(apid >= 0 && apid < 7); return &channels[apid][reg / 4];}
@@ -51,6 +71,27 @@ void test() {
     for (unsigned i = 0; i < 1000; ++i) buttonsIrq(nullptr);
     CHECK(pdc[(kPdcCfg + kPdcPin * 4) / 4] == 4 && native_buttons_stats[0] == -9);
     CHECK(gEvents == 1 && native_buttons_stats[9] == 1000);
+
+    CHECK(!uke_buttons_sleep_check());
+    native_buttons_stats[0] = 3;
+    channels[2][kAccEnable / 4] = 1;
+    CHECK(uke_buttons_sleep_intid() == 513 && uke_buttons_sleep_armed());
+    channels[2][kIrqStatus / 4] = 0x40;
+    channels[5][kIrqStatus / 4] = 1;
+    intr[0] = (1u << 2) | (1u << 5) | (1u << 6);
+    CHECK(!uke_buttons_sleep_check() && !gSuppressWakePower);
+    CHECK(cleared[2] == 0x40 && cleared[5] == 1);
+    CHECK(channels[6][kIrqClear / 4] == 0xff);
+
+    // A short press may be released before wake handling. Keep its latch
+    // pending so that the awake interrupt handler can finish the event.
+    channels[2][kIrqStatus / 4] = 0x80;
+    channels[2][kIrqClear / 4] = cleared[2] = 0;
+    CHECK(uke_buttons_sleep_check() && gSuppressWakePower);
+    CHECK(!cleared[2] && !channels[2][kIrqClear / 4]);
+    channels[2][kIrqStatus / 4] = 0x40;
+    realTime = 0x80;
+    CHECK(uke_buttons_sleep_check());
 }
 }
 '''.replace('IRQ_CODE', code)
@@ -134,6 +175,15 @@ int main() {
         CHECK(!driver.published && models[0].commands == 1 && !driver.engine[0].combinedRead);
     }
     ButtonIRQ::test();
+    bool suppressWake = true;
+    CHECK(ukeButtonWakeReport(2u | 8u, true, suppressWake) == 8u && suppressWake);
+    CHECK(ukeButtonWakeReport(0, false, suppressWake) == 0 && suppressWake);
+    CHECK(ukeButtonWakeReport(0, true, suppressWake) == 0 && !suppressWake);
+    CHECK(ukeButtonWakeReport(2u, true, suppressWake) == 2u);
+    CHECK(!ukeBacklightWakeReady(true, 1, 1, 1499));
+    CHECK(ukeBacklightWakeReady(true, 2, 0, 0) && ukeBacklightWakeReady(true, 0, 2, 0));
+    CHECK(ukeBacklightWakeReady(true, 0, 0, 1500));
+    CHECK(!ukeBacklightWakeReady(false, 0, 0, 599) && ukeBacklightWakeReady(false, 0, 0, 600));
     CHECK(ukeButtonOwned(0x01001300, 0, 0x13, 0));
     CHECK(!ukeButtonOwned(0x00001300, 0, 0x13, 0));
     CHECK(!ukeButtonOwned(0x01001300, 1, 0x13, 0));

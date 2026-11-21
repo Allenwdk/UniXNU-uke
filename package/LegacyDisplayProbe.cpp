@@ -708,6 +708,7 @@ extern void uke_usb_probe(void);
 extern void sheng_gpu_power_probe(void);
 extern void native_touch_probe(void);
 extern void sheng_buttons_probe(void);
+extern "C" void uke_sleep_probe(void) __attribute__((weak_import));
 extern void sheng_backlight_probe(void);
 extern void uke_wpss_probe(void);
 extern void uke_bluetooth_probe(void);
@@ -802,6 +803,7 @@ void native_legacy_display_late_probe(void) {
     native_dpu_probe();
     native_touch_probe();
     sheng_buttons_probe();
+    if (uke_sleep_probe) uke_sleep_probe();
     sheng_backlight_probe();
     uke_wpss_probe();
     uke_bluetooth_probe();

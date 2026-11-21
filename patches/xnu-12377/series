@@ -179,6 +179,7 @@ uke-files-union-view.patch
 
 # Opt-in platform sleep hooks from sheng #127.
 sheng-platform-sleep.patch
+uke-sleep-readiness.patch
 
 # Keep iPadOS swap on the writable owner Data volume and prioritize demand reads.
 uke-owner-data-swap.patch

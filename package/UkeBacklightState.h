@@ -11,3 +11,7 @@ static inline uint32_t ukeBacklightLevelForNits(int32_t fixed) {
     const uint64_t value = ((uint64_t)fixed * 2047 + scale / 2) / scale;
     return value < 1 ? 1 : value > 2047 ? 2047 : (uint32_t)value;
 }
+
+static inline bool ukeBacklightWakeReady(bool counted, uint32_t flips, uint32_t latches, uint64_t elapsedMs) {
+    return counted ? flips >= 2 || latches >= 2 || elapsedMs >= 1500 : elapsedMs >= 600;
+}
