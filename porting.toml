@@ -394,7 +394,7 @@ paths = [
   "scripts/prepare-pencil-card-fixups.py",
 ]
 inputs = ["P81c system BLE bond, NT36532 pen frames, panel calibration and PMIC attachment status."]
-configuration = ["The NativeFocusPenPro submodule is embedded by the Uke kernel recipe. The ADT selects the Pencil configuration."]
+configuration = ["The NativeFocusPenPro submodule is embedded by the Uke kernel recipe. The default iPadOS 27.0.1 board selects the qualified Pencil ADT options, prelink roots and pairing-card fixups. The build uses a matching signed Pencil runtime addon and owner trust bundle."]
 procedure = ["Run the radio and stroke host tests from the driver checkout, then build the Uke kernel and signed runtime."]
 findings = ["The radio protocol and stroke tests run directly from the extracted component checkout. The owner reported no issues on the flashed split image."]
 completion = ["The extracted component resolves to its pinned checkout and supplies the native kernel and userspace sources. The rebuilt split image passed the owner's retest."]

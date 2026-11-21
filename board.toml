@@ -175,7 +175,7 @@ sha256 = "1294992888e8c7c7fcd8a6d0a672cc666eff3c95e666ce5840db7e03edcc500d"
 # Owner-authenticated SystemOS startup replaces Apple-hardware Ignition preparation.
 # Retain Image4 code as a dependency; do not start its hardware-key service.
 # Follow sheng for USB hub, HID and mass-storage matching. AppleOnboardSerial and AppleSMC are optional host metaclass casts.
-roots = ["com.apple.AppleFSCompression.AppleFSCompressionTypeZlib", "com.apple.driver.AppleARMPlatform", "com.apple.driver.AppleARMWatchdogTimer", "com.apple.driver.AppleAudioClockLibs", "com.apple.driver.AppleEffaceableStorage", "com.apple.driver.AppleIISController", "com.apple.driver.AppleM2ScalerCSCDriver", "com.apple.driver.AppleMobileFileIntegrity", "com.apple.driver.ApplePMGR", "com.apple.driver.IODARTFamily", "com.apple.filesystems.apfs", "com.apple.filesystems.lifs", "com.apple.iokit.CoreAnalyticsFamily", "com.apple.iokit.IOAVFamily", "com.apple.iokit.IOAudio2Family", "com.apple.iokit.IOCECFamily", "com.apple.iokit.IOCryptoAcceleratorFamily", "com.apple.iokit.IOGPUFamily", "com.apple.iokit.IOHDCPFamily", "com.apple.iokit.IOMobileGraphicsFamily", "com.apple.iokit.IOReportFamily", "com.apple.iokit.IOSlowAdaptiveClockingFamily", "com.apple.iokit.IOStorageFamily", "com.apple.iokit.IOSurface", "com.apple.kec.Libm", "com.apple.kec.corecrypto", "com.apple.kext.AppleMatch", "com.apple.kext.CoreTrust", "com.apple.security.AppleImage4", "com.apple.security.sandbox", "com.apple.iokit.IOHIDFamily", "com.apple.iokit.IOHIDEventDriver", "com.apple.iokit.IOUSBDeviceFamily", "com.apple.driver.AppleUSBXDCI", "com.apple.driver.AppleUSBDeviceMux", "com.apple.iokit.IOUSBHostFamily", "com.apple.driver.usb.AppleUSBXHCI", "com.apple.driver.usb.AppleUSBHub", "com.apple.driver.usb.AppleUSBHostCompositeDevice", "com.apple.driver.usb.IOUSBHostHIDDevice", "com.apple.iokit.IOUSBMassStorageDriver", "com.apple.iokit.IOSCSIArchitectureModelFamily", "com.apple.iokit.IOSCSIBlockCommandsDevice", "!com.apple.driver.AppleOnboardSerial", "!com.apple.driver.AppleSMC"]
+roots = ["com.apple.AppleFSCompression.AppleFSCompressionTypeZlib", "com.apple.driver.AppleARMPlatform", "com.apple.driver.AppleARMWatchdogTimer", "com.apple.driver.AppleAudioClockLibs", "com.apple.driver.AppleEffaceableStorage", "com.apple.driver.AppleIISController", "com.apple.driver.AppleM2ScalerCSCDriver", "com.apple.driver.AppleMobileFileIntegrity", "com.apple.driver.ApplePMGR", "com.apple.driver.IODARTFamily", "com.apple.filesystems.apfs", "com.apple.filesystems.lifs", "com.apple.iokit.CoreAnalyticsFamily", "com.apple.iokit.IOAVFamily", "com.apple.iokit.IOAudio2Family", "com.apple.iokit.IOCECFamily", "com.apple.iokit.IOCryptoAcceleratorFamily", "com.apple.iokit.IOGPUFamily", "com.apple.iokit.IOHDCPFamily", "com.apple.iokit.IOMobileGraphicsFamily", "com.apple.iokit.IOReportFamily", "com.apple.iokit.IOSlowAdaptiveClockingFamily", "com.apple.iokit.IOStorageFamily", "com.apple.iokit.IOSurface", "com.apple.kec.Libm", "com.apple.kec.corecrypto", "com.apple.kext.AppleMatch", "com.apple.kext.CoreTrust", "com.apple.security.AppleImage4", "com.apple.security.sandbox", "com.apple.iokit.IOHIDFamily", "com.apple.iokit.IOHIDEventDriver", "com.apple.driver.ApplePencilDriver", "com.apple.driver.AppleInputDeviceSupport", "com.apple.iokit.IOUSBDeviceFamily", "com.apple.driver.AppleUSBXDCI", "com.apple.driver.AppleUSBDeviceMux", "com.apple.iokit.IOUSBHostFamily", "com.apple.driver.usb.AppleUSBXHCI", "com.apple.driver.usb.AppleUSBHub", "com.apple.driver.usb.AppleUSBHostCompositeDevice", "com.apple.driver.usb.IOUSBHostHIDDevice", "com.apple.iokit.IOUSBMassStorageDriver", "com.apple.iokit.IOSCSIArchitectureModelFamily", "com.apple.iokit.IOSCSIBlockCommandsDevice", "!com.apple.driver.AppleOnboardSerial", "!com.apple.driver.AppleSMC"]
 extra_args = ["--fileset-reference", "refer/apple-fileset-reference/2f9eabe43241bb9b64d367151d79d660e81e3ec7fee8399c3f37a0f5ba3b5aa8.macho", "--allow-missing"]
 
 [firmware]
@@ -236,6 +236,23 @@ root_policies = "{tree}/build/sheng-source-storage/root-policies.bin"
 # Context::track_surface before the first push. Original bytes must match; the
 # signature validator and original factory/NULL/retain/PAC paths remain in use.
 text_fixups = [
+  # 24A446 PencilPairingAngel: Focus Pen Pro card and pairing UI.
+  "PencilPairingAngel,d4410,00000000000000000000000000000000,8a1c00534a0900515f05007108030054",
+  "PencilPairingAngel,d4420,00000000000000000000000000000000,e50200b42b0080526a21ca1ac80000d0",
+  "PencilPairingAngel,d4430,00000000000000000000000000000000,08c142f9a96868f829050091090200b4",
+  "PencilPairingAngel,d4440,00000000000000000000000000000000,2bfd7ed3cb0100b529f57ed3c80000d0",
+  "PencilPairingAngel,d4450,00000000000000000000000000000000,080118910bfd5fc86cf57e923f010ceb",
+  "PencilPairingAngel,d4460,00000000000000000000000000000000,230100546b01899a7f010aeac1000054",
+  "PencilPairingAngel,d4470,00000000000000000000000000000000,6b010aaa0bfd0cc8ecfeff357f2303d5",
+  "PencilPairingAngel,d4480,00000000000000000000000000000000,9fbdfd175f3f03d5d1220091300240f9",
+  "PencilPairingAngel,d4490,00000000000000000000000000000000,f1e0faf2110a1fd70000000000000000",
+  "PencilPairingAngel,d44a0,00000000000000000000000000000000,200200b4c80000d008c142f9096868f8",
+  "PencilPairingAngel,d44b0,00000000000000000000000000000000,a901f8b729050091c80000d008011891",
+  "PencilPairingAngel,d44c0,00000000000000000000000000000000,0a0940f93f010aeb23010054ab0000d0",
+  "PencilPairingAngel,d44d0,00000000000000000000000000000000,6b1d45f98b6a6bf86b0000b580000054",
+  "PencilPairingAngel,d44e0,00000000000000000000000000000000,090900f97f2303d5b0c0fd17c0035fd6",
+  "PencilPairingAngel,43af8,7f2303d5,46420214",
+  "PencilPairingAngel,447a4,7f2303d5,3f3f0214",
   "dyld_shared_cache_arm64e.01,42c8718,7f2303d5f85fbca9f65701a9f44f02a9,7f2303d55a9b0414f65701a9f44f02a9",
   "dyld_shared_cache_arm64e.01,43ef484,00000000000000000000000000000000,f37bbfa9f30300aa9e0000107f2303d5",
   "dyld_shared_cache_arm64e.01,43ef494,00000000000000000000000000000000,f85fbca9a264fb17c00000b4e10300aa",
@@ -246,7 +263,7 @@ text_fixups = [
   "dyld_shared_cache_arm64e.11,75f4c2c,ae000094f50300aa,5503148b1f2003d5",
 ]
 
-# NativeAdrenoMetal and its matching owner trust bundle are selected together in unixnu.local.toml.
+# The signed Metal and Focus Pen Pro addon and its matching owner trust are selected in unixnu.local.toml.
 kernel_args = [
   # Keep these options in the command line so both XNU and the Metal plugin's kern.bootargs reader see them.
   "diag=1",
@@ -409,6 +426,7 @@ artwork-display-gamut = "sRGB"
 
 [adt.product.u32]
 thin-bezel = 1
+supports-apple-pencil = 1
 
 # 24A446 MobileGestalt tests the presence of these /product properties.
 # Match their zero-byte values in the original J820 ADT; product-id is a
@@ -437,4 +455,4 @@ reg = "000000c8000000000000000200000000"
 
 # Driver defaults outside DarwinBoot CommandLine; explicit CLI arguments override.
 [adt.chosen.string]
-unixnu-driver-args = "offline-legacy-register=1 offline-legacy-gop=1 offline-legacy-unit-scale=2 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1 offline-legacy-phase=4 offline-legacy-noconsole=1 sheng-touch=4 sheng-touch-hid=1 sheng-buttons=1 sheng-backlight=1 sheng-touch-split=1 sheng-dpu-scanout=2 sheng-vsync=120 sheng-vsync-fixed=1 bluetooth=0 log-bluetooth=0"
+unixnu-driver-args = "offline-legacy-register=1 offline-legacy-gop=1 offline-legacy-unit-scale=2 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1 offline-legacy-phase=4 offline-legacy-noconsole=1 sheng-touch=4 sheng-touch-hid=1 sheng-buttons=1 sheng-backlight=1 sheng-touch-split=1 sheng-dpu-scanout=2 sheng-vsync=120 sheng-vsync-fixed=1 bluetooth=0 log-bluetooth=0 uke-pencil=4 timebase-hz=24000000"
