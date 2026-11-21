@@ -1,0 +1,21 @@
+Dispatch the root domain power completion callback on arm64e.
+
+--- a/iokit/Kernel/IOServicePM.cpp
++++ b/iokit/Kernel/IOServicePM.cpp
+@@ -556,11 +556,13 @@
+ 			(thread_call_func_t) &IOService::pmDriverCallout, this);
+ 		assert(fDriverCallEntry);
+ 
+-		// Check for powerChangeDone override.
+-		if (OSMemberFunctionCast(void (*)(void),
++		// The root domain always supplies powerChangeDone, which enters
++		// platform sleep. On arm64e the virtual member casts can return the
++		// same dispatch thunk even when the two implementations differ.
++		if (IS_ROOT_DOMAIN || (OSMemberFunctionCast(void (*)(void),
+ 		    getResourceService(), &IOService::powerChangeDone) !=
+ 		    OSMemberFunctionCast(void (*)(void),
+-		    this, &IOService::powerChangeDone)) {
++		    this, &IOService::powerChangeDone))) {
+ 			fPCDFunctionOverride = true;
+ 		}
+ 
