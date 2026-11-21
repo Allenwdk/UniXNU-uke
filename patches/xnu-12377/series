@@ -113,6 +113,8 @@ uke-outside-dram-wc.patch
 uke-pset-lock-owner.patch
 
 # Common xnu-12377 fixes reviewed from the latest upstream macOS work.
+upstream/virtual-timebase.patch
+upstream/kperf-timebase-scale-no-division.patch
 upstream/xnuconfig-work-interval-counters.patch
 upstream/xnuconfig-timebase-trap-count.patch
 upstream/vmwait-vnode-pager-peek-name.patch

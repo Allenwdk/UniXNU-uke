@@ -15,6 +15,7 @@
 #include <libkern/c++/OSString.h>
 #include <libkern/c++/OSIterator.h>
 #include <pexpert/pexpert.h>
+#include <kern/clock.h>
 #if __has_feature(ptrauth_calls)
 #include <ptrauth.h>
 #endif
@@ -65,6 +66,18 @@ static const unsigned char touchDescriptor[]={
     FINGER_DESC FINGER_DESC FINGER_DESC FINGER_DESC FINGER_DESC
     0x09,0x54,0x75,0x08,0x95,0x01,0x15,0x00,0x26,0xff,0x00,0x81,0x02,0xc0
 };
+// Built-in Digitizer / Pen, with pressure, tilt and discrete proximity Z.
+static const unsigned char penDescriptor[]={
+    0x05,0x0d,0x09,0x01,0xa1,0x01,0x09,0x20,0xa1,0x00,
+    0x85,0x01,0x09,0x32,0x09,0x42,0x15,0x00,0x25,0x01,0x75,0x01,0x95,0x02,0x81,0x02,
+    0x75,0x06,0x95,0x01,0x81,0x03,0x05,0x01,0x09,0x30,0x09,0x31,
+    0x15,0x00,0x26,0xff,0x7f,0x75,0x10,0x95,0x02,0x81,0x02,
+    0x05,0x0d,0x09,0x30,0x26,0xff,0x3f,0x95,0x01,0x81,0x02,
+    0x09,0x3d,0x09,0x3e,0x15,0xc4,0x25,0x3c,0x35,0xc4,0x45,0x3c,
+    0x65,0x14,0x75,0x10,0x95,0x02,0x81,0x02,
+    0x05,0x01,0x09,0x32,0x15,0x00,0x25,0x01,0x35,0x00,0x45,0x01,
+    0x65,0x00,0x75,0x08,0x95,0x01,0x81,0x02,0xc0,0xc0,
+};
 #define TOUCH_FINGERS 10
 // Edge contacts (int-163). A contact that starts within ~3 mm of a panel edge carries kIOHIDDigitizerEventFromEdgeTip (0x800) in its
 // finger events' event mask for its whole life, as Apple's multitouch stack reports it (MultitouchHID). UIKit derives UITouch's edge
@@ -78,6 +91,9 @@ static const unsigned char touchDescriptor[]={
 // calls); _children at +24 (IOHIDEvent.h; appendChild stores into it and free releases it). _parent is never set (appendChild only
 // stores the child, int-163 skipped every finger by comparing it), so each child is an IOHIDEvent by its class instead.
 namespace edge {
+// UIKit on 24A446 divides native Pencil event pressure by 120.
+static constexpr unsigned kPenPressureMax=120;
+static constexpr unsigned kPenHoverHeight=1;
 #if defined(NATIVE_HID_SOURCE_API) && NATIVE_HID_SOURCE_API && !__has_feature(ptrauth_calls)
 // Source-only bring-up without pointer authentication emits ordinary digitizer reports: a copied vtable of another family's ABI is never used.
 extern "C" {volatile uint32_t native_touch_hid_multi[3];}
@@ -89,7 +105,9 @@ enum : uint32_t {kDigitizer=11,kX=0xB0000,kY=0xB0001,kIndex=0xB0005,kMask=0xB000
 // 48 panel pixels of 3048 x 2032 (the sweet reference uses 48 px), in the driver's normalised IOFixed coordinates.
 static const int32_t kEdgeX=48*65536/3048,kEdgeY=48*65536/2032;
 #if __has_feature(ptrauth_calls)
-static void (*originalDispatch)(IOService *,OSObject *,IOOptionBits);
+using Dispatch=void (*)(IOService *,OSObject *,IOOptionBits);
+static Dispatch originalDispatch;
+static Dispatch originalPenDispatch;
 #else
 static uintptr_t originalDispatch;
 #endif
@@ -118,6 +136,12 @@ template <typename R,typename... A> static R call(void *object,unsigned slot,uin
 }
 enum : uint16_t {kDivDispatch=0,kDivGetType=0,kDivGetInteger=0,kDivSetInteger=0,kDivGetFixed=0};
 #endif
+static bool isPanelEdge(int32_t x,int32_t y) {
+    return x<kEdgeX || x>65536-kEdgeX || y<kEdgeY || y>65536-kEdgeY;
+}
+static void markEdgeTip(void *event,uint32_t mask) {
+    call<void,uint32_t,int32_t,IOOptionBits>(event,kSetInteger,kDivSetInteger,kMask,(int32_t)(mask|kFromEdgeTip),0);
+}
 // One finger event; true when it now carries the bit.
 static bool mark(void *child) {
     if(call<uint32_t,IOOptionBits>(child,kGetType,kDivGetType,0)!=kDigitizer)return false;   // the scan-time vendor child
@@ -127,12 +151,12 @@ static bool mark(void *child) {
     const bool touch=call<int32_t,uint32_t,IOOptionBits>(child,kGetInteger,kDivGetInteger,kTouch,0)!=0;
     if((mask&kMaskTouch) && touch) {   // the contact begins: its position now decides
         const int32_t x=call<int32_t,uint32_t,IOOptionBits>(child,kGetFixed,kDivGetFixed,kX,0),y=call<int32_t,uint32_t,IOOptionBits>(child,kGetFixed,kDivGetFixed,kY,0);
-        fromEdge[index]=x<kEdgeX || x>65536-kEdgeX || y<kEdgeY || y>65536-kEdgeY;
+        fromEdge[index]=isPanelEdge(x,y);
         native_touch_edge_stats[1]=native_touch_edge_stats[1]+1;
         if(fromEdge[index])native_touch_edge_stats[2]=native_touch_edge_stats[2]+1;
     }
     const bool edged=fromEdge[index];
-    if(edged)call<void,uint32_t,int32_t,IOOptionBits>(child,kSetInteger,kDivSetInteger,kMask,(int32_t)(mask|kFromEdgeTip),0);
+    if(edged)markEdgeTip(child,mask);
     if(!touch && (mask&kMaskTouch))fromEdge[index]=false;   // the lift keeps the bit; the next contact with this index starts fresh
     return edged;
 }
@@ -149,7 +173,7 @@ static void dispatch(IOService *self,OSObject *event,IOOptionBits options) {
             }
             if(any) {
                 const uint32_t mask=(uint32_t)call<int32_t,uint32_t,IOOptionBits>(event,kGetInteger,kDivGetInteger,kMask,0);
-                call<void,uint32_t,int32_t,IOOptionBits>(event,kSetInteger,kDivSetInteger,kMask,(int32_t)(mask|kFromEdgeTip),0);
+                markEdgeTip(event,mask);
             }
         } else if(!children) mark(event);   // one transducer dispatched on its own
     }
@@ -161,6 +185,103 @@ static void dispatch(IOService *self,OSObject *event,IOOptionBits options) {
 }
 // This device's own event driver gets the wrapped copy; any other driver keeps the original table.
 #if __has_feature(ptrauth_calls)
+static void scalePenPressure(OSObject *event) {
+    // 24A446's IOHIDEvent vtable puts setFixedValue after getFixedValue.
+    constexpr unsigned setFixed=26;
+    constexpr uint16_t divSetFixed=0x6e23;
+    constexpr uint32_t pressureField=0xB000A;
+    const int32_t pressure=call<int32_t,uint32_t,IOOptionBits>(event,kGetFixed,kDivGetFixed,pressureField,0);
+    if(pressure<=0 || pressure>65536)return;
+    const int32_t scaled=pressure*static_cast<int32_t>(kPenPressureMax);
+    call<void,uint32_t,int32_t,IOOptionBits>(event,setFixed,divSetFixed,pressureField,scaled,0);
+    static unsigned samples;
+    if(__atomic_load_n(&samples,__ATOMIC_RELAXED)<8 &&
+       __atomic_fetch_add(&samples,1,__ATOMIC_RELAXED)<8) {
+        const int32_t written=call<int32_t,uint32_t,IOOptionBits>(event,kGetFixed,kDivGetFixed,pressureField,0);
+        IOLog("UKE PEN event pressure fixed=%d scaled=%d readback=%d\n",pressure,scaled,written);
+    }
+}
+static bool markPenEdge(OSObject *event) {
+    // The built-in pen has one transducer on its input work loop. Remember
+    // where this contact started through moves and the final tip-up.
+    static bool wasDown, fromEdge;
+    static uint64_t contactStart, nextTrace;
+    static unsigned contactReports;
+    static bool traceContact;
+    static int32_t startX,startY;
+    const bool down=call<int32_t,uint32_t,IOOptionBits>(event,kGetInteger,kDivGetInteger,kTouch,0)!=0;
+    if(down && !wasDown) {
+        const int32_t x=call<int32_t,uint32_t,IOOptionBits>(event,kGetFixed,kDivGetFixed,kX,0);
+        const int32_t y=call<int32_t,uint32_t,IOOptionBits>(event,kGetFixed,kDivGetFixed,kY,0);
+        fromEdge=isPanelEdge(x,y);
+        if(fromEdge) {
+            const uint64_t now=mach_continuous_time();
+            traceContact=now>=nextTrace;
+            if(traceContact) {
+                uint64_t interval;
+                nanoseconds_to_absolutetime(125000000,&interval);
+                nextTrace=now+interval;
+                contactStart=now;
+                contactReports=0;
+                startX=x;startY=y;
+            }
+        }
+    }
+    const bool marked=fromEdge;
+    if(marked) {
+        const uint32_t mask=(uint32_t)call<int32_t,uint32_t,IOOptionBits>(event,kGetInteger,kDivGetInteger,kMask,0);
+        markEdgeTip(event,mask);
+        if(traceContact && down) {
+            if(!contactReports) {
+                const uint32_t readback=(uint32_t)call<int32_t,uint32_t,IOOptionBits>(event,kGetInteger,kDivGetInteger,kMask,0);
+                IOLog("UKE PEN edge onset x_fixed=%d y_fixed=%d mask=%x\n",startX,startY,readback);
+            }
+            ++contactReports;
+        }
+        if(traceContact && !down) {
+            uint64_t elapsed;
+            absolutetime_to_nanoseconds(mach_continuous_time()-contactStart,&elapsed);
+            const int32_t x=call<int32_t,uint32_t,IOOptionBits>(event,kGetFixed,kDivGetFixed,kX,0);
+            const int32_t y=call<int32_t,IOOptionBits>(event,kGetFixed,kDivGetFixed,kY,0);
+            IOLog("UKE PEN edge end x_fixed=%d y_fixed=%d reports=%u elapsed_us=%llu\n",
+                  x,y,contactReports,(unsigned long long)(elapsed/1000));
+        }
+    }
+    wasDown=down;
+    if(!down) {fromEdge=false;traceContact=false;}
+    return marked;
+}
+static void dispatchPen(IOService *self,OSObject *event,IOOptionBits options) {
+    if(event && call<uint32_t,IOOptionBits>(event,kGetType,kDivGetType,0)==kDigitizer) {
+        scalePenPressure(event);
+        OSObject *tipEvent=nullptr;
+        OSArray *children=*reinterpret_cast<OSArray **>(reinterpret_cast<uint8_t *>(event)+24);
+        if(children && OSDynamicCast(OSArray,children)) {
+            for(unsigned i=0;i<children->getCount();++i) {
+                OSObject *child=children->getObject(i);
+                if(child && child->metaCast("IOHIDEvent") &&
+                   call<uint32_t,IOOptionBits>(child,kGetType,kDivGetType,0)==kDigitizer) {
+                    if(!tipEvent)tipEvent=child;
+                    scalePenPressure(child);
+                    const bool inRange=call<int32_t,uint32_t,IOOptionBits>(child,kGetInteger,kDivGetInteger,0xB0008,0)!=0;
+                    const bool tip=call<int32_t,uint32_t,IOOptionBits>(child,kGetInteger,kDivGetInteger,kTouch,0)!=0;
+                    static unsigned hoverSamples;
+                    if(inRange && !tip && __atomic_load_n(&hoverSamples,__ATOMIC_RELAXED)<8 &&
+                       __atomic_fetch_add(&hoverSamples,1,__ATOMIC_RELAXED)<8) {
+                        const unsigned height=call<int32_t,uint32_t,IOOptionBits>(child,kGetFixed,kDivGetFixed,0xB0002,0);
+                        IOLog("UKE PEN event hover range=1 touch=0 z_fixed=%u\n",height);
+                    }
+                }
+            }
+        }
+        const bool edged=markPenEdge(tipEvent?tipEvent:event);
+        if(edged && tipEvent) {
+            const uint32_t mask=(uint32_t)call<int32_t,uint32_t,IOOptionBits>(event,kGetInteger,kDivGetInteger,kMask,0);
+            markEdgeTip(event,mask);
+        }
+    }
+    originalPenDispatch(self,event,options);
+}
 // The copy's slots are signed for their new addresses, each with its own discriminator. Those are Apple's: the diversity of each slot's
 // authenticated fixup in 24A446's kernelcache (IOHIDEventDriver's vtable, 220 slots, IOHIDFamily-2238.120.5; ipsw kernel cpp --methods).
 // They are not searched for: a kernel pointer's PAC has about 24 bits, so among 65536 discriminators a slot often has a second one whose
@@ -192,45 +313,55 @@ static const uint16_t kSlotDiversity[]={
 };
 static constexpr unsigned kDriverSlots=sizeof(kSlotDiversity)/sizeof(kSlotDiversity[0]);
 static_assert(kDriverSlots>kDispatch && kDriverSlots<=kSlots,"the dispatch slot lies in the table");
-static void install(IORegistryEntry *driver) {
-    if(originalDispatch || !driver)return;
-    if(kSlotDiversity[kDispatch]!=kDivDispatch)return;
+static bool installDispatch(IORegistryEntry *driver,bool pen) {
+    Dispatch &original=pen?originalPenDispatch:originalDispatch;
+    if(original || !driver || kSlotDiversity[kDispatch]!=kDivDispatch)return false;
     // The table fits these classes only, each checked in 24A446's kernelcache to have exactly these 220 slots with these discriminators:
     // IOHIDEventDriver, and AppleUserHIDEventService, its subclass that drives this device (the user-space HID driver's service). Any
     // other subclass may have slots past the table, which a copy of this size would lose.
     const OSMetaClass *meta=driver->getMetaClass();
     const char *name=meta?meta->getClassName():nullptr;
-    if(!name || (strcmp(name,"IOHIDEventDriver") && strcmp(name,"AppleUserHIDEventService"))) {native_touch_edge_install[0]=1;return;}
+    if(!name || (strcmp(name,"IOHIDEventDriver") && strcmp(name,"AppleUserHIDEventService"))) {
+        if(!pen)native_touch_edge_install[0]=1;
+        return false;
+    }
     void **table=vtableOf(driver);
     void **copy=static_cast<void **>(IOMalloc(kDriverSlots*sizeof(void *)));
-    if(!copy)return;
+    if(!copy)return false;
     unsigned copied=0;
-    native_touch_edge_install[2]=kSlots;
+    if(!pen)native_touch_edge_install[2]=kSlots;
     for(unsigned i=0;i<kDriverSlots;++i) {
         void *entry=table[i];
         void *function=entry?ptrauth_strip(entry,ptrauth_key_function_pointer):nullptr;
         if(!entry || ptrauth_sign_unauthenticated(function,ptrauth_key_function_pointer,
                ptrauth_blend_discriminator(&table[i],kSlotDiversity[i]))!=entry) {
-            native_touch_edge_install[2]=i;copied=0;break;
+            if(!pen)native_touch_edge_install[2]=i;
+            copied=0;
+            break;
         }
         if(i==kDispatch) {
-            originalDispatch=reinterpret_cast<void (*)(IOService *,OSObject *,IOOptionBits)>(
+            original=reinterpret_cast<Dispatch>(
                 ptrauth_sign_unauthenticated(function,ptrauth_key_function_pointer,0));
-            function=ptrauth_strip(reinterpret_cast<void *>(&dispatch),ptrauth_key_function_pointer);
+            function=ptrauth_strip(reinterpret_cast<void *>(pen?&dispatchPen:&dispatch),ptrauth_key_function_pointer);
         }
         copy[i]=ptrauth_sign_unauthenticated(function,ptrauth_key_function_pointer,ptrauth_blend_discriminator(&copy[i],kSlotDiversity[i]));
         copied=i+1;
     }
-    native_touch_edge_install[1]=copied;
-    if(copied!=kDriverSlots || !originalDispatch) {
-        native_touch_edge_install[0]=2;originalDispatch=nullptr;IOFree(copy,kDriverSlots*sizeof(void *));return;
+    if(!pen)native_touch_edge_install[1]=copied;
+    if(copied!=kDriverSlots || !original) {
+        if(!pen)native_touch_edge_install[0]=2;
+        original=nullptr;
+        IOFree(copy,kDriverSlots*sizeof(void *));
+        return false;
     }
-    native_touch_edge_install[0]=3;
+    if(!pen)native_touch_edge_install[0]=3;
     __asm__ volatile("dmb ish":::"memory");
     *reinterpret_cast<void **>(driver)=ptrauth_sign_unauthenticated(copy,ptrauth_key_process_independent_data,
         ptrauth_blend_discriminator(driver,kVptrDiscriminator));
-    native_touch_edge_stats[0]=1;
+    if(!pen)native_touch_edge_stats[0]=1;
+    return true;
 }
+static void install(IORegistryEntry *driver) {installDispatch(driver,false);}
 #else
 static void install(IORegistryEntry *driver) {
     if(originalDispatch || !driver)return;
@@ -245,7 +376,34 @@ static void install(IORegistryEntry *driver) {
 }
 #endif
 #endif
+static bool installPen(IORegistryEntry *driver) {
+#if __has_feature(ptrauth_calls)
+    return installDispatch(driver,true);
+#else
+    (void)driver;
+    return false;
+#endif
+}
 }  // namespace edge
+class NativeHidInput;
+static NativeHidInput *gNativePen;
+static NativeHidInput *gNativePenHaptics;
+static uint64_t gNativePenSenderID;
+static bool gNativePenInRange;
+static uint64_t gNativePenHapticDeadline;
+static uint64_t gLastNativePenHaptic;
+
+static void queueNativePenHaptic() {
+    const uint64_t now=mach_continuous_time();
+    uint64_t minimum,lifetime;
+    nanoseconds_to_absolutetime(60000000,&minimum);
+    nanoseconds_to_absolutetime(125000000,&lifetime);
+    uint64_t previous=__atomic_load_n(&gLastNativePenHaptic,__ATOMIC_ACQUIRE);
+    if(previous && now-previous<minimum)return;
+    if(__atomic_compare_exchange_n(&gLastNativePenHaptic,&previous,now,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))
+        __atomic_store_n(&gNativePenHapticDeadline,now+lifetime,__ATOMIC_RELEASE);
+}
+
 class NativeHidInput : public IOHIDDevice {
     OSDeclareDefaultStructors(NativeHidInput)
     IOWorkLoop *inputLoop=nullptr;
@@ -257,14 +415,76 @@ class NativeHidInput : public IOHIDDevice {
     // (Digitizer/Touch Screen) and the Built-In flag, which a combined keyboard-first descriptor would not provide.
     bool touchOnly=false;
     bool buttonsOnly=false;
+    bool penOnly=false;
+    uint32_t managementPage=0, managementUsage=0;
+    bool penInRange=false;
+    bool penTip=false;
+    bool penPressureRangePublished=false;
+    uint64_t lastPenReportTicks=0;
+    unsigned penPressureMax=0;
+    unsigned penX=0,penY=0,penReports=0;
     bool buttonReportPending=false;
     bool eventDriverFound=false;
-    IOReturn submitReport(IOMemoryDescriptor *report) {
+    IOReturn submitReport(IOMemoryDescriptor *report,uint64_t sampleTicks=0) {
 #if defined(NATIVE_HID_SOURCE_API) && NATIVE_HID_SOURCE_API
+        if(sampleTicks)return handleReportWithTime(sampleTicks,report,kIOHIDReportTypeInput,0);
         return handleReport(report,kIOHIDReportTypeInput,0);
 #else
+        (void)sampleTicks;
         return handleReport(report,0,0);
 #endif
+    }
+    struct PenPosition {unsigned x,y,pressure;bool inRange,tipDown;int tiltX,tiltY;uint64_t sampleTicks;};
+    static IOReturn penAction(OSObject *owner,void *position,void *,void *,void *) {
+        auto *self=static_cast<NativeHidInput *>(owner);
+        auto *sample=static_cast<PenPosition *>(position);
+        return self->sendPen(sample->x,sample->y,sample->inRange,sample->tipDown,sample->pressure,
+                             sample->tiltX,sample->tiltY,sample->sampleTicks);
+    }
+    IOReturn sendPen(unsigned x,unsigned y,bool inRange,bool tipDown,unsigned pressure,int tiltX=0,int tiltY=0,
+                     uint64_t sampleTicks=0) {
+        if(!inRange && !penInRange)return kIOReturnSuccess;
+        if(inRange && !penPressureRangePublished) {
+            if(auto *service=eventDriver(this,4,true)) {
+                __atomic_store_n(&gNativePenSenderID,service->getRegistryEntryID(),__ATOMIC_RELEASE);
+                service->setProperty("MaxHoverHeight",edge::kPenHoverHeight,32);
+                if(!penPressureMax)
+                    penPressureMax=edge::installPen(service)?edge::kPenPressureMax:1;
+                penPressureRangePublished=publishPenPressureRange(service,penPressureMax);
+                if(penPressureRangePublished)
+                    IOLog("UKE PEN pressure range published service=%llu min=0 max=%u\n",
+                          service->getRegistryEntryID(),penPressureMax);
+            }
+        }
+        const unsigned char report[]={1,static_cast<uint8_t>(inRange|(tipDown?2:0)),static_cast<uint8_t>(x),
+            static_cast<uint8_t>(x>>8),static_cast<uint8_t>(y),static_cast<uint8_t>(y>>8),
+            static_cast<uint8_t>(pressure),static_cast<uint8_t>(pressure>>8),
+            static_cast<uint8_t>(tiltX),static_cast<uint8_t>(static_cast<uint16_t>(tiltX)>>8),
+            static_cast<uint8_t>(tiltY),static_cast<uint8_t>(static_cast<uint16_t>(tiltY)>>8),
+            static_cast<uint8_t>(inRange && !tipDown)};
+        auto *buffer=IOBufferMemoryDescriptor::withBytes(report,sizeof(report),kIODirectionNone);
+        if(!sampleTicks || sampleTicks<=lastPenReportTicks) sampleTicks=mach_absolute_time();
+        const IOReturn result=buffer?submitReport(buffer,sampleTicks):kIOReturnNoMemory;
+        OSSafeReleaseNULL(buffer);
+        if(penReports++<8 || inRange!=penInRange || penTip!=tipDown)
+            IOLog("UKE PEN built-in report rc=%x range=%d x=%u y=%u pressure=%u tip=%d\n",result,inRange,x,y,pressure,tipDown);
+        if(!result){
+            lastPenReportTicks=sampleTicks;
+            penInRange=inRange;penTip=tipDown;penX=x;penY=y;
+            __atomic_store_n(&gNativePenInRange,inRange,__ATOMIC_RELEASE);
+        }
+        // User space checks fresh panel contact at 150 ms and may hold the
+        // existing contact up to 500 ms. The device timer is the fail-safe.
+        if(penInRange)timer->setTimeoutMS(penTip?500:100);
+        else timer->cancelTimeout();
+        return result;
+    }
+    static bool publishPenPressureRange(IORegistryEntry *entry,unsigned maximum) {
+        // BackBoard caches the event units on the service. The HID report
+        // keeps the original P81c 14-bit pressure.
+        return entry->setProperty("MinDigitizerPressureValue",0ull,32) &&
+               entry->setProperty("MaxDigitizerPressureValue",maximum,32) &&
+               entry->setProperty("AccurateMaxDigitizerPressureValue",maximum,32);
     }
     uint32_t lastSeq=0;
     // Fingers sent as down in the previous report; a vanished identifier gets one explicit tip-up report.
@@ -385,6 +605,7 @@ class NativeHidInput : public IOHIDDevice {
     }
     static void tick(OSObject *owner,IOTimerEventSource *source) {
         NativeHidInput *self=OSDynamicCast(NativeHidInput,owner);if(!self)return;
+        if(self->penOnly){self->sendPen(self->penX,self->penY,false,false,0);return;}
         native_hid_live_checkpoint(self);
         if(self->touchOnly){source->setTimeoutMS(1000);return;}
         if(!self->down && !(self->buttonsOnly ? self->hasEventDriverCached() : hasEventDriver(self,4))) {
@@ -410,11 +631,60 @@ class NativeHidInput : public IOHIDDevice {
 public:
     void setTouchOnly() {touchOnly=true;}
     void setButtonsOnly() {buttonsOnly=true;}
+    void setPenOnly() {penOnly=true;}
+    void setManagementUsage(uint32_t page, uint32_t usage) {managementPage=page; managementUsage=usage;}
+    IOReturn reportPen(unsigned x,unsigned y,bool inRange,bool tipDown,unsigned pressure,int tiltX,int tiltY,uint64_t sampleTicks) {
+        PenPosition position{x,y,pressure,inRange,tipDown,tiltX,tiltY,sampleTicks};
+        return inputLoop->runAction(&NativeHidInput::penAction,this,&position);
+    }
+    uint64_t penSenderID() {
+        if(auto *service=eventDriver(this,4,true)) {
+            const uint64_t id=service->getRegistryEntryID();
+            __atomic_store_n(&gNativePenSenderID,id,__ATOMIC_RELEASE);
+            return id;
+        }
+        return 0;
+    }
     IOWorkLoop *getWorkLoop() const override {return inputLoop;}
-    OSString *newTransportString() const override {return OSString::withCString(touchOnly?"SPI":buttonsOnly?"SPMI":"Virtual");}
-    OSString *newProductString() const override {return OSString::withCString(touchOnly?"Offline touch digitizer":buttonsOnly?"Uke built-in buttons":"Offline HID input probe");}
+    OSString *newTransportString() const override {return OSString::withCString(managementPage?"BluetoothLowEnergy":touchOnly||penOnly?"SPI":buttonsOnly?"SPMI":"Virtual");}
+    OSString *newProductString() const override {return OSString::withCString(managementPage?"Apple Pencil Pro Management":penOnly?"Uke Pen Digitizer":touchOnly?"Offline touch digitizer":buttonsOnly?"Uke built-in buttons":"Offline HID input probe");}
+    bool hapticsDisabled() {
+        auto *service=eventDriver(this,4,true);
+        OSObject *raw=service?service->copyProperty("HIDEventServiceProperties"):nullptr;
+        auto *properties=OSDynamicCast(OSDictionary,raw);
+        auto *disabled=properties?OSDynamicCast(OSBoolean,properties->getObject("HapticsDisabled")):nullptr;
+        const bool result=disabled && disabled->isTrue();
+        OSSafeReleaseNULL(raw);
+        return result;
+    }
+#if defined(NATIVE_HID_SOURCE_API) && NATIVE_HID_SOURCE_API
+    IOReturn setReport(IOMemoryDescriptor *report,IOHIDReportType type,IOOptionBits options) override {
+        if(managementPage!=0xff60 || managementUsage!=0x1005 || type!=kIOHIDReportTypeOutput)
+            return IOHIDDevice::setReport(report,type,options);
+        if(!report || !report->getLength() || report->getLength()>1024)return kIOReturnBadArgument;
+        // AppleEmbeddedBluetoothHaptics has already applied its global
+        // preference and passed a HapticsMessage through this interface.
+        // Coalesce bursts into one P81c tick rather than replaying waveforms.
+        queueNativePenHaptic();
+        return kIOReturnSuccess;
+    }
+#endif
     IOReturn newReportDescriptor(IOMemoryDescriptor **out) const override {
         if(!out)return kIOReturnBadArgument;
+        if(managementPage) {
+            const unsigned char descriptor[] = {
+                0x06, static_cast<unsigned char>(managementPage), static_cast<unsigned char>(managementPage >> 8),
+                0x0a, static_cast<unsigned char>(managementUsage), static_cast<unsigned char>(managementUsage >> 8),
+                0xa1, 0x01, 0x85, 0x01,
+                0x15,0x00,0x26,0xff,0x00,0x75,0x08,0x95,0x10,0x81,0x02,
+                0x91,0x02,0xc0};
+            *out=IOBufferMemoryDescriptor::withBytes(descriptor,sizeof(descriptor),kIODirectionNone);
+            return *out?kIOReturnSuccess:kIOReturnNoMemory;
+        }
+        if(penOnly) {
+            *out=IOBufferMemoryDescriptor::withBytes(penDescriptor,sizeof(penDescriptor),kIODirectionNone);
+            return *out?kIOReturnSuccess:kIOReturnNoMemory;
+        }
         if(buttonsOnly) {
             *out=IOBufferMemoryDescriptor::withBytes(buttonDescriptor,sizeof(buttonDescriptor),kIODirectionNone);
             return *out?kIOReturnSuccess:kIOReturnNoMemory;
@@ -436,30 +706,82 @@ public:
         // Request the normal generic HID event personality for this owned
         // keyboard. This is a matching property, not a client entitlement.
         if(!setProperty("HIDDefaultBehavior",true))return false;
+        if(penOnly || managementPage) {
+            setProperty("VendorID", (unsigned long long)0x004c, 32);
+            setProperty("VendorIDSource", (unsigned long long)1, 16);
+            setProperty("ProductID", (unsigned long long)0x0452, 32);
+            setProperty("VersionNumber", (unsigned long long)1, 32);
+            setProperty("Manufacturer", "Apple");
+        }
+        if(managementPage) {
+            // A management endpoint only owns its HID provider. The board
+            // touch and button callbacks each have one hardware consumer.
+            if(!IOHIDDevice::start(provider))return false;
+            if(managementPage==0xff60 && managementUsage==0x1005)
+                __atomic_store_n(&gNativePenHaptics,this,__ATOMIC_RELEASE);
+            IOLog("UKE PEN management started registry=%llu usage=%x/%x\n",
+                  getRegistryEntryID(),managementPage,managementUsage);
+            return true;
+        }
         unsigned touch=0;
-        touchEnabled=!buttonsOnly && PE_parse_boot_argn("sheng-touch-hid",&touch,sizeof(touch)) && touch==1;
+        touchEnabled=!buttonsOnly && !penOnly && PE_parse_boot_argn("sheng-touch-hid",&touch,sizeof(touch)) && touch==1;
         if(buttonsOnly){setProperty("Built-In",true);setProperty("UkePhysicalButtons",true);}
         // DigitizerCollectionDispatch: IOHIDEventDriver (setDigitizerProperties) reads it up the service plane and then sends each
         // report's fingers as one digitizer collection with a child per finger. Without it a touch screen gets one event per finger,
         // and backboardd takes each as the whole touch set, so no two fingers are ever down together for UIKit (no pinch, no
         // multi-finger or system gestures).
-        if(touchOnly||touchEnabled){setProperty("Built-In",true);setProperty("DisplayIntegrated",true);setProperty("DigitizerCollectionDispatch",true);}
+        // iPadOS's integrated dispatch expects the stylus transducer inside
+        // its parent digitizer collection, as it does for touch contacts.
+        if(touchOnly||touchEnabled||penOnly){
+            setProperty("Built-In",true);
+            setProperty("DisplayIntegrated",true);
+            if(!setProperty("DigitizerCollectionDispatch",true) && penOnly)return false;
+        }
+        if(penOnly) {
+            publishPenPressureRange(this,1);
+            setProperty("MaxHoverHeight",edge::kPenHoverHeight,32);
+        }
         if(!IOHIDDevice::start(provider))return false;
         timer=IOTimerEventSource::timerEventSource(this,tick);
         if(!timer || inputLoop->addEventSource(timer)!=kIOReturnSuccess) {
             OSSafeReleaseNULL(timer);IOHIDDevice::stop(provider);return false;
         }
-        if(touchOnly||touchEnabled) {
-            if(&native_touch_set_sink)native_touch_set_sink(&NativeHidInput::touchNotify,this);
+        if(penOnly){
+            __atomic_store_n(&gNativePenInRange,false,__ATOMIC_RELEASE);
+            __atomic_store_n(&gNativePen,this,__ATOMIC_RELEASE);
+            IOLog("UKE PEN built-in device started registry=%llu collection=1\n",getRegistryEntryID());
+            return true;
         }
-        if(!touchOnly && &native_buttons_set_sink)native_buttons_set_sink(&NativeHidInput::buttonsNotify,this);
+        if(touchOnly||touchEnabled) {
+            if(&native_touch_set_sink){
+                native_touch_set_sink(&NativeHidInput::touchNotify,this);
+                IOLog("UKE INPUT touch callback owner=%llu\n",getRegistryEntryID());
+            }
+        }
+        if(!touchOnly && &native_buttons_set_sink){
+            native_buttons_set_sink(&NativeHidInput::buttonsNotify,this);
+            IOLog("UKE INPUT button callback owner=%llu\n",getRegistryEntryID());
+        }
         setProperty("OfflineInputProbe",true);
         native_hid_input_observed(2,0);
         timer->setTimeoutMS(1000);return true;
     }
     void stop(IOService *provider) override {
+        if(managementPage){
+            if(managementPage==0xff60 && managementUsage==0x1005){
+                __atomic_store_n(&gNativePenHaptics,nullptr,__ATOMIC_RELEASE);
+                __atomic_store_n(&gNativePenHapticDeadline,0,__ATOMIC_RELEASE);
+            }
+            IOHIDDevice::stop(provider);
+            return;
+        }
+        if(penOnly){
+            __atomic_store_n(&gNativePenSenderID,0,__ATOMIC_RELEASE);
+            __atomic_store_n(&gNativePenInRange,false,__ATOMIC_RELEASE);
+            __atomic_store_n(&gNativePen,nullptr,__ATOMIC_RELEASE);
+        }
         if((touchOnly||touchEnabled) && &native_touch_set_sink)native_touch_set_sink(nullptr,nullptr);
-        if(!touchOnly && &native_buttons_set_sink)native_buttons_set_sink(nullptr,nullptr);
+        if(!touchOnly && !penOnly && &native_buttons_set_sink)native_buttons_set_sink(nullptr,nullptr);
         if(timer){timer->cancelTimeout();inputLoop->removeEventSource(timer);OSSafeReleaseNULL(timer);}
         IOHIDDevice::stop(provider);
     }
@@ -469,3 +791,31 @@ OSDefineMetaClassAndStructors(NativeHidInput,IOHIDDevice)
 extern "C" IOService *native_hid_input_allocate(void) {return new NativeHidInput;}
 extern "C" IOService *native_hid_touch_allocate(void) {NativeHidInput *device=new NativeHidInput;if(device)device->setTouchOnly();return device;}
 extern "C" IOService *native_hid_buttons_allocate(void) {NativeHidInput *device=new NativeHidInput;if(device)device->setButtonsOnly();return device;}
+extern "C" IOService *native_hid_pen_allocate(void) {NativeHidInput *device=new NativeHidInput;if(device)device->setPenOnly();return device;}
+extern "C" IOService *native_hid_pen_management_allocate(uint32_t page,uint32_t usage) {
+    NativeHidInput *device=new NativeHidInput;
+    if(device)device->setManagementUsage(page,usage);
+    return device;
+}
+extern "C" int native_hid_pen_hover(unsigned x,unsigned y,bool inRange,bool tipDown,unsigned pressure,int tiltX,int tiltY,
+                                   uint64_t sampleTicks) {
+    auto *device=__atomic_load_n(&gNativePen,__ATOMIC_ACQUIRE);
+    return device?device->reportPen(x,y,inRange,tipDown,pressure,tiltX,tiltY,sampleTicks):kIOReturnNotReady;
+}
+extern "C" uint64_t native_hid_pen_sender_id() {
+    const uint64_t id=__atomic_load_n(&gNativePenSenderID,__ATOMIC_ACQUIRE);
+    if(id)return id;
+    auto *device=__atomic_load_n(&gNativePen,__ATOMIC_ACQUIRE);
+    return device?device->penSenderID():0;
+}
+extern "C" bool native_hid_pen_in_range() {
+    return __atomic_load_n(&gNativePenInRange,__ATOMIC_ACQUIRE);
+}
+extern "C" bool native_hid_pen_take_haptic() {
+    const uint64_t deadline=__atomic_exchange_n(&gNativePenHapticDeadline,0,__ATOMIC_ACQ_REL);
+    return deadline && mach_continuous_time()<deadline;
+}
+extern "C" void native_hid_pen_request_tap_haptic() {
+    auto *device=__atomic_load_n(&gNativePenHaptics,__ATOMIC_ACQUIRE);
+    if(device && !device->hapticsDisabled())queueNativePenHaptic();
+}

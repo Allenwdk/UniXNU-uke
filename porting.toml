@@ -378,6 +378,44 @@ command = "Record hardware swipe feedback for the archived CA surface-tracking r
 revision = "5ed46420025be331b51d98207ea6aa679faac9c7"
 
 [[area]]
+id = "focus-pen-pro"
+status = "device-verified"
+components = ["NativeFocusPenPro"]
+paths = [
+  "package/TouchProbe.cpp",
+  "package/ShengBattery.cpp",
+  "package/HidInputProbe.cpp",
+  "scripts/build-pencil-runtime.py",
+  "scripts/build-pencil-hover.py",
+  "scripts/build-pencil-picker.py",
+  "scripts/decode-p81c-capture.py",
+  "scripts/gen-touch-firmware.py",
+  "scripts/patch-p81c-dock-address.py",
+  "scripts/prepare-pencil-card-fixups.py",
+]
+inputs = ["P81c system BLE bond, NT36532 pen frames, panel calibration and PMIC attachment status."]
+configuration = ["The NativeFocusPenPro submodule is embedded by the Uke kernel recipe. The ADT selects the Pencil configuration."]
+procedure = ["Run the radio and stroke host tests from the driver checkout, then build the Uke kernel and signed runtime."]
+findings = ["The radio protocol and stroke tests run directly from the extracted component checkout. The owner reported no issues on the flashed split image."]
+completion = ["The extracted component resolves to its pinned checkout and supplies the native kernel and userspace sources. The rebuilt split image passed the owner's retest."]
+limits = ["The retest establishes the split-image baseline. First-time pairing, long-run reconnect, continuous roll and Find My are separate acceptance items."]
+next_action = ["Record individual pairing, reconnect and Pro feature results when they are tested."]
+
+[[area.evidence]]
+kind = "host"
+reference = "docs/FOCUS-PEN-PRO-20261122.md"
+result = "The extracted FE11/FE12 radio regression and the C++ stroke regression both passed."
+command = "Compile and run Test/uke_pen_radio_host.c and Test/uke_pen_stroke_host.cpp from NativeFocusPenPro."
+revision = "b946ec01745f4888020339f2137a634339b9443f"
+
+[[area.evidence]]
+kind = "device"
+reference = "docs/FOCUS-PEN-PRO-20261122.md"
+result = "The owner reported no issues after retesting vendor_boot 4f0527af845acad88 from the split component build."
+command = "Flash the matching boot and vendor_boot pair on Uke, set slot A, reboot and record the owner's retest."
+revision = "b946ec01745f4888020339f2137a634339b9443f"
+
+[[area]]
 id = "gpu"
 status = "device-verified"
 components = [

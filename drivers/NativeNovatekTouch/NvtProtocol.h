@@ -10,6 +10,10 @@
 #define NVT_THP_HEADER_LEN 257
 #define NVT_THP_PAYLOAD_LEN 5160
 #define NVT_THP_FRAME_LEN (NVT_THP_HEADER_LEN+NVT_THP_PAYLOAD_LEN)
+// Uke P81c type 29 advertises 1289 checksum words after the 20-byte header.
+#define NVT_THP_PEN_FRAME_MAX (NVT_THP_HEADER_LEN + 20 + 1289 * 4)
+// Type 29 on Uke: metadata, four 480-word matrices, then the pen checksum trailer.
+#define NVT_THP_PEN_SAMPLE_LEN (NVT_THP_HEADER_LEN + 100 + 4 * 480 * 2 + 20)
 #define NVT_THP_MATRIX_OFFSET (NVT_THP_HEADER_LEN+0x40)
 #define NVT_MAX_PARTITIONS 64
 #define NVT_READ_MAX 8192
@@ -95,6 +99,11 @@ int nvt_identify(struct nvt_chip *c);
 int nvt_download_firmware(struct nvt_chip *c, const struct nvt_fw *fw);
 // Read one THP frame (NVT_THP_FRAME_LEN bytes) from the event buffer.
 int nvt_read_frame(struct nvt_chip *c, uint8_t *frame);
+// Pen frame length and read are bounded independently of the normal touch path.
+size_t nvt_pen_frame_length(const uint8_t *peek);
+int nvt_read_pen_frame(struct nvt_chip *c, uint8_t *frame, size_t length);
+int nvt_read_pen_sample(struct nvt_chip *c, uint8_t *frame);
+int nvt_pen_sample_valid(const uint8_t *frame, size_t length);
 // Extract the 40x60 int16 touch matrix and header fields from a frame.
 void nvt_frame_matrix(const uint8_t *frame, int16_t *matrix);
 unsigned nvt_frame_type(const uint8_t *frame);
@@ -113,6 +122,7 @@ struct nvt_fw_info {
 int nvt_get_fw_info(struct nvt_chip *c, struct nvt_fw_info *info);
 // Host command {0xbf, cmd, 0, lo, hi} at the event buffer; the firmware clears the first byte when it has taken it.
 int nvt_set_custom_cmd(struct nvt_chip *c, uint8_t cmd, uint16_t value);
+int nvt_set_p81c_scan(struct nvt_chip *c, int enabled, int *rollback_error);
 int nvt_set_doze_delay(struct nvt_chip *c, uint16_t value);
 int nvt_start_scanning(struct nvt_chip *c, struct nvt_fw_info *info);
 // Header integrity of a THP frame: the CRC/marker words at header+4/+8 and their complements at +12/+16.
@@ -120,7 +130,9 @@ int nvt_frame_header_valid(const uint8_t *frame);
 // A frame is announced by a 32-byte window of its THP header (frame[NVT_THP_HEADER_LEN..+32)): cheap to read, it carries the
 // integrity words, the counter and the type, so the full 5 KB frame is only read when it is new.
 #define NVT_THP_PEEK_LEN 32
+#define NVT_THP_PEN_PEEK_LEN 64
 int nvt_peek_frame_header(struct nvt_chip *c, uint8_t *hdr);   // hdr: NVT_THP_PEEK_LEN bytes
+int nvt_peek_pen_header(struct nvt_chip *c, uint8_t *hdr);      // hdr: NVT_THP_PEN_PEEK_LEN bytes
 int nvt_peek_valid(const uint8_t *hdr);
 unsigned nvt_peek_counter(const uint8_t *hdr);
 unsigned nvt_peek_type(const uint8_t *hdr);

@@ -297,6 +297,7 @@ int nvt_touch_process(struct nvt_touch_core *core, const int16_t *matrix, unsign
     }
     int nfound=0;
     int palms[MAX_PEAKS][2];int npalms=0;
+    const int palm_limit = core->pen_in_range ? NVT_PEN_PALM_MIN_NODES : NVT_PALM_MIN_NODES;
     for (int p=0;p<npeaks;++p) {
         struct blob *b=&blobs[p];
         if (!b->sum_w) continue;
@@ -307,7 +308,7 @@ int nvt_touch_process(struct nvt_touch_core *core, const int16_t *matrix, unsign
         if (y<0) y=0; if (y>NVT_SHORT_AXIS_MAX-1) y=NVT_SHORT_AXIS_MAX-1;
         x=nvt_touch_map_edge_axis(x,NVT_LONG_AXIS_MAX,0);
         y=nvt_touch_map_edge_axis(y,NVT_SHORT_AXIS_MAX,1);
-        if (b->area>=NVT_PALM_MIN_NODES) {palms[npalms][0]=x;palms[npalms][1]=y;++npalms;continue;}   // palm-sized, not reported
+        if (b->area>=palm_limit) {palms[npalms][0]=x;palms[npalms][1]=y;++npalms;continue;}   // palm-sized, not reported
         found[nfound].slot=-1;found[nfound].tracking_id=0;found[nfound].x=x;found[nfound].y=y;
         found[nfound].peak=b->peak;found[nfound].area=b->area;found[nfound].weight=(int)b->sum_w;++nfound;
     }
@@ -328,7 +329,9 @@ int nvt_touch_process(struct nvt_touch_core *core, const int16_t *matrix, unsign
             // Keep a partial dropout, including a fading signal at the finger.
             // An otherwise quiet matrix with only distant noise is a release.
             ++slot->missed;
-            if ((peak_active || reason == NVT_MISS_WEAK) && slot->age >= 2 && slot->missed <= NVT_HOLD_FRAMES) continue;
+            const int palm_with_pen = core->pen_in_range && reason == NVT_MISS_PALM;
+            if (!palm_with_pen && (peak_active || reason == NVT_MISS_WEAK) &&
+                slot->age >= 2 && slot->missed <= NVT_HOLD_FRAMES) continue;
             ++core->ends[slot->miss_reason];slot->active=0;continue;
         }
         const int dx=found[best].x-slot->x,dy=found[best].y-slot->y,ax=dx<0?-dx:dx,ay=dy<0?-dy:dy;

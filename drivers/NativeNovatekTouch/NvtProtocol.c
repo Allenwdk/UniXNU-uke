@@ -294,18 +294,53 @@ next:   ;
     return ret?ret:NVT_ERR_TIMEOUT;
 }
 
-int nvt_read_frame(struct nvt_chip *c, uint8_t *frame) {
+static int read_frame(struct nvt_chip *c, uint8_t *frame, size_t length) {
     // The vendor driver's thp_frame has the zero offset byte of CTP_SPI_READ at index 0 and the chip's data from index 1
     // (nvt_thp_read_frame -> CTP_SPI_READ(thp_frame, NVT_THP_FRAME_LEN) copies rbuf+2 into thp_frame+1), and every THP
     // header offset below is defined on that buffer. Reproduce the layout: hardware showed a valid header only one byte earlier.
     frame[0]=0;
-    size_t total=NVT_THP_FRAME_LEN-1,done=0;
+    size_t total=length-1,done=0;
     while (done<total) {
         size_t n=total-done;if (n>NVT_READ_MAX) n=NVT_READ_MAX;
         int r=nvt_read(c,c->map->event_buf+(uint32_t)done,frame+1+done,n);if (r) return r;
         done+=n;
     }
     return 0;
+}
+int nvt_read_frame(struct nvt_chip *c, uint8_t *frame) {
+    return read_frame(c,frame,NVT_THP_FRAME_LEN);
+}
+int nvt_read_pen_frame(struct nvt_chip *c, uint8_t *frame, size_t length) {
+    if (length < NVT_THP_HEADER_LEN+100 || length > NVT_THP_PEN_FRAME_MAX) return NVT_ERR_PARAM;
+    return read_frame(c,frame,length);
+}
+int nvt_read_pen_sample(struct nvt_chip *c, uint8_t *frame) {
+    // The solver consumes the payload. Retain the frame ABI offset while
+    // avoiding the firmware-state prefix and unrelated hand quarter on SPI.
+    memset(frame, 0, NVT_THP_HEADER_LEN);
+    return nvt_read(c, c->map->event_buf + NVT_THP_HEADER_LEN - 1,
+                    frame + NVT_THP_HEADER_LEN, NVT_THP_PEN_SAMPLE_LEN - NVT_THP_HEADER_LEN);
+}
+int nvt_pen_sample_valid(const uint8_t *frame, size_t length) {
+    if (length != NVT_THP_PEN_SAMPLE_LEN) return 0;
+    const uint8_t *packet = frame + NVT_THP_HEADER_LEN;
+    const size_t trailer = length - NVT_THP_HEADER_LEN - 20;
+    const uint8_t *tail = packet + trailer;
+    if (packet[56] != 29 || packet[71] != 12 || packet[72] != 40 ||
+        packet[73] != 60 || packet[74] != 8 ||
+        nvt_pen_frame_length(packet) != NVT_THP_PEN_FRAME_MAX) return 0;
+    uint32_t words, complement;
+    if (word_at(tail, 20, 8, &words) || word_at(tail, 20, 16, &complement) ||
+        complement != ~words || words < (trailer - 20) / 4 ||
+        words > (trailer - 16) / 4) return 0;
+    const uint16_t expected = tail[4] | ((uint16_t)tail[5] << 8);
+    const uint16_t inverted = tail[12] | ((uint16_t)tail[13] << 8);
+    if ((unsigned)expected + inverted != UINT16_MAX) return 0;
+    uint32_t sum = expected;
+    const size_t end = 20 + (size_t)words * 4;
+    for (size_t i = 20; i < end; i += 2)
+        sum += packet[i] | ((uint16_t)packet[i + 1] << 8);
+    return (uint16_t)sum == 0;
 }
 void nvt_frame_matrix(const uint8_t *frame, int16_t *matrix) {
     for (int i=0;i<2400;++i) matrix[i]=(int16_t)((uint16_t)frame[NVT_THP_MATRIX_OFFSET+i*2]|((uint16_t)frame[NVT_THP_MATRIX_OFFSET+i*2+1]<<8));
@@ -338,6 +373,29 @@ int nvt_set_custom_cmd(struct nvt_chip *c, uint8_t cmd, uint16_t value) {
     }
     return NVT_ERR_TIMEOUT;
 }
+int nvt_set_p81c_scan(struct nvt_chip *c, int enabled, int *rollback_error) {
+    *rollback_error = 0;
+    int result = nvt_set_custom_cmd(c, 0x04, enabled != 0);
+    if (!enabled) return result;
+
+    /* Uke OEM nvt_xm_htc_set_stylus_enable and nvt_set_pen_switch.
+     * Mode 3 selects P81c. The model command is two bytes, unlike extended 04. */
+    if (!result) {
+        const uint32_t address = c->map->event_buf + NVT_EVENT_HOST_CMD;
+        const uint8_t mode[] = {0x7b, 3};
+        for (unsigned attempt = 0; attempt < 10; ++attempt) {
+            result = nvt_write(c, address, mode, sizeof mode);
+            if (result) break;
+            delay(c, 10);
+            uint8_t ack;
+            result = nvt_read(c, address, &ack, sizeof ack);
+            if (result || !ack) break;
+            result = NVT_ERR_TIMEOUT;
+        }
+    }
+    if (result) *rollback_error = nvt_set_custom_cmd(c, 0x04, 0);
+    return result;
+}
 int nvt_set_doze_delay(struct nvt_chip *c, uint16_t value) {
     uint8_t b[2]={(uint8_t)value,(uint8_t)(value>>8)};
     return nvt_write(c,NVT_DOZE_DELAY_ADDR,b,sizeof b);
@@ -357,10 +415,19 @@ int nvt_peek_valid(const uint8_t *h) {
     uint32_t mi=(uint32_t)h[16]|((uint32_t)h[17]<<8)|((uint32_t)h[18]<<16)|((uint32_t)h[19]<<24);
     return inv==(uint16_t)~crc && mi==~mk;
 }
+size_t nvt_pen_frame_length(const uint8_t *peek) {
+    uint32_t words;
+    if (!nvt_peek_valid(peek) || word_at(peek,NVT_THP_PEN_PEEK_LEN,8,&words) ||
+        words < 20 || words > (NVT_THP_PEN_FRAME_MAX-NVT_THP_HEADER_LEN-20)/4) return 0;
+    return NVT_THP_HEADER_LEN+20+words*4;
+}
 int nvt_frame_header_valid(const uint8_t *frame) {return nvt_peek_valid(frame+NVT_THP_HEADER_LEN);}
 unsigned nvt_peek_counter(const uint8_t *h) {return (unsigned)h[2]|((unsigned)h[3]<<8);}
 unsigned nvt_peek_type(const uint8_t *h) {return h[24];}
 int nvt_peek_frame_header(struct nvt_chip *c, uint8_t *hdr) {
     // frame[i] = chip byte i-1 (see nvt_read_frame), so frame[NVT_THP_HEADER_LEN] is chip byte NVT_THP_HEADER_LEN-1.
     return nvt_read(c,c->map->event_buf+NVT_THP_HEADER_LEN-1,hdr,NVT_THP_PEEK_LEN);
+}
+int nvt_peek_pen_header(struct nvt_chip *c, uint8_t *hdr) {
+    return nvt_read(c,c->map->event_buf+NVT_THP_HEADER_LEN-1,hdr,NVT_THP_PEN_PEEK_LEN);
 }

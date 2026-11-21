@@ -23,6 +23,7 @@
 #include "UkeDpAltMode.h"
 #include "UkeUsbBoard.h"
 #include "NativeExternalDisplay.h"
+#include "UkePenPower.h"
 extern "C" {
 #include "ShengAdsp.h"
 #include "ShengBattmgr.h"
@@ -58,6 +59,7 @@ extern "C" {volatile int32_t native_charger_stats[16];}
 
 namespace {
 constexpr uint32_t kRequestMs = 2000, kRefreshMs = 60000, kRetryMs = 5000, kSlowEvery = 10, kRing = 16, kMessage = 560;
+constexpr uint32_t kPenRequestMs = 300;
 // XM_PROP_CC_ORIENTATION in the stock Uke qti_battery_charger module.
 constexpr uint32_t kCcOrientationProperty = 52, kCcTimeoutMs = 300;
 constexpr unsigned kAltModeAckLimit = 32, kAltModeLogLimit = 48, kAltModeTimeoutMs = 5000;
@@ -114,6 +116,9 @@ class ShengBattery : public IOPMPowerSource {
     uint32_t refreshes = 0, messageLogs = 0;
     uint64_t requestDeadline = 0;
     ShengBattmgr bm;
+    bool penDiagnostics = false;
+    bool penPowerEnabled = false;
+    UkePenPowerState penPower{-1, -1, -1, {}, 0, 0};
     ShengAdspChannel *channel = nullptr;
 
     void updateUsbRole() {
@@ -354,8 +359,9 @@ class ShengBattery : public IOPMPowerSource {
             native_battery_stats[15] = native_battery_stats[15] + 1;
             return;
         }
-        clock_interval_to_deadline(kRequestMs, kMillisecondScale, &requestDeadline);
-        request->setTimeoutMS(kRequestMs);
+        const uint32_t timeout = bm.cursor >= BmPenHall3 ? kPenRequestMs : kRequestMs;
+        clock_interval_to_deadline(timeout, kMillisecondScale, &requestDeadline);
+        request->setTimeoutMS(timeout);
     }
     void number(const char *key, int64_t value) {
         const OSSymbol *symbol = OSSymbol::withCString(key);
@@ -396,10 +402,43 @@ class ShengBattery : public IOPMPowerSource {
         native_charger_stats[15] = 0;
     }
     void publish() {
+        if (bm.pen_diagnostics) {
+            const auto read = [this](unsigned field) {
+                return (bm.valid >> field) & 1 ? bm.value[field] : -1;
+            };
+            const int hall = read(BmPenHall3);
+            const int percent = read(BmPenSoc);
+            const int tx = read(BmPenTxState);
+            const int voltage = read(BmPenTxVoltage), current = read(BmPenTxCurrent);
+            // Uke's Hall3 goes low at the pen dock. A charging claim also
+            // needs the active transmit state and measured power transfer.
+            int charging = -1;
+            if (tx == 0) charging = 0;
+            else if (tx == 201 && voltage >= 0 && current >= 0) charging = voltage > 0 && current > 0;
+            UkePenPowerState state{
+                (hall == 0 || hall == 1) ? 1 - hall : -1,
+                percent >= 0 && percent <= 100 ? percent : -1,
+                charging,
+                {}, 0, 0,
+            };
+            state.address_valid = sheng_battmgr_pen_address(&bm, state.address);
+            const bool changed = state.docked != penPower.docked || state.percent != penPower.percent ||
+                                 state.charging != penPower.charging || state.address_valid != penPower.address_valid ||
+                                 memcmp(state.address, penPower.address, sizeof(state.address)) != 0;
+            if (penPowerEnabled && changed && setProperty(UKE_PEN_POWER_PROPERTY, &state, sizeof(state)))
+                penPower = state;
+            if (!penPowerEnabled || changed)
+                IOLog("UKE PEN power gen=%u cycle=%u hall=%d/%d reverse=%d soc=%d tx=%d vi=%d/%d placement=%d valid=%02x timeout=%02x\n",
+                   transportGeneration, bm.cycles_done, read(BmPenHall3), read(BmPenHall4),
+                   read(BmPenReverseState), read(BmPenSoc), read(BmPenTxState),
+                   read(BmPenTxVoltage), read(BmPenTxCurrent), read(BmPenPlacementError),
+                   static_cast<unsigned>(bm.valid >> BmPenHall3),
+                   static_cast<unsigned>(bm.pen_unavailable >> BmPenHall3));
+        }
         constexpr uint32_t required = (1u << BmStatus) | (1u << BmPresent) | (1u << BmCapacity) |
             (1u << BmVoltage) | (1u << BmCurrent) | (1u << BmTemperature) | (1u << BmUsbOnline);
         printf("UKE BATTERY: refresh=%u valid=%08x required=%08x responses=%u errors=%u timeouts=%u\n",
-               bm.cycles_done, bm.valid, required, bm.responses, bm.errors, bm.timeouts);
+               bm.cycles_done, static_cast<uint32_t>(bm.valid), required, bm.responses, bm.errors, bm.timeouts);
         if (bm.poisoned || (bm.valid & required) != required) {
             stale(true);
             if (!bm.poisoned) refresh->setTimeoutMS(kRetryMs);
@@ -458,7 +497,8 @@ class ShengBattery : public IOPMPowerSource {
         }
         updateStatus();
         printf("UKE BATTERY: cycle=%u raw=%x percent=%d voltage=%dmV current=%dmA temperature=%d external=%d charging=%d\n",
-               bm.cycles_done, bm.valid, s.percent, s.voltage_mv, s.current_ma, s.temperature, s.external, s.charging);
+               bm.cycles_done, static_cast<uint32_t>(bm.valid), s.percent, s.voltage_mv, s.current_ma,
+               s.temperature, s.external, s.charging);
     }
     void counters() {
         native_battery_stats[6] = (int32_t)bm.cycles_done;
@@ -492,6 +532,10 @@ class ShengBattery : public IOPMPowerSource {
                 self->bm.poisoned = 1;
                 self->request->cancelTimeout();
                 self->refresh->cancelTimeout();
+                if (self->penPowerEnabled) {
+                    self->removeProperty(UKE_PEN_POWER_PROPERTY);
+                    self->penPower = {-1, -1, -1, {}, 0, 0};
+                }
                 if (self->ucsiTimer) self->stopUcsi();
                 if (self->altModeTimer) self->resetAltMode();
                 self->stale(true);
@@ -504,6 +548,7 @@ class ShengBattery : public IOPMPowerSource {
                 const uint32_t generation = sheng_adsp_generation();
                 if (generation != self->transportGeneration) {
                     sheng_battmgr_init(&self->bm);
+                    self->bm.pen_diagnostics = self->penDiagnostics || self->penPowerEnabled;
                     self->transportGeneration = generation;
                     self->messageLogs = 0;
                 }
@@ -619,6 +664,10 @@ class ShengBattery : public IOPMPowerSource {
             return;
         }
         const int result = sheng_battmgr_timeout(&self->bm);
+        if (self->bm.last_timeout >= BmPenHall3) {
+            self->handle(result);
+            return;
+        }
         self->refresh->setTimeoutMS(kRetryMs);
         self->stale(true);
         if (self->published) self->updateStatus();
@@ -663,6 +712,11 @@ public:
 
     bool startBattery() {
         sheng_battmgr_init(&bm);
+        unsigned pencil = 0;
+        PE_parse_boot_argn("uke-pencil", &pencil, sizeof pencil);
+        penDiagnostics = pencil == 1;
+        penPowerEnabled = pencil == 4;
+        bm.pen_diagnostics = penDiagnostics || penPowerEnabled;
         loop = IOWorkLoop::workLoop();
         ringLock = IOSimpleLockAlloc();
         inbox = UkeBatteryInbox::create(this, &ShengBattery::inboxAction);

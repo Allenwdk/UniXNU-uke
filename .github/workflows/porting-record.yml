@@ -13,6 +13,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Allenwdk/UniXNU
-          ref: main
+          ref: ${{ (github.head_ref || github.ref_name) == 'feat/uke-usb2' && 'feat/uke-usb2' || 'main' }}
           path: unixnu
       - run: python3 unixnu/scripts/porting-record.py check --device device

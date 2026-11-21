@@ -86,6 +86,8 @@ extern void pe_print_last_panic_again(void);
 
 #define UKE_LAST_LOG_INTERVAL_MS 500
 
+extern void uke_pencil_log_capture(void) __attribute__((weak_import));
+
 // The 4 MiB pram region is split in two halves. The low half keeps the
 // embedded-panic FUNK record for the XNU console; the high half is a Linux
 // ramoops console zone (persistent_ram_buffer, no ECC), which the uke Linux
@@ -797,6 +799,9 @@ uke_last_log_writer(void *arg, wait_result_t result)
         }
 
 #endif
+		if (&uke_pencil_log_capture) {
+			uke_pencil_log_capture();
+		}
 		uke_last_log_write();
 		// Pace the userdata copy separately. A quiet interval uses no slot.
 		if ((tick++ % (UKE_UFS_INTERVAL_MS / UKE_LAST_LOG_INTERVAL_MS)) == 0) {

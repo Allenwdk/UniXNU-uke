@@ -31,8 +31,22 @@ static const struct {uint8_t opcode, property, slow;} kFields[BmFields] = {
     [BmChargeType] = {SHENG_BATTMGR_OP_BATTERY_GET, 3, 0},
     [BmThermalLevel] = {SHENG_BATTMGR_OP_BATTERY_GET, 10, 0},
     [BmChargeCurrent] = {SHENG_BATTMGR_OP_BATTERY_GET, 12, 0},
+    /* Exact Uke qti_battery_charger.ko property selectors on owner 32778. */
+    [BmPenHall3] = {SHENG_BATTMGR_OP_BOARD_GET, 0x64, 0},
+    [BmPenHall4] = {SHENG_BATTMGR_OP_BOARD_GET, 0x65, 0},
+    [BmPenReverseState] = {SHENG_BATTMGR_OP_BOARD_GET, 0x48, 0},
+    [BmPenSoc] = {SHENG_BATTMGR_OP_BOARD_GET, 0x63, 0},
+    [BmPenTxState] = {SHENG_BATTMGR_OP_BOARD_GET, 0x6a, 0},
+    [BmPenTxCurrent] = {SHENG_BATTMGR_OP_BOARD_GET, 0x61, 0},
+    [BmPenTxVoltage] = {SHENG_BATTMGR_OP_BOARD_GET, 0x62, 0},
+    [BmPenPlacementError] = {SHENG_BATTMGR_OP_BOARD_GET, 0x6b, 0},
+    [BmPenMacLow] = {SHENG_BATTMGR_OP_BOARD_GET, 0x5f, 0},
+    [BmPenMacHigh] = {SHENG_BATTMGR_OP_BOARD_GET, 0x60, 0},
 };
+_Static_assert(BmFields <= 64, "battery validity bitmap");
 #define NO_CYCLE 0xff
+static const uint64_t kPenAddressFields = (UINT64_C(1) << BmPenMacLow) |
+    (UINT64_C(1) << BmPenMacHigh);
 
 static void put32(uint8_t *p, uint32_t v) {p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);}
 static uint32_t le32(const uint8_t *p) {return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;}
@@ -63,7 +77,20 @@ uint32_t sheng_battmgr_enable_request(uint8_t out[SHENG_BATTMGR_ENABLE_BYTES])
 
 static void skip_to_wanted(ShengBattmgr *b)
 {
-    while (b->cursor < BmFields && (!kFields[b->cursor].opcode || (kFields[b->cursor].slow && !b->slow_due))) b->cursor++;
+    while (b->cursor < BmFields) {
+        if (b->cursor >= BmPenHall3 && !b->pen_diagnostics) {
+            b->cursor = BmFields;
+            break;
+        }
+        if (b->cursor >= BmPenMacLow &&
+            (!(b->valid & (UINT64_C(1) << BmPenHall3)) || b->value[BmPenHall3] != 0)) {
+            b->cursor = BmFields;
+            break;
+        }
+        if (kFields[b->cursor].opcode && (!kFields[b->cursor].slow || b->slow_due) &&
+            !(b->pen_unavailable & (UINT64_C(1) << b->cursor))) break;
+        b->cursor++;
+    }
 }
 
 static void advance(ShengBattmgr *b)
@@ -83,7 +110,7 @@ void sheng_battmgr_refresh(ShengBattmgr *b, int slow)
     }
     b->slow_due = slow || !(b->valid & (1u << BmFull));
     for (unsigned i = 0; i < BmFields; ++i)
-        if (!kFields[i].slow || b->slow_due) b->valid &= ~(1u << i);
+        if (!kFields[i].slow || b->slow_due) b->valid &= ~(UINT64_C(1) << i);
     b->cursor = 0;
     b->in_flight = 0;
     skip_to_wanted(b);
@@ -126,7 +153,9 @@ int sheng_battmgr_timeout(ShengBattmgr *b)
         b->notification_pending = 0;
         return BmAnswer;  /* The owner retries the idempotent subscription. */
     }
-    b->valid &= ~(1u << b->cursor);
+    const uint64_t bit = UINT64_C(1) << b->cursor;
+    b->valid &= ~bit;
+    if (b->cursor >= BmPenHall3) b->pen_unavailable |= bit;
     advance(b);
     return finish(b) ? BmCycleDone : BmAnswer;
 }
@@ -151,20 +180,28 @@ int sheng_battmgr_receive(ShengBattmgr *b, const uint8_t *data, uint32_t length)
     const uint32_t property = le32(data + 12), value = le32(data + 16), result = le32(data + 20);
     if (opcode != kFields[b->cursor].opcode || property != kFields[b->cursor].property) {b->ignored++; return BmIgnored;}
     b->responses++;
-    const int signed_field = b->cursor == BmCurrent || b->cursor == BmTemperature ||
-        b->cursor == BmUsbCurrent || b->cursor == BmTimeToEmpty || b->cursor == BmTimeToFull;
+    const int signed_field = b->cursor == BmCurrent || b->cursor == BmTemperature || b->cursor == BmPenMacLow ||
+        b->cursor == BmUsbCurrent || b->cursor == BmTimeToEmpty || b->cursor == BmTimeToFull ||
+        b->cursor == BmPenTxCurrent;
     const int bad_value = (!signed_field && value > 0x7fffffffu) ||
         (b->cursor == BmCapacity && value > 10000) ||
         (b->cursor == BmPresent && value > 1) ||
         (b->cursor == BmStatus && value > 4) ||
+        (b->cursor == BmPenSoc && value > 100) ||
+        (b->cursor == BmPenMacHigh && value > 0xffffu) ||
         (b->cursor == BmTemperature && ((int32_t)value < -4000 || (int32_t)value > 9000)) ||
         (b->cursor == BmCurrent && value == 0x80000000u);
     if (result || bad_value) {
         b->errors++;
-        b->valid &= ~(1u << b->cursor);
+        b->valid &= ~(UINT64_C(1) << b->cursor);
     } else {
         b->value[b->cursor] = (int32_t)value;
-        b->valid |= 1u << b->cursor;
+        b->valid |= UINT64_C(1) << b->cursor;
+        // The PMIC may stop replying to an address request as the pen is
+        // removed. A confirmed Hall3 detach ends that address session. MAC
+        // reads remain skipped while detached and can run on the next dock.
+        if (b->cursor == BmPenHall3 && value == 1)
+            b->pen_unavailable &= ~kPenAddressFields;
     }
     advance(b);
     return finish(b) ? BmCycleDone : BmAnswer;
@@ -182,6 +219,17 @@ static uint32_t family(int type)
     case 6: case 7: case 8: return 0xe000400au;
     default: return 0xe0004007u;
     }
+}
+
+int sheng_battmgr_pen_address(const ShengBattmgr *b, uint8_t address[6])
+{
+    const uint64_t required = (UINT64_C(1) << BmPenHall3) | kPenAddressFields;
+    if ((b->valid & required) != required || b->value[BmPenHall3] != 0) return 0;
+    const uint64_t mac = ((uint64_t)(uint32_t)b->value[BmPenMacHigh] << 32) |
+        (uint32_t)b->value[BmPenMacLow];
+    if (!mac || mac == UINT64_C(0xffffffffffff)) return 0;
+    for (unsigned i = 0; i < 6; ++i) address[i] = (uint8_t)(mac >> (8 * (5 - i)));
+    return 1;
 }
 
 void sheng_battmgr_snapshot(const ShengBattmgr *b, ShengBatterySnapshot *s)

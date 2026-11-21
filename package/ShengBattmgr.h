@@ -20,7 +20,7 @@ extern "C" {
 #define SHENG_BATTMGR_REQUEST_BYTES 24u
 #define SHENG_BATTMGR_ENABLE_BYTES 28u
 
-/* The fields one refresh reads, in order (at most 32: valid has a bit per field). */
+/* The fields one refresh reads, in order (valid has a bit per field). */
 enum {
     BmStatus, BmPresent, BmCapacity, BmVoltage, BmCurrent, BmTemperature, BmCharge, BmUsbOnline, BmUsbType, BmUsbVoltage,
     BmUsbCurrent, BmTimeToEmpty, BmTimeToFull, BmGauge1Remaining, BmGauge1Full, BmGauge2Remaining, BmGauge2Full, BmFull, BmDesign,
@@ -29,17 +29,20 @@ enum {
      * thermal level, the charge current the charger runs, the board's view of the adapter (type, watts, PD authenticated), battery
      * authentication of both cells, input suspended */
     BmUsbAdapter, BmUsbLimit, BmUsbMax, BmChargeType, BmThermalLevel, BmChargeCurrent, BmRealType, BmPowerMax, BmPdVerified,
-    BmAuthentic, BmSlaveAuthentic, BmInputSuspend, BmFields
+    BmAuthentic, BmSlaveAuthentic, BmInputSuspend,
+    BmPenHall3, BmPenHall4, BmPenReverseState, BmPenSoc, BmPenTxState,
+    BmPenTxCurrent, BmPenTxVoltage, BmPenPlacementError, BmPenMacLow, BmPenMacHigh, BmFields
 };
 
 typedef struct {
     int32_t value[BmFields];
-    uint32_t valid;               /* bit per field */
+    uint64_t valid;               /* bit per field */
+    uint64_t pen_unavailable;     /* isolate timeouts until transport reset, or Hall3 detach for the MAC */
     uint8_t cursor, in_flight, enabled, slow_due;
     uint32_t cycles_done, responses, notifications, errors, timeouts, ignored;
     uint32_t refresh_wanted;      /* a notification asked for a new cycle while one ran */
     int last_timeout;             /* the field the last timeout skipped, -1 none */
-    uint8_t poisoned, notification_pending;
+    uint8_t poisoned, notification_pending, pen_diagnostics;
 
 } ShengBattmgr;
 
@@ -74,6 +77,7 @@ int sheng_battmgr_timeout(ShengBattmgr *b);
 int sheng_battmgr_receive(ShengBattmgr *b, const uint8_t *data, uint32_t length);
 /* The power source values from the fields read so far. */
 void sheng_battmgr_snapshot(const ShengBattmgr *b, ShengBatterySnapshot *s);
+int sheng_battmgr_pen_address(const ShengBattmgr *b, uint8_t address[6]);
 
 #ifdef __cplusplus
 }

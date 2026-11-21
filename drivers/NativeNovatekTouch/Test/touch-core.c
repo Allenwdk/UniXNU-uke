@@ -114,6 +114,18 @@ int main(void){
     // Palm-sized blobs are not reported.
     settle();
     for(int frame=0;frame<4;++frame){base_frame(f,2);blob(f,20,30,900,6.0);assert(feed(f,c,12)==0);}
+    // With a pen in range, suppress a smaller palm while retaining an
+    // independent normal finger. Return to the usual threshold on pen exit.
+    settle();
+    for(int frame=0;frame<3;++frame){base_frame(f,2);blob(f,20,30,700,1.85);n=feed(f,c,12);}
+    assert(n==1 && c[0].area>=NVT_PEN_PALM_MIN_NODES && c[0].area<NVT_PALM_MIN_NODES);
+    core.pen_in_range=1;
+    base_frame(f,2);blob(f,20,30,700,1.85);assert(feed(f,c,12)==0);
+    for(int frame=0;frame<3;++frame){
+        base_frame(f,2);blob(f,20,30,700,1.85);blob(f,8,15,900,1.1);n=feed(f,c,12);
+    }
+    assert(n==1 && c[0].area<NVT_PEN_PALM_MIN_NODES);
+    core.pen_in_range=0;
     // The output limit is honoured.
     settle();
     for(int frame=0;frame<3;++frame){base_frame(f,2);blob(f,5,8,800,1.2);blob(f,5,30,800,1.2);blob(f,5,52,800,1.2);blob(f,30,8,800,1.2);

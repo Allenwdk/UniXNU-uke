@@ -18,6 +18,8 @@ extern "C" void native_hid_static_init(void) __asm__("__GLOBAL__sub_I_NativeHidI
 extern "C" IOService *native_hid_input_allocate(void);
 extern "C" IOService *native_hid_touch_allocate(void);
 extern "C" IOService *native_hid_buttons_allocate(void);
+extern "C" IOService *native_hid_pen_allocate(void) __attribute__((weak_import));
+extern "C" IOService *native_hid_pen_management_allocate(uint32_t page, uint32_t usage) __attribute__((weak_import));
 extern "C" {
 extern kern_return_t OSKextLoadKextWithIdentifier(const char *);
 volatile uint32_t native_hid_stage,native_hid_resource_found;
@@ -286,6 +288,35 @@ void native_hid_input_probe(void) {
                         IOService *touch=native_hid_touch_allocate();
                         bool touchStarted=touch && touch->metaCast("IOHIDDevice") && touch->init() && touch->attach(resource) && touch->start(resource);
                         if(!touchStarted && touch){touch->detach(resource);OSSafeReleaseNULL(touch);}
+                    }
+                    unsigned pencil=0;
+                    if(started && &native_hid_pen_allocate &&
+                       PE_parse_boot_argn("uke-pencil",&pencil,sizeof(pencil)) && pencil==4) {
+                        IOService *pen=native_hid_pen_allocate();
+                        const bool attachedPen=pen && pen->metaCast("IOHIDDevice") && pen->init() && pen->attach(resource);
+                        if(!attachedPen || !pen->start(resource)){
+                            if(attachedPen)pen->detach(resource);
+                            OSSafeReleaseNULL(pen);
+                            IOLog("UKE PEN built-in device start failed\n");
+                        }
+                        if (&native_hid_pen_management_allocate) {
+                            // FF00/11 activates Firefly force fusion. Publish it only
+                            // once the bridge implements its descriptor and report I/O.
+                            // The screen pen already carries actual pressure in the
+                            // Digitizer report and can submit strokes independently.
+                            const uint32_t interfaces[][2] = {{0xff00,0x0b},{0xff00,0x33},{0xff60,0x1005}};
+                            IOLog("UKE PEN Firefly force endpoint pending descriptor support\n");
+                            for (const auto &interface : interfaces) {
+                                IOService *management=native_hid_pen_management_allocate(interface[0], interface[1]);
+                                const bool attachedManagement=management && management->metaCast("IOHIDDevice") &&
+                                    management->init() && management->attach(resource);
+                                if (!attachedManagement || !management->start(resource)) {
+                                    if (attachedManagement) management->detach(resource);
+                                    OSSafeReleaseNULL(management);
+                                    IOLog("UKE PEN management start failed usage=%x/%x\n",interface[0],interface[1]);
+                                }
+                            }
+                        }
                     }
                     // The offline devices live for this bounded boot. Its
                     // service attachment and timer remain genuine live objects.

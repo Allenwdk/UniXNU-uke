@@ -27,7 +27,7 @@ kit = "uke"                      # the package/ of this repository appears as ki
 include = [
   "ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState",
   "Adreno740", "AdrenoMetal", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "AirNir", "Sm7675Platform",
-  "GopFramebuffer", "QcomGeniSpi", "ShengNovatekTouch", "ShengHidInput",
+  "GopFramebuffer", "QcomGeniSpi", "ShengNovatekTouch", "ShengHidInput", "NativeFocusPenPro",
   "ShengUfs", "VirtioMmioBlock", "RamBlock", "VerifiedRoot", "SoftwareAES", "Ath12kWifi", "QcomDwc3", "QcaBluetooth",
 ]
 
@@ -85,6 +85,9 @@ archives = [
   "build-native-legacy-display-27.py",
   # Match the stripped Apple kernel against the real upstream RELEASE/LTO reference.
 ]
+
+[kernel.embedded_components]
+NativeFocusPenPro = "build-native-legacy-display-27.py"
 
 # Adreno 732 (uke) board values for the native GPU driver. The driver carries
 # an A740 and an A732 profile; scripts/check-uke-gpu.py compares these values
@@ -434,4 +437,4 @@ reg = "000000c8000000000000000200000000"
 
 # Driver defaults outside DarwinBoot CommandLine; explicit CLI arguments override.
 [adt.chosen.string]
-unixnu-driver-args = "offline-legacy-register=1 offline-legacy-gop=1 offline-legacy-unit-scale=2 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1 offline-legacy-phase=4 offline-legacy-noconsole=1 sheng-touch=4 sheng-touch-hid=1 sheng-buttons=1 sheng-backlight=1 sheng-touch-split=1 sheng-touch-poll=1 sheng-dpu-scanout=2 sheng-vsync=120 sheng-vsync-fixed=1 bluetooth=0 log-bluetooth=0"
+unixnu-driver-args = "offline-legacy-register=1 offline-legacy-gop=1 offline-legacy-unit-scale=2 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1 offline-legacy-phase=4 offline-legacy-noconsole=1 sheng-touch=4 sheng-touch-hid=1 sheng-buttons=1 sheng-backlight=1 sheng-touch-split=1 sheng-dpu-scanout=2 sheng-vsync=120 sheng-vsync-fixed=1 bluetooth=0 log-bluetooth=0"

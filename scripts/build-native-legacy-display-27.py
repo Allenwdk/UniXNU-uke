@@ -19,6 +19,7 @@ from kernel_target import ARCH, IOS_VERSION, TRIPLE
 if ARCH != 'arm64e' or IOS_VERSION.split('.')[0] != '27':
     raise SystemExit('This Legacy display builder only supports arm64e iPadOS 27 (24A446).')
 ROOT = Path(__file__).resolve().parents[1]
+PEN = ROOT / 'drivers/NativeFocusPenPro'
 OUT = ROOT / 'build/native-legacy-display'
 OUT.mkdir(parents=True, exist_ok=True)
 
@@ -560,7 +561,9 @@ for stem, extra in [('CpuFreqProbe', ()),
                     ('UkeAudioProbe', ()),
                     ('WifiAth11k', ('-I', str(ROOT / 'drivers/Ath12kWifi/include'))),
                     ('WifiProbe', ('-I', str(ROOT / 'kits/Sm7675Platform/remoteproc'), '-I', str(ROOT / 'kits/ArmSmmu4K'))),
-                    ('TouchProbe', ('-I', str(ROOT / 'drivers/QcomGeniSpi'), '-I', str(ROOT / 'drivers/ShengNovatekTouch'))),
+                    ('TouchProbe', ('-I', str(ROOT / 'drivers/QcomGeniSpi'),
+                                    '-I', str(ROOT / 'drivers/ShengNovatekTouch'),
+                                    '-I', str(PEN), '-DUKE_TOUCH_FIRMWARE_ZLIB')),
                     ('DpuProbe', ()), ('ButtonProbe', ()), ('BacklightProbe', ()),
                     ('GpuPowerProbe', tuple(x for d in ('drivers/Adreno740', 'kits/ArmSmmu4K', 'kits/AdrenoFirmware', 'kits/AdrenoPM4', 'kits/Sm7675Platform', 'build/sheng-gmu', 'build/sheng-gpu-smmu') for x in ('-I', str(ROOT / d))))]:
     compile_cpp(KITS / (stem + '.cpp'), board_dir / (stem + '.o'), extra)
@@ -590,7 +593,7 @@ board_objects.append(board_dir / 'Sm7675RemoteProc.o')
 compile_cpp(remoteproc / 'Sm7675Scm.cpp', board_dir / 'Sm7675Scm.o')
 board_objects.append(board_dir / 'Sm7675Scm.o')
 compile_cpp(KITS / 'ShengBattery.cpp', board_dir / 'ShengBattery.o',
-            ('-I', str(ROOT / 'drivers/QcomDwc3'), '-I', str(ROOT / 'drivers/GopFramebuffer')))
+            ('-I', str(ROOT / 'drivers/QcomDwc3'), '-I', str(ROOT / 'drivers/GopFramebuffer'), '-I', str(PEN)))
 battery_late = board_dir / 'ShengBattery.late.o'
 run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func',
      '--globalize-symbol=__GLOBAL__sub_I_ShengBattery.cpp', board_dir / 'ShengBattery.o', battery_late])
@@ -621,8 +624,15 @@ board_objects += ath11k_objects
 for stem in ('UkeGpuExport', 'BootLatencyTrace', 'BootProcessProbe', 'BootUiTraceProbe', 'LegacyDisplayStubs'):
     compile_c(KITS / (stem + '.c'), board_dir / (stem + '.o'))
     board_objects.append(board_dir / (stem + '.o'))
+compile_c(PEN / 'UkePenFrameSysctl.c', board_dir / 'UkePenFrameSysctl.o', 'bsd/DEVELOPMENT/kern_exec.o.json')
+board_objects.append(board_dir / 'UkePenFrameSysctl.o')
+if HID_SOURCE:
+    compile_cpp(PEN / 'UkePenBleBridge.cpp', board_dir / 'UkePenBleBridge.o',
+                ('-I', str(SRC / 'headers/include')))
+    board_objects.append(board_dir / 'UkePenBleBridge.o')
 # Touch transport, protocol and the vendor firmware object generated from the device cache.
-print(run(['python3', ROOT / 'scripts/gen-touch-firmware.py'], text=True), end='')
+# Keep the embedded image within the contiguous __PRELINK_TEXT range on 24A446.
+print(run(['python3', ROOT / 'scripts/gen-touch-firmware.py', '--compress'], text=True), end='')
 for source in (ROOT / 'drivers/QcomGeniSpi/GeniSpi.c', ROOT / 'drivers/ShengNovatekTouch/NvtProtocol.c',
                ROOT / 'drivers/ShengNovatekTouch/NvtTouchCore.c', ROOT / 'build/native-touch/NvtFirmware.c'):
     obj = board_dir / (source.stem + '.o')
@@ -818,6 +828,9 @@ sources += [ROOT / 'kits/uke/DisplayCallTrace27.cpp', ROOT / 'kits/uke/LegacyDis
 sources += [KITS / name for name in ('ButtonProbe.cpp', 'BacklightProbe.cpp', 'AppleARMBacklight.cpp',
                                     'GeniI2c.c', 'GeniI2c.h', 'UkeButtonState.h', 'UkeBacklightState.h',
                                     'TouchProbe.cpp')]
+sources += [PEN / name for name in ('UkePenFrames.h', 'UkePenPower.h', 'UkePenBle.h', 'UkePenFrameSysctl.c')]
+if HID_SOURCE:
+    sources.append(PEN / 'UkePenBleBridge.cpp')
 sources += [Path(__file__).resolve(), KITS / 'CpuFreqProbe.cpp', KITS / 'GpuPowerProbe.cpp',
             KITS / 'GpuMemoryPool.cpp', KITS / 'GpuDcvsOpps.h', KITS / 'ShengGmuVotes.c',
             ROOT / 'build/sheng-gmu/ShengGmuVotesSource.h', ROOT / 'scripts/prepare-uke-gmu.py',

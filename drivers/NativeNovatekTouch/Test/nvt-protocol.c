@@ -18,9 +18,12 @@ static unsigned delays,cmd_busy_polls,seq_log_n;static uint32_t seq_log[8];
 
 static uint32_t rd3(uint32_t a){return mem[a]|(mem[a+1]<<8)|(mem[a+2]<<16);}
 static uint32_t rd4(uint32_t a){return rd3(a)|((uint32_t)mem[a+3]<<24);}
+static unsigned pen_mode_writes;
+static int pen_mode_busy;
 static void model_reset(void){
     memset(mem,0,sizeof(mem));eng_resets=0;id_writes=0;page=0;auto_copy_polls=0;crc_enabled=0;bootloader_resets=0;bus_calls=0;delays=0;
     fail_boot_rdy=0;flip_write_number=0;flip_counter=0;bus_fault_at=-1;
+    cmd_busy_polls=0;pen_mode_writes=0;pen_mode_busy=0;
     memcpy(mem+0x1FB104,id_bytes,6);mem[0x1FB12C]=0x00;   // ENB_CASC clear = Cascade Chip (the sheng panel's reading)
 }
 static void on_write(uint32_t addr,const uint8_t *d,size_t n){
@@ -32,6 +35,11 @@ static void on_write(uint32_t addr,const uint8_t *d,size_t n){
     if(addr<=0x1FC925 && 0x1FC925<addr+n && mem[0x1FC925]==0x56)auto_copy_polls=3;
     if(addr==0x11C400+0x50 && d[0]==0xae)crc_enabled=1;
     if(addr==0x11C400+0x50 && n==5 && d[0]==0xbf){mem[addr]=cmd_busy_polls?0xbf:0;if(!cmd_busy_polls&&seq_log_n<8)seq_log[seq_log_n++]=d[1];}
+    if(addr==0x11C400+0x50 && n==2 && d[0]==0x7b){
+        assert(d[1]==3 && mem[addr+3]==1);
+        ++pen_mode_writes;
+        if(!pen_mode_busy)mem[addr]=0;
+    }
     if(addr==0x113718&&seq_log_n<8)seq_log[seq_log_n++]=addr;
     if(addr<=0x1FB50D && 0x1FB50D<addr+n && mem[0x1FB50D]==1) {
         ++boot_rdy_writes;
@@ -108,6 +116,52 @@ int main(int argc,char **argv){
         uint8_t pk[NVT_THP_PEEK_LEN];assert(!nvt_peek_frame_header(&chip,pk));
         assert(!memcmp(pk,frame+NVT_THP_HEADER_LEN,NVT_THP_PEEK_LEN));
         assert(nvt_peek_counter(pk)==0x1234&&nvt_peek_type(pk)==4);
+        uint8_t pen[NVT_THP_PEN_PEEK_LEN];assert(!nvt_peek_pen_header(&chip,pen));
+        assert(!memcmp(pen,frame+NVT_THP_HEADER_LEN,NVT_THP_PEN_PEEK_LEN));
+    }
+    {
+        // Same outer word count as the first Uke P81c type 29 capture.
+        uint8_t pen[NVT_THP_PEN_FRAME_MAX]={0}, replay[NVT_THP_PEN_FRAME_MAX+1];
+        uint8_t *header=pen+NVT_THP_HEADER_LEN;
+        header[8]=9; header[9]=5;   // 1289 little-endian words
+        header[12]=header[13]=0xff;
+        for (unsigned i=0;i<4;++i) header[16+i]=(uint8_t)~header[8+i];
+        header[56]=29;
+        pen[sizeof pen-1]=0x91;
+        memset(replay,0xff,sizeof replay);
+        memcpy(mem+chip.map->event_buf,pen+1,sizeof pen-1);
+        uint8_t peek[NVT_THP_PEN_PEEK_LEN];
+        assert(!nvt_peek_pen_header(&chip,peek));
+        assert(nvt_pen_frame_length(peek)==sizeof pen);
+        assert(!nvt_read_pen_frame(&chip,replay,nvt_pen_frame_length(peek)));
+        assert(!memcmp(replay,pen,sizeof pen) && replay[sizeof pen]==0xff);
+        memset(replay,0xff,sizeof replay);
+        assert(!nvt_read_pen_sample(&chip,replay));
+        assert(!memcmp(replay,pen,NVT_THP_PEN_SAMPLE_LEN));
+        assert(replay[NVT_THP_PEN_SAMPLE_LEN]==0xff);
+        header[71]=12; header[72]=40; header[73]=60; header[74]=8;
+        const unsigned trailer = NVT_THP_PEN_SAMPLE_LEN-NVT_THP_HEADER_LEN-20;
+        const unsigned words = (trailer-20)/4;
+        uint16_t sum=0;
+        for (unsigned i=20;i<trailer;i+=2) sum+=(uint16_t)(header[i]|(header[i+1]<<8));
+        const uint16_t check=(uint16_t)(0u-sum);
+        header[trailer+4]=(uint8_t)check;
+        header[trailer+5]=(uint8_t)(check>>8);
+        header[trailer+12]=(uint8_t)~header[trailer+4];
+        header[trailer+13]=(uint8_t)~header[trailer+5];
+        for (unsigned i=0;i<4;++i) {
+            header[trailer+8+i]=(uint8_t)(words>>(8*i));
+            header[trailer+16+i]=(uint8_t)~header[trailer+8+i];
+        }
+        assert(nvt_pen_sample_valid(pen,NVT_THP_PEN_SAMPLE_LEN));
+        assert(!nvt_pen_sample_valid(pen,NVT_THP_PEN_SAMPLE_LEN-1));
+        header[100]^=1;
+        assert(!nvt_pen_sample_valid(pen,NVT_THP_PEN_SAMPLE_LEN));
+        assert(nvt_read_pen_frame(&chip,replay,sizeof replay)==NVT_ERR_PARAM);
+        peek[16]^=1;
+        assert(nvt_pen_frame_length(peek)==0);
+        peek[8]=10; peek[16]=(uint8_t)~peek[8];
+        assert(nvt_pen_frame_length(peek)==0);
     }
     int16_t matrix[2400];nvt_frame_matrix(got,matrix);
     for(int i=0;i<2400;++i)assert((uint16_t)matrix[i]==(uint16_t)(frame[NVT_THP_MATRIX_OFFSET+i*2]|(frame[NVT_THP_MATRIX_OFFSET+i*2+1]<<8)));
@@ -130,6 +184,21 @@ int main(int argc,char **argv){
         uint8_t f[NVT_THP_FRAME_LEN]={0};uint8_t *h=f+NVT_THP_HEADER_LEN;
         h[4]=0x34;h[5]=0x12;h[12]=0xcb;h[13]=0xed;h[8]=0x4e;h[9]=0x54;h[10]=0x50;h[11]=0x31;h[16]=0xb1;h[17]=0xab;h[18]=0xaf;h[19]=0xce;
         assert(nvt_frame_header_valid(f));h[17]^=1;assert(!nvt_frame_header_valid(f));
+    }
+    {
+        const uint32_t command = chip.map->event_buf + NVT_EVENT_HOST_CMD;
+        int rollback = -1;
+        assert(!nvt_set_p81c_scan(&chip,1,&rollback));
+        assert(!rollback && pen_mode_writes==1);
+        assert(!nvt_set_p81c_scan(&chip,0,&rollback));
+        assert(!rollback && mem[command+1]==0x04 && mem[command+3]==0);
+        pen_mode_busy=1;
+        assert(nvt_set_p81c_scan(&chip,1,&rollback)==NVT_ERR_TIMEOUT);
+        assert(!rollback && pen_mode_writes==11 && mem[command+3]==0);
+        cmd_busy_polls=30;
+        assert(nvt_set_p81c_scan(&chip,1,&rollback)==NVT_ERR_TIMEOUT);
+        assert(rollback==NVT_ERR_TIMEOUT && pen_mode_writes==11);
+        cmd_busy_polls=0;
     }
     // 4. Real firmware image, if available: parser, download into the model, and failure handling.
     const char *path=argc>1?argv[1]:getenv("NVT_FIRMWARE");

@@ -26,6 +26,56 @@ static int measurement(unsigned opcode, unsigned property)
         property == 15 || property == 16 || property == 17 || property == 18 || property == 20 || property == 21;
 }
 
+static void check_pen_address_after_detach(void)
+{
+    ShengBattmgr b;
+    uint8_t request[24], reply[24], late[24], mac[6];
+    sheng_battmgr_init(&b);
+    b.pen_diagnostics = 1;
+    const uint64_t low = UINT64_C(1) << BmPenMacLow;
+    const uint64_t tx = UINT64_C(1) << BmPenTxState;
+    // Timeout while docked, stay docked, an invalid Hall reading, a
+    // confirmed detach, and then a new dock on the same transport.
+    const uint32_t hall[] = {0, 0, 2, 1, 0};
+    for (unsigned round = 0; round < sizeof hall / sizeof *hall; ++round) {
+        sheng_battmgr_refresh(&b, 0);
+        int requested_low = 0, requested_high = 0;
+        while (sheng_battmgr_next(&b, request)) {
+            const unsigned property = get(request + 16);
+            uint32_t value = 1;
+            if (get(request + 8) == SHENG_BATTMGR_OP_BOARD_GET) {
+                if (property == 0x64) value = hall[round];
+                if (property == 0x6a && round == 0) {
+                    CHECK(sheng_battmgr_timeout(&b) == BmAnswer);
+                    continue;
+                }
+                if (property == 0x5f) {
+                    requested_low = 1;
+                    value = 0xa3a4a5a6;
+                    if (round == 0) {
+                        response(late, request, value);
+                        CHECK(sheng_battmgr_timeout(&b) == BmAnswer);
+                        continue;
+                    }
+                }
+                if (property == 0x60) {
+                    requested_high = 1;
+                    value = 0xa1a2;
+                    CHECK(sheng_battmgr_receive(&b, late, 24) == BmIgnored);
+                }
+            }
+            response(reply, request, value);
+            const int rc = sheng_battmgr_receive(&b, reply, 24);
+            CHECK(rc == BmAnswer || rc == BmCycleDone);
+        }
+        CHECK(requested_low == (round == 0 || round == 4));
+        CHECK(requested_high == (hall[round] == 0));
+        CHECK(b.pen_unavailable == (round < 3 ? low | tx : tx));
+        CHECK(sheng_battmgr_pen_address(&b, mac) == (round == 4));
+    }
+    CHECK(memcmp(mac, (uint8_t[]){0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6}, sizeof mac) == 0);
+}
+
 int main(void)
 {
     ShengBattmgr b;
@@ -125,5 +175,55 @@ int main(void)
     uint8_t notify[16] = {0};
     put(notify, 32778); put(notify + 4, 2); put(notify + 8, 7);
     CHECK(sheng_battmgr_receive(&b, notify, sizeof notify) == BmNotified);
-    printf("PASS Uke battery read-only and per-request timeout: %u checks\n", checks);
+
+    sheng_battmgr_init(&b);
+    b.pen_diagnostics = 1;
+    static const uint32_t pen_properties[] = {0x64, 0x65, 0x48, 0x63, 0x6a, 0x61, 0x62, 0x6b};
+    for (unsigned round = 0; round < 2; ++round) {
+        sheng_battmgr_refresh(&b, 0);
+        unsigned i = round;
+        while (sheng_battmgr_next(&b, request)) {
+            const unsigned opcode = get(request + 8), property = get(request + 16);
+            if (opcode != SHENG_BATTMGR_OP_BOARD_GET) {
+                CHECK(measurement(opcode, property));
+                response(reply, request, property == 4 ? 5000 : 1);
+            } else {
+                CHECK(i < sizeof pen_properties / sizeof *pen_properties && property == pen_properties[i]);
+                ++i;
+                response(reply, request, property == 0x63 ? 255 : 1);
+                if (property == 0x64) {
+                    CHECK(sheng_battmgr_timeout(&b) == BmAnswer);
+                    CHECK(sheng_battmgr_receive(&b, reply, 24) == BmIgnored);
+                    continue;
+                }
+            }
+            const int rc = sheng_battmgr_receive(&b, reply, 24);
+            CHECK(rc == BmAnswer || rc == BmCycleDone);
+        }
+        CHECK(i == sizeof pen_properties / sizeof *pen_properties);
+        CHECK((b.valid >> BmPenHall3) == 0xf6 && (b.pen_unavailable >> BmPenHall3) == 1);
+        CHECK(b.cycles_done == round + 1 && b.timeouts == 1);
+        sheng_battmgr_snapshot(&b, &snapshot);
+        CHECK(snapshot.charge_known && snapshot.percent == 50 && snapshot.charging);
+    }
+    sheng_battmgr_init(&b);
+    b.pen_diagnostics = 1;
+    b.cursor = BmPenMacLow;
+    b.valid = UINT64_C(1) << BmPenHall3;
+    CHECK(sheng_battmgr_next(&b, request) == 24);
+    CHECK(get(request + 16) == 0x5f);
+    response(reply, request, 0xa3a4a5a6);
+    CHECK(sheng_battmgr_receive(&b, reply, 24) == BmAnswer);
+    CHECK(sheng_battmgr_next(&b, request) == 24);
+    CHECK(get(request + 16) == 0x60);
+    response(reply, request, 0xa1a2);
+    CHECK(sheng_battmgr_receive(&b, reply, 24) == BmCycleDone);
+    uint8_t mac[6] = {0};
+    CHECK(sheng_battmgr_pen_address(&b, mac));
+    CHECK(memcmp(mac, (uint8_t[]){0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6}, 6) == 0);
+    b.value[BmPenHall3] = 1;
+    CHECK(!sheng_battmgr_pen_address(&b, mac));
+
+    check_pen_address_after_detach();
+    printf("PASS Uke battery read-only, per-request timeout and dock address: %u checks\n", checks);
 }

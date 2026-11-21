@@ -6,7 +6,7 @@
 //   4  host-download the firmware, start scanning and process THP frames (needs the generated firmware object)
 // Every stage reports on the diagnostic page; the first failure stops the sequence. Board constants and their sources
 // are in TouchBoard.h. Frame delivery is interrupt driven (the TLMM pin interrupt on GPIO 54 through the TLMM summary
-// SPI) once ArmCpu's armcpu_spi_attach is linked; otherwise the loop polls the frame counter every 10 ms.
+// SPI) once ArmCpu's armcpu_spi_share is linked; otherwise the loop polls the frame counter.
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
@@ -16,6 +16,8 @@
 #include <kern/thread.h>
 #include <kern/clock.h>
 #include <pexpert/pexpert.h>
+#include <sys/errno.h>
+#include "UkePenFrames.h"
 extern "C" {
 // The module sources live under the build tree's drivers/ (the tree links this package as kits/uke, so a
 // path relative to the package no longer reaches them); the builder adds their directories with -I.
@@ -27,7 +29,15 @@ extern "C" {
 #include "UkeUsbBoard.h"
 extern const uint8_t native_touch_firmware[] __attribute__((weak_import));
 extern const uint32_t native_touch_firmware_size __attribute__((weak_import));
+#ifdef UKE_TOUCH_FIRMWARE_ZLIB
+#include <libkern/zlib.h>
+extern const uint32_t native_touch_firmware_packed_size __attribute__((weak_import));
+#endif
 }
+
+extern "C" int native_hid_pen_hover(unsigned x, unsigned y, bool inRange, bool tipDown, unsigned pressure,
+                                  int tiltX, int tiltY, uint64_t sampleTicks) __attribute__((weak_import));
+extern "C" bool native_hid_pen_in_range() __attribute__((weak_import));
 
 extern "C" {
 char native_touch_rows[4][120];
@@ -49,6 +59,149 @@ void native_touch_set_sink(void (*sink)(void *), void *context) {gTouchSinkConte
 }
 
 namespace {
+#ifdef UKE_TOUCH_FIRMWARE_ZLIB
+struct alignas(16) FirmwareZlibAllocation {
+    size_t size;
+};
+
+voidpf firmwareZlibAlloc(voidpf, uInt count, uInt size) {
+    size_t bytes;
+    if (__builtin_mul_overflow(static_cast<size_t>(count), size, &bytes) ||
+        __builtin_add_overflow(bytes, sizeof(FirmwareZlibAllocation), &bytes)) return Z_NULL;
+    auto *allocation = static_cast<FirmwareZlibAllocation *>(IOMallocZero(bytes));
+    if (!allocation) return Z_NULL;
+    allocation->size = bytes;
+    return allocation + 1;
+}
+
+void firmwareZlibFree(voidpf, voidpf address) {
+    auto *allocation = static_cast<FirmwareZlibAllocation *>(address) - 1;
+    IOFree(allocation, allocation->size);
+}
+
+bool expandTouchFirmware(uint8_t *out, uint32_t size, uint32_t packedSize) {
+    z_stream stream{};
+    stream.zalloc = firmwareZlibAlloc;
+    stream.zfree = firmwareZlibFree;
+    stream.next_in = const_cast<Bytef *>(native_touch_firmware);
+    stream.avail_in = packedSize;
+    stream.next_out = out;
+    stream.avail_out = size;
+    if (inflateInit(&stream) != Z_OK) return false;
+    const int status = inflate(&stream, Z_FINISH);
+    inflateEnd(&stream);
+    return status == Z_STREAM_END && stream.total_out == size && stream.avail_in == 0;
+}
+#endif
+
+constexpr unsigned kPenBurstFrames = 8;
+constexpr unsigned kPenSamples = 4 * kPenBurstFrames;
+constexpr unsigned kOtherSamples = 2;
+static_assert(NVT_THP_PEN_FRAME_MAX == UKE_PEN_FRAME_CAPACITY);
+static_assert(NVT_THP_HEADER_LEN == UKE_PEN_SPI_PREFIX);
+
+struct PenStream {
+    static constexpr unsigned capacity = 8;
+    IOLock *lock;
+    uint64_t sequence;
+    uint64_t dequeuedSequence, dequeuedNs, submittedSequence;
+    unsigned head, count;
+    bool active;
+    UkePenFrame records[capacity];
+};
+static PenStream *gPenStream;
+
+void startPenStream() {
+    auto *stream = static_cast<PenStream *>(IOMallocZero(sizeof(PenStream)));
+    if (!stream) return;
+    stream->lock = IOLockAlloc();
+    if (!stream->lock) {
+        IOFree(stream, sizeof(PenStream));
+        return;
+    }
+    stream->active = true;
+    __atomic_store_n(&gPenStream, stream, __ATOMIC_RELEASE);
+    IOLog("UKE PEN input queue started\n");
+}
+
+void stopPenStream() {
+    if (!gPenStream) return;
+    IOLockLock(gPenStream->lock);
+    gPenStream->active = false;
+    gPenStream->count = 0;
+    IOLockWakeup(gPenStream->lock, &gPenStream->count, false);
+    IOLockUnlock(gPenStream->lock);
+}
+
+void streamPenFrame(const uint8_t *frame, unsigned length, uint64_t ns) {
+    auto *stream = gPenStream;
+    if (!stream) return;
+    IOLockLock(stream->lock);
+    const bool wasEmpty = stream->count == 0;
+    if (stream->count == PenStream::capacity) {
+        stream->head = (stream->head + 1) % PenStream::capacity;
+        --stream->count;
+    }
+    auto &record = stream->records[(stream->head + stream->count++) % PenStream::capacity];
+    record.version = UKE_PEN_FRAME_ABI;
+    record.generation = 1;  // one scan session per boot in mode 4
+    record.sequence = ++stream->sequence;
+    record.continuous_ns = ns;
+    record.length = length;
+    memcpy(record.bytes, frame, length);
+    if (wasEmpty) IOLockWakeup(stream->lock, &stream->count, true);
+    IOLockUnlock(stream->lock);
+}
+struct PenCapture {
+    struct Sample {
+        uint64_t ns;
+        unsigned counter;
+        unsigned length;
+        uint8_t bytes[NVT_THP_PEN_FRAME_MAX];
+    } samples[kPenSamples + kOtherSamples];
+    unsigned count;
+    unsigned penFrames;
+    unsigned otherFrames;
+    uint64_t nextBurstNs;
+    bool observedType[256];
+    bool observedPayloadType[256];
+};
+PenCapture *gPenCapture;
+
+uint64_t penCaptureTime() {
+    uint64_t ns;
+    absolutetime_to_nanoseconds(mach_continuous_time(), &ns);
+    return ns;
+}
+
+bool isPenType(unsigned type) {return type == 17 || type == 29;}
+
+void capturePenFrame(PenCapture &capture, const uint8_t *frame, unsigned length, uint64_t ns) {
+    const unsigned type = nvt_frame_type(frame);
+    const unsigned payloadType = frame[NVT_THP_HEADER_LEN + 56];
+    const unsigned counter = nvt_frame_counter(frame);
+    if (!capture.observedType[type] || !capture.observedPayloadType[payloadType]) {
+        capture.observedType[type] = true;
+        capture.observedPayloadType[payloadType] = true;
+        IOLog("UKE PEN header %u %u %u\n", counter, type, payloadType);
+    }
+    if (isPenType(type) || isPenType(payloadType)) {
+        if (capture.penFrames == kPenSamples || ns < capture.nextBurstNs) return;
+        if (++capture.penFrames % kPenBurstFrames == 0)
+            capture.nextBurstNs = ns + UINT64_C(1000000000);
+    } else {
+        if (type == 2 || type == 4 || capture.otherFrames == kOtherSamples) return;
+        ++capture.otherFrames;
+    }
+    const unsigned index = __atomic_load_n(&capture.count, __ATOMIC_RELAXED);
+    auto &sample = capture.samples[index];
+    sample.ns = ns;
+    sample.counter = counter;
+    sample.length = length;
+    memcpy(sample.bytes, frame, length);
+    __atomic_store_n(&capture.count, index + 1, __ATOMIC_RELEASE);
+}
+
 struct Region {OSSharedPtr<IOMemoryMap> keep; uintptr_t va = 0;};
 
 bool mapRegion(uint64_t phys, uint64_t length, Region &region) {
@@ -472,7 +625,7 @@ bool configureClock(Session &s, unsigned hz) {
 // 1 rising / 2 falling / 3 both, bit 4 raw status enable, bits 10:8 target, 3 = the application processor), +0xc
 // INTR_STATUS (bit 0; acknowledged by writing 0). All TLMM pin interrupts share the summary SPI 208
 // (uke-live.dts pinctrl@f000000 interrupts = <0 0xd0 4>), INTID 240.
-extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
+extern "C" int armcpu_spi_share(uint32_t, void (*)(void *), void *) __attribute__((weak_import));
 extern "C" {
 volatile uint32_t native_touch_cost[9];
 volatile uint32_t native_touch_doze[4];
@@ -516,13 +669,14 @@ static bool armTouchIrq(Session &s) {
     gTouchPin[0x8 / 4] = cfg;
     gTouchPin[0xc / 4] = 0;
     __asm__ volatile("dsb sy" ::: "memory");
-    if (!armcpu_spi_attach) {
+    if (!armcpu_spi_share) {
         native_touch_irq_stats[0] = 2; native_touch_irq_stats[3] = 0xffff;
         IOLog("UKE TCH: irq no-attach cfg%08x ctl%08x io%08x st%08x\n",
               gTouchPin[0x8 / 4], gTouchPin[0], gTouchPin[1], gTouchPin[0xc / 4]);
         return false;
     }
-    const int rc = armcpu_spi_attach(TB_TLMM_INTID, false, touchIrq, nullptr, nullptr, nullptr);
+    // Bluetooth RX wake is another pin on this level-triggered summary.
+    const int rc = armcpu_spi_share(TB_TLMM_INTID, touchIrq, nullptr);
     native_touch_irq_stats[3] = (uint32_t)rc;
     if (!rc) {gTouchPin[0x8 / 4] = cfg | 1u; native_touch_irq_stats[0] = 1;}   // enable last
     else native_touch_irq_stats[0] = 2;
@@ -559,7 +713,7 @@ static void touchThread(void *, wait_result_t) {
         IOLog("UKE TCH: geni+rcg ok rcg%08x %lluHz d%u\n", s->rcgCfg, (unsigned long long)s->rcgHz, s->div);
         s->tx = static_cast<uint8_t *>(IOMalloc(NVT_TRANSFER_LEN + 8));
         s->rx = static_cast<uint8_t *>(IOMalloc(NVT_READ_MAX + 2));
-        s->frame = static_cast<uint8_t *>(IOMalloc(NVT_THP_FRAME_LEN));
+        s->frame = static_cast<uint8_t *>(IOMalloc(NVT_THP_PEN_FRAME_MAX));
         s->matrix = static_cast<int16_t *>(IOMalloc(NVT_NODES * sizeof(int16_t)));
         if (!s->tx || !s->rx || !s->frame || !s->matrix) {fail(6, -12); break;}
         s->bus = (struct nvt_bus){s, busXfer, busDelay};
@@ -617,14 +771,32 @@ static void touchThread(void *, wait_result_t) {
         if (stage < 4) break;
         if (!&native_touch_firmware || !&native_touch_firmware_size || !native_touch_firmware_size) {fail(8, -2); break;}
         mark(*s, 8);
+        const uint8_t *firmware = native_touch_firmware;
+        uint8_t *firmwareBuffer = nullptr;
+#ifdef UKE_TOUCH_FIRMWARE_ZLIB
+        if (!&native_touch_firmware_packed_size || !native_touch_firmware_packed_size) {fail(8, -2); break;}
+        firmwareBuffer = static_cast<uint8_t *>(IOMalloc(native_touch_firmware_size));
+        if (!firmwareBuffer) {fail(8, -12); break;}
+        if (!expandTouchFirmware(firmwareBuffer, native_touch_firmware_size, native_touch_firmware_packed_size)) {
+            IOFree(firmwareBuffer, native_touch_firmware_size);
+            fail(8, NVT_ERR_FW);
+            break;
+        }
+        firmware = firmwareBuffer;
+#endif
         struct nvt_fw fw;
-        r = nvt_fw_parse(&fw, native_touch_firmware, native_touch_firmware_size);
-        if (r) {fail(8, r); break;}
+        r = nvt_fw_parse(&fw, firmware, native_touch_firmware_size);
+        if (r) {
+            if (firmwareBuffer) IOFree(firmwareBuffer, native_touch_firmware_size);
+            fail(8, r);
+            break;
+        }
         s->fwParts = fw.count; s->fwCasc = static_cast<unsigned>(fw.cascade_2nd_header);
         s->fwIlm = fw.part[0].size; s->fwDlm = fw.part[1].size; s->fwSize = static_cast<unsigned>(native_touch_firmware_size);
         mark(*s, 9);
         s->chip.reset_retries = 60;   // vendor: 10 polls of 10 ms; longer here to tell "slow" from "never"
         r = nvt_download_firmware(&s->chip, &fw);
+        if (firmwareBuffer) IOFree(firmwareBuffer, native_touch_firmware_size);
         if (r) {fail(9, r); rows(*s); break;}
         IOLog("UKE TCH: firmware downloaded crc ok\n");
         mark(*s, 10);
@@ -644,6 +816,7 @@ static void touchThread(void *, wait_result_t) {
         mark(*s, 11);
         uint32_t lastCounter = 0xffffffffu;
         unsigned tick = 0, rowTick = 0, hbTick = 0;
+        unsigned penRetryRecovered = 0, penRetryFailed = 0;
         uint64_t consoleHeartbeatNs = 0;
         bool consoleHeartbeatPrinted = false;
         s->mn = 0; s->mx = 0;
@@ -654,28 +827,68 @@ static void touchThread(void *, wait_result_t) {
         // fallback when the interrupt cannot be armed (native_touch_irq_stats[0] then says 2).
         unsigned pollOnly = 0;
         PE_parse_boot_argn("sheng-touch-poll", &pollOnly, sizeof pollOnly);
+        unsigned pencil = 0;
+        PE_parse_boot_argn("uke-pencil", &pencil, sizeof pencil);
+        PenCapture *pen = nullptr;
+        // Modes 1 and 3 are timed diagnostics. Mode 4 owns the system pen stream.
+        if (pencil == 1 || pencil == 3 || pencil == 4) {
+            pen = static_cast<PenCapture *>(IOMallocZero(sizeof(PenCapture)));
+            if (pen) {
+                int rollback;
+                const int status = nvt_set_p81c_scan(&s->chip, 1, &rollback);
+                IOLog("UKE PEN scan mode=3 status=%d rollback=%d ns=%llu\n", status, rollback,
+                      (unsigned long long)penCaptureTime());
+                if (status) {
+                    IOFree(pen, sizeof(PenCapture));
+                    pen = nullptr;
+                } else {
+                    __atomic_store_n(&gPenCapture, pen, __ATOMIC_RELEASE);
+                    if (pencil == 4) startPenStream();
+                }
+            } else {
+                IOLog("UKE PEN capture allocation failed\n");
+            }
+        }
+        uint32_t seen = __atomic_load_n(&gTouchIrqEvents, __ATOMIC_ACQUIRE);
         const bool irqArmed = !pollOnly && armTouchIrq(*s);
-        uint32_t seen = gTouchIrqEvents;
         uint64_t dozeAfter, lastContact = mach_absolute_time(), lastWake = lastContact;
         nanoseconds_to_absolutetime(3000000000ull, &dozeAfter);
+        uint64_t penDeadline = 0;
+        uint64_t recentPen = 0;
+        uint64_t activePollTicks, activeWindowTicks;
+        nanoseconds_to_absolutetime(2000000, &activePollTicks);
+        nanoseconds_to_absolutetime(200000000, &activeWindowTicks);
+        if (pen && pencil != 4) clock_interval_to_deadline(300, kSecondScale, &penDeadline);
         bool dozeAsked = false;
         for (;;) {
+            if (pen && penDeadline && mach_absolute_time() >= penDeadline) {
+                int rollback;
+                const int status = nvt_set_p81c_scan(&s->chip, 0, &rollback);
+                IOLog("UKE PEN stop status=%d frames=%u other=%u\n", status,
+                      pen->penFrames, pen->otherFrames);
+                stopPenStream();
+                pen = nullptr;   // the log writer still owns the published samples for this boot
+            }
             if (irqArmed) {
-                assert_wait((event_t)&gTouchIrqEvents, THREAD_UNINT);
-                if (gTouchIrqEvents != seen) clear_wait(current_thread(), THREAD_AWAKENED);
+                if (pen && penDeadline) assert_wait_deadline((event_t)&gTouchIrqEvents, THREAD_UNINT, penDeadline);
+                else assert_wait((event_t)&gTouchIrqEvents, THREAD_UNINT);
+                if (__atomic_load_n(&gTouchIrqEvents, __ATOMIC_ACQUIRE) != seen)
+                    clear_wait(current_thread(), THREAD_AWAKENED);
                 else thread_block(THREAD_CONTINUE_NULL);
-                seen = gTouchIrqEvents;
+                seen = __atomic_load_n(&gTouchIrqEvents, __ATOMIC_ACQUIRE);
             }
             native_touch_cost[0] = native_touch_cost[0] + 1;
+            const uint64_t pollStart = mach_absolute_time();
             for (;;) {   // every frame that is ready now
                 native_touch_loop_step = 1;
                 const bool high = (rd32(s->tlmmIrq.va, 4) & 1) != 0;
                 s->irqHigh = high;
                 if (high) ++s->irqSeen;
-                uint8_t pk[NVT_THP_PEEK_LEN];
+                uint8_t pk[NVT_THP_PEN_PEEK_LEN];
                 native_touch_loop_step = 2;
                 const uint64_t peekAt = mach_absolute_time();
-                if (nvt_peek_frame_header(&s->chip, pk)) {fail(11, NVT_ERR_BUS); break;}
+                const int peekStatus = pen ? nvt_peek_pen_header(&s->chip, pk) : nvt_peek_frame_header(&s->chip, pk);
+                if (peekStatus) {fail(11, NVT_ERR_BUS); break;}
                 touchCostAdd(6, peekAt);
                 native_touch_cost[1] = native_touch_cost[1] + 1;
                 native_touch_loop_step = 3;
@@ -685,20 +898,73 @@ static void touchThread(void *, wait_result_t) {
                 if (!nvt_peek_valid(pk)) {++s->bad; native_touch_cost[3] = native_touch_cost[3] + 1; break;}
                 const unsigned counter = nvt_peek_counter(pk), type = nvt_peek_type(pk);
                 if (counter == lastCounter) {native_touch_cost[2] = native_touch_cost[2] + 1; break;}
+                const uint32_t previousCounter = lastCounter;
                 lastCounter = counter;
                 ++s->fresh;
                 s->lastType = type;
                 native_touch_doze[3] = type;
-                if (type != 2 && type != 4) continue;
+                const bool finger = type == 2 || type == 4;
+                const unsigned payloadType = pen ? pk[56] : 0;
+                const bool penPacket = pen && (isPenType(type) || isPenType(payloadType));
+                if (!finger && !pen) continue;
+                if (!finger && !penPacket && pen->otherFrames == kOtherSamples) break;
+                const size_t length = penPacket ? nvt_pen_frame_length(pk) : NVT_THP_FRAME_LEN;
+                if (!length) {
+                    if (!pen->observedPayloadType[payloadType]) {
+                        pen->observedPayloadType[payloadType] = true;
+                        IOLog("UKE PEN unsupported frame length counter=%u payload=%u\n", counter, payloadType);
+                    }
+                    ++s->bad;
+                    continue;
+                }
                 native_touch_loop_step = 4;
                 const uint64_t readAt = mach_absolute_time();
-                if (nvt_read_frame(&s->chip, s->frame)) {fail(11, NVT_ERR_BUS); break;}
+                const bool compact = pencil == 4 && payloadType == 29 &&
+                                     length == NVT_THP_PEN_FRAME_MAX;
+                int readStatus = compact ? nvt_read_pen_sample(&s->chip, s->frame)
+                    : penPacket ? nvt_read_pen_frame(&s->chip, s->frame, length)
+                                : nvt_read_frame(&s->chip, s->frame);
+                if (compact && !readStatus && !nvt_pen_sample_valid(s->frame, NVT_THP_PEN_SAMPLE_LEN)) {
+                    if (nvt_frame_header_valid(s->frame) && s->frame[NVT_THP_HEADER_LEN + 56] == 29)
+                        capturePenFrame(*pen, s->frame, NVT_THP_PEN_SAMPLE_LEN, penCaptureTime());
+                    // A single retry can catch the next complete matrix after
+                    // the controller updates SRAM during the first SPI read.
+                    readStatus = nvt_read_pen_sample(&s->chip, s->frame);
+                    const bool recovered = !readStatus &&
+                        nvt_pen_sample_valid(s->frame, NVT_THP_PEN_SAMPLE_LEN);
+                    if (recovered) ++penRetryRecovered;
+                    else ++penRetryFailed;
+                    if ((penRetryRecovered + penRetryFailed) <= 8)
+                        IOLog("UKE PEN compact retry recovered=%u failed=%u\n", penRetryRecovered, penRetryFailed);
+                    if (!readStatus && !recovered) {
+                        ++s->bad;
+                        break;
+                    }
+                }
+                if (readStatus) {fail(11, NVT_ERR_BUS); break;}
                 touchCostAdd(7, readAt);
                 native_touch_cost[4] = native_touch_cost[4] + 1;
                 native_touch_loop_step = 5;
                 ++s->reads;
                 for (unsigned q = 0; q < 24; ++q) s->head[q] = s->frame[q];
                 if (!nvt_frame_header_valid(s->frame)) {++s->bad; continue;}   // torn: the chip rewrote it while it was read
+                if (pen) {
+                    if (compact) {
+                        lastCounter = nvt_frame_counter(s->frame);
+                        if (lastCounter == previousCounter) break;
+                    } else if (memcmp(pk, s->frame + NVT_THP_HEADER_LEN, NVT_THP_PEN_PEEK_LEN)) {
+                        ++s->bad;
+                        continue;
+                    }
+                    const uint64_t capturedAt = penCaptureTime();
+                    const size_t bytesRead = compact ? NVT_THP_PEN_SAMPLE_LEN : length;
+                    capturePenFrame(*pen, s->frame, static_cast<unsigned>(bytesRead), capturedAt);
+                    if (penPacket && payloadType == 29) {
+                        streamPenFrame(s->frame, static_cast<unsigned>(bytesRead), capturedAt);
+                        recentPen = mach_absolute_time();
+                    }
+                    if (!finger || penPacket) break;
+                }
                 native_touch_valid = native_touch_valid + 1;
                 if (native_touch_valid == 1) IOLog("UKE TCH: first valid frame type%u\n", type);
                 const uint64_t processAt = mach_absolute_time();
@@ -709,6 +975,7 @@ static void touchThread(void *, wait_result_t) {
                 s->mn = mn; s->mx = mx;
                 struct nvt_contact out[NVT_SLOTS];
                 native_touch_loop_step = 6;
+                s->core->pen_in_range = pencil == 4 && &native_hid_pen_in_range && native_hid_pen_in_range();
                 const int n = nvt_touch_process(s->core, matrix, type, out, NVT_SLOTS);
                 native_touch_loop_step = 7;
                 native_touch_frames = native_touch_frames + 1;
@@ -725,7 +992,7 @@ static void touchThread(void *, wait_result_t) {
                 touchCostAdd(8, processAt);
                 native_touch_cost[5] = native_touch_cost[5] + 1;
                 if ((++tick & 15) == 0) rows(*s);
-                if (irqArmed && gTouchIrqEvents == seen) break;   // no further pulse: the frame just read was the only one
+                if (irqArmed && __atomic_load_n(&gTouchIrqEvents, __ATOMIC_ACQUIRE) == seen) break;
             }
             const uint64_t now = mach_absolute_time();
             // A wake after a quiet interval starts a fresh doze window, even if its frame has no contact yet.
@@ -733,13 +1000,25 @@ static void touchThread(void *, wait_result_t) {
             lastWake = now;
             if (dozeAsked) {
                 native_touch_doze[2] = native_touch_doze[2] + 1;
-            } else if (now - lastContact >= dozeAfter) {
+            } else if (!pen && now - lastContact >= dozeAfter) {
                 dozeAsked = true;
                 native_touch_doze[0] = native_touch_doze[0] + 1;
                 native_touch_doze[2] = 0;
                 if (nvt_set_custom_cmd(&s->chip, 0x01, 0x02)) native_touch_doze[1] = native_touch_doze[1] + 1;
             }
-            if (!irqArmed) IOSleep(pollOnly ? 2 : 10);   // fallback / diagnosis only
+            if (!irqArmed) {
+                if (pencil == 4 && recentPen && now - recentPen < activeWindowTicks) {
+                    // Budget the active poll from its start, including SPI
+                    // time. Sleeping after transfer adds an entire period.
+                    const uint64_t deadline = pollStart + activePollTicks;
+                    if (mach_absolute_time() < deadline) {
+                        assert_wait_deadline((event_t)&gTouchIrqEvents, THREAD_UNINT, deadline);
+                        thread_block(THREAD_CONTINUE_NULL);
+                    }
+                } else {
+                    IOSleep(pollOnly ? 2 : 10);
+                }
+            }
             if ((++hbTick & 127) == 0) {   // heartbeat ~1.3 s in poll mode: driver, report and edge counters with the finger set
                 char hb[144];
                 snprintf(hb, sizeof hb, "f%u ok%u c%u hid%u %d,%d drv%u rpt%u r%d edge%u %u/%u irq%u",
@@ -770,6 +1049,90 @@ static void touchThread(void *, wait_result_t) {
         }
     } while (0);
     rows(*s);
+}
+
+extern "C" size_t uke_pen_frame_take(UkePenFrame *record) {
+    auto *stream = __atomic_load_n(&gPenStream, __ATOMIC_ACQUIRE);
+    if (!stream) return 0;
+    IOLockLock(stream->lock);
+    if (stream->active && !stream->count) {
+        uint64_t deadline;
+        clock_interval_to_deadline(2, kMillisecondScale, &deadline);
+        IOLockSleepDeadline(stream->lock, &stream->count, deadline, THREAD_INTERRUPTIBLE);
+    }
+    size_t length = 0;
+    if (stream->active && stream->count) {
+        const auto &source = stream->records[stream->head];
+        length = offsetof(UkePenFrame, bytes) + source.length;
+        memcpy(record, &source, length);
+        stream->dequeuedSequence = source.sequence;
+        stream->dequeuedNs = source.continuous_ns;
+        stream->head = (stream->head + 1) % PenStream::capacity;
+        --stream->count;
+    }
+    IOLockUnlock(stream->lock);
+    return length;
+}
+
+extern "C" int uke_pen_hover_submit(const UkePenHoverReport *report) {
+    auto *stream = __atomic_load_n(&gPenStream, __ATOMIC_ACQUIRE);
+    if (!stream || !&native_hid_pen_hover) return ENODEV;
+    const bool tipDown = report->tip_state == UKE_PEN_TIP_CONTACT ||
+        (report->tip_state == UKE_PEN_TIP_FROM_PRESSURE && report->pressure);
+    if (report->in_range > 1 || report->x > 32767 || report->y > 32767 ||
+        report->pressure > 16383 || report->tip_state > UKE_PEN_TIP_CONTACT ||
+        (!report->in_range && tipDown) || (!tipDown && report->pressure) ||
+        report->tilt_x < -60 || report->tilt_x > 60 || report->tilt_y < -60 || report->tilt_y > 60) return EINVAL;
+    uint64_t sampleTicks = 0;
+    if (report->in_range) {
+        IOLockLock(stream->lock);
+        const uint64_t now = penCaptureTime();
+        const bool active = stream->active && report->generation == 1 && report->sequence &&
+            report->sequence == stream->dequeuedSequence && stream->dequeuedNs <= now &&
+            now - stream->dequeuedNs < 100000000;
+        if (active && report->sequence != stream->submittedSequence) {
+            uint64_t ticks;
+            nanoseconds_to_absolutetime(stream->dequeuedNs, &ticks);
+            sampleTicks = continuoustime_to_absolutetime(ticks);
+            stream->submittedSequence = report->sequence;
+        }
+        IOLockUnlock(stream->lock);
+        if (!active) return ESTALE;
+    }
+    return native_hid_pen_hover(report->x, report->y, report->in_range, tipDown, report->pressure,
+                                report->tilt_x, report->tilt_y, sampleTicks) ? EIO : 0;
+}
+
+extern "C" void uke_pencil_log_capture(void) {
+    static unsigned index, offset;
+    const auto *capture = __atomic_load_n(&gPenCapture, __ATOMIC_ACQUIRE);
+    if (!capture) return;
+    const unsigned count = __atomic_load_n(&capture->count, __ATOMIC_ACQUIRE);
+    // Drain outside the SPI thread, at most 24 short lines per log tick.
+    for (unsigned lines = 0; lines < 24 && index < count; ++lines) {
+        const auto &sample = capture->samples[index];
+        if (offset == 0) {
+            IOLog("UKE PEN FRAME %u %u %u %u %llu %u\n", index, sample.counter,
+                  nvt_frame_type(sample.bytes), sample.bytes[NVT_THP_HEADER_LEN + 56],
+                  (unsigned long long)sample.ns, sample.length);
+        }
+        static const char digits[] = "0123456789abcdef";
+        char hex[2 * 64 + 1];
+        const unsigned remaining = sample.length - offset;
+        const unsigned bytes = remaining < 64 ? remaining : 64;
+        for (unsigned i = 0; i < bytes; ++i) {
+            const uint8_t value = sample.bytes[offset + i];
+            hex[i * 2] = digits[value >> 4];
+            hex[i * 2 + 1] = digits[value & 15];
+        }
+        hex[bytes * 2] = '\0';
+        IOLog("UKE PEN RAW %u %u %s\n", index, offset, hex);
+        offset += bytes;
+        if (offset == sample.length) {
+            ++index;
+            offset = 0;
+        }
+    }
 }
 
 extern "C" void native_touch_probe(void) {

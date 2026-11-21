@@ -6,7 +6,7 @@ Mount the native daemon only after its capability adapter is visible.
 
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -8839,5 +8839,19 @@
+@@ -8839,5 +8839,32 @@
  		printf("[appsync-runtime] library=%d/%d\n", as_lib_stage, as_lib_status);
  	}
 +	/* Standard system paths retain launchd policy and dyld library lookup. */
@@ -22,6 +22,19 @@ Mount the native daemon only after its capability adapter is visible.
 +			    bt_bin_point, sizeof(bt_bin_point), "/usr/sbin/notifyd", "/usr/sbin/QcaBluetooth.runtime", &bt_bin_stage, &bt_bin_status);
 +		}
 +		printf("[bluetooth-runtime] library=%d/%d executables=%d/%d\n", bt_lib_stage, bt_lib_status, bt_bin_stage, bt_bin_status);
++		uint32_t pencil_mode = 0;
++		if (PE_parse_boot_argn("uke-pencil", &pencil_mode, sizeof(pencil_mode)) && (pencil_mode >= 2 && pencil_mode <= 4)) {
++			/* Add the setup app above the bundle root, alongside the sealed system apps. */
++			static const char pencil_apps[] = "/private/var/ngpu/pencil-pairing/apps";
++			static const char applications[] = "/Applications";
++			static volatile int stage, status;
++			native_gpu_addon_mount(p, scratch, 0x600, pencil_apps, sizeof(pencil_apps),
++			    applications, sizeof(applications), "/Applications/Preferences.app/Info.plist",
++			    "/Applications/UkePenPairing.app/Info.plist", &stage, &status);
++			printf("[pencil-pairing] app=%d/%d\n", stage, status);
++		}
++
++		/* The Bluetooth Settings app is resolved from the sealed OS volume. */
 +	}
  	native_cryptex_os_view(p, scratch);
  	native_gestalt_cache_drop(p, scratch);

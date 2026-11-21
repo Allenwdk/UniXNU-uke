@@ -40,6 +40,7 @@
 #define NVT_UP_THRESHOLD 220
 #define NVT_COORDINATE_REDUCE 25
 #define NVT_PALM_MIN_NODES 60
+#define NVT_PEN_PALM_MIN_NODES 30
 // The reference follows the slow drift of the panel: in a frame without a node at the peak threshold every node moves
 // 1/NVT_REFERENCE_RATE of the way to its value (nodes near a finger are left alone: absorbing its fringe would shift its centroid).
 // A reference taken once at startup drifted far enough in ten minutes for maxima above the noise floor to appear all over the panel
@@ -69,6 +70,7 @@ enum {NVT_MISS_NONE, NVT_MISS_FAR, NVT_MISS_WEAK, NVT_MISS_PALM, NVT_MISS_TAKEN,
 struct nvt_touch_core {
     int16_t reference[NVT_NODES];
     int have_reference;
+    int pen_in_range;
     unsigned startup_count;
     int16_t startup[NVT_STARTUP_FRAMES][NVT_NODES];   // collected until the median reference is formed
     // Raw frame-to-frame movement of tracked contacts that moved less than 4 * NVT_FUZZ (a resting or slow finger): frames, summed
