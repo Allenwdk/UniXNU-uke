@@ -265,6 +265,7 @@ text_fixups = [
 
 # The signed Metal and Focus Pen Pro addon and its matching owner trust are selected in unixnu.local.toml.
 kernel_args = [
+  "log-sys=2",
   # Keep these options in the command line so both XNU and the Metal plugin's kern.bootargs reader see them.
   "diag=1",
   "gpu-trace=1",
@@ -274,7 +275,6 @@ kernel_args = [
   # Runtime options from the same Uke image, including its Bluetooth addon.
   "bluetooth=1",
   "usb=1",
-  "log-sys=1",
   "uke-aks-wrap=1",
   "uke-usb3=1",
   "uke-usb-otg=1",
@@ -414,6 +414,7 @@ boot-manifest-hash = "148316f0bb4484b19cda323503ffcb454fcc96d089087cd1f140725337
 owner-boot-manifest-domain = "5665726966696564526f6f742e4f776e6572426f6f745365742e763100"
 
 [adt.defaults.u32]
+# Keep XNU sleep gated until the platform has a usable wake source.
 sleep-disabled = 1
 "kern.maxvnodes" = 0x13400
 # No Apple PMGR or SEP: report a virtual platform, so AMFI does not wait for an ApplePMGRNub and the
@@ -455,4 +456,5 @@ reg = "000000c8000000000000000200000000"
 
 # Driver defaults outside DarwinBoot CommandLine; explicit CLI arguments override.
 [adt.chosen.string]
-unixnu-driver-args = "offline-legacy-register=1 offline-legacy-gop=1 offline-legacy-unit-scale=2 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1 offline-legacy-phase=4 offline-legacy-noconsole=1 sheng-touch=4 sheng-touch-hid=1 sheng-buttons=1 sheng-backlight=1 sheng-touch-split=1 sheng-dpu-scanout=2 sheng-vsync=120 sheng-vsync-fixed=1 bluetooth=0 log-bluetooth=0 uke-pencil=4 timebase-hz=24000000"
+# Preserve the tested 60-second maintenance wake until longer suspend is qualified.
+unixnu-driver-args = "offline-legacy-register=1 offline-legacy-gop=1 offline-legacy-unit-scale=2 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1 offline-legacy-phase=4 offline-legacy-noconsole=1 sheng-touch=4 sheng-touch-hid=1 sheng-buttons=1 sheng-backlight=1 sheng-touch-split=1 sheng-dpu-scanout=2 sheng-vsync=120 sheng-vsync-fixed=1 bluetooth=0 log-bluetooth=0 uke-pencil=4 timebase-hz=24000000 platform-sleep=1 platform-sleep-wake-after=60"

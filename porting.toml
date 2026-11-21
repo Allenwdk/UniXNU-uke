@@ -157,6 +157,8 @@ components = ["RamBlock"]
 paths = [
   "patches/xnu-12377/uke-outside-dram-wc.patch",
   "patches/xnu-12377/uke-vm-delayed-work-pool.patch",
+  "patches/xnu-12377/uke-owner-data-swap.patch",
+  "patches/xnu-12377/uke-swapin-io-priority.patch",
   "board.toml",
   "dts/uke.dts",
 ]
@@ -165,12 +167,14 @@ inputs = [
 ]
 configuration = [
   "The ADT describes the owned DRAM and outside-memory ranges separately. USB has a coherent stage-1 SID 0x40; display uses SID 0x1c00 with mask 0x02.",
+  "The iPadOS 27 default kernel enables CONFIG_XNU_OWNER_DATA_MOUNT and uses the native UFS boot policy for demand swap-in priority.",
 ]
 procedure = [
   "Compare generated ADT memory ranges against UEFI reservations. Confirm stream mappings and DMA request bounds before I/O.",
 ]
 findings = [
   "XNU VM sizing follows owned_memory_size. USB, Wi-Fi and touch serialize apps-SMMU allocation; display mappings remain held until retirement is confirmed.",
+  "The sleep and wake trace reported 128 MiB of allocated swap with zero used. Demand swap-in and swap-out still need a memory-pressure run.",
 ]
 completion = ["VM uses only handed-off RAM and DMA stays within the owning stream and mapped aperture."]
 limits = [
@@ -191,6 +195,13 @@ reference = "docs/USB-DP-20261119.md"
 result = "Host regressions passed for display IOMMU bounds and fail-safe buffer retirement."
 command = "./unixnu build kernel && ./unixnu build payload; release verify.py"
 revision = "d61336190c478c9884334f85433eea44e5fee6d0"
+
+[[area.evidence]]
+kind = "device"
+reference = "docs/IPADOS27-SLEEP-SWAP-20261122.md"
+result = "Six samples reported a 128 MiB allocation. Swap usage and disk I/O counters stayed at zero."
+command = "Read the UkeLastLog system samples spanning display off, platform sleep and display wake."
+revision = "485499268aba3362469e7baa5e5ee8bd15796bb0"
 
 [[area]]
 id = "storage"
@@ -659,12 +670,18 @@ paths = [
   "package/tests/uke_battery_timer_host.cpp",
   "docs/DSP-AUDIO-POWER.md",
   "patches/xnu-12377/sheng-platform-sleep.patch",
+  "patches/xnu-12377/uke-sleep-readiness.patch",
+  "patches/xnu-12377/uke-root-domain-power-change-done.patch",
+  "package/UkeSleep.cpp",
+  "package/ButtonProbe.cpp",
+  "package/BootWatchdogPolicy.c",
 ]
 inputs = [
   "RPMh and AOSS clocks and regulators, PMIC GLINK battery service, UCSI connector state, and the dual KTZ8866 backlight.",
 ]
 configuration = [
   "Use sheng-pmgr=2 and the shared battery event path. Software key-state reports no passcode with sheng-aks-sls=3 for pairing. USB and backlight serialize their shared GENI SE0 access.",
+  "The iPadOS 27 ADT enables platform sleep with a 60-second maintenance wake. XNU sleep stays gated until the platform wake source is ready.",
 ]
 procedure = [
   "With the power profile selected, capture battery percentage, charge status and cable transitions together with regulator, timeout and display reports.",
@@ -672,12 +689,13 @@ procedure = [
 findings = [
   "The shared PMIC GLINK Alt Mode notifications use the quiet DP diagnostic policy while retaining the same role and power handling.",
   "The user verified battery percent and charge UI on D4EFA944BD2B2081. The subsequent battery service handles field timeouts independently.",
+  "Both power-key wakes in the captured sleep trace brought the display up. The maintenance wake kept the display off, then the device went back to sleep. The user confirmed lock-screen auto-blanking after about five seconds with noncellular CommCenter enabled.",
 ]
 completion = [
   "Battery status and charger state follow the hardware while repeated attach events and backlight control remain responsive.",
 ]
 limits = [
-  "Reported battery acceptance concerns basic UI. Charge accuracy, long-duration dock behavior and deep suspend remain open.",
+  "Reported battery acceptance concerns basic UI. Charge accuracy, long-duration dock behavior and prolonged suspend beyond the 60-second maintenance policy remain open.",
 ]
 next_action = ["Measure charge units and power-role transitions through detach and reattach."]
 
@@ -687,6 +705,13 @@ reference = "docs/DSP-AUDIO-POWER.md"
 result = "User confirmed battery percentage and charging indication on D4EFA944BD2B2081."
 command = "Observe the battery percentage and charging icon with the staged image booted."
 revision = "4eb1665f9295f00d815c31ac847fb265c45b7766"
+
+[[area.evidence]]
+kind = "device"
+reference = "docs/IPADOS27-SLEEP-SWAP-20261122.md"
+result = "Two power-key wakes and an automatic maintenance wake were captured in one boot. Auto-blanking was confirmed on the subsequent CommCenter image."
+command = "Correlate the UkeLastLog platform-sleep, button and display events, then observe the lock screen on the CommCenter image."
+revision = "2656b1355bce153c9b28de7aa0c4b98adccd5e7d"
 
 [[area]]
 id = "usb"
