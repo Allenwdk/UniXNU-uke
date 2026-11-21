@@ -110,7 +110,13 @@ int main(void){
  reset();lite=1;assert(!run()&&strstr((char*)written_data,bt));
  // A later enabled boot rewrites the same persistent policy and clears the stale automatic disable.
  bluetooth=1;assert(!run()&&!strstr((char*)written_data,bt));
- assert(strstr((char*)written_data,"<key>com.apple.CommCenter</key><true/>"));
+ const char *cc="<key>com.apple.CommCenter</key><true/>";
+ assert(!strstr((char*)written_data,cc));
+ // The new lite list also clears a previous override for the shared label.
+ strcpy(extra_jobs,"com.apple.CommCenter");
+ assert(!run()&&strstr((char*)written_data,cc));
+ extra_jobs[0]=0;marker_exists=1;
+ assert(!run()&&!strstr((char*)written_data,cc));
  assert(strstr((char*)written_data,"<key>com.apple.watchdogd</key><true/>"));
  reset();lite=bluetooth=1;strcpy(extra_jobs,"com.apple.bluetoothd,com.example.test");
  assert(!run()&&strstr((char*)written_data,bt)&&strstr((char*)written_data,"com.example.test"));
@@ -121,4 +127,4 @@ int main(void){
 subprocess.run(['clang','-std=c11','-Wall','-Wextra','-Werror','-O1','-g','-fsanitize=address,undefined',str(out/'test.c'),'-o',str(out/'test')],check=True,timeout=45)
 subprocess.run([str(out/'test')],check=True,timeout=10)
 (out/'report.json').write_text(json.dumps(dict(passed=True,source_body_sha256=hashlib.sha256(body.encode()).hexdigest(),syscalls_substituted=True,hardware_policy_accepted=False),indent=2)+'\n')
-print('PASS: production policy initializer; opt-in gate, exact content, ownership/mode checks, persistent rewrite, Bluetooth opt-in and explicit disable, write failures, marker and cleanup')
+print('PASS: production policy initializer; opt-in gate, exact content, ownership/mode checks, persistent rewrite, Bluetooth opt-in, CommCenter availability, explicit disables, write failures, marker and cleanup')
