@@ -180,6 +180,11 @@ int main() {
     CHECK(ukeButtonWakeReport(0, false, suppressWake) == 0 && suppressWake);
     CHECK(ukeButtonWakeReport(0, true, suppressWake) == 0 && !suppressWake);
     CHECK(ukeButtonWakeReport(2u, true, suppressWake) == 2u);
+    CHECK(ukeButtonStartWakePulse(true, true, 4u, 0));
+    CHECK(!ukeButtonStartWakePulse(false, true, 0, 0));
+    CHECK(!ukeButtonStartWakePulse(true, false, 0, 0));
+    CHECK(!ukeButtonStartWakePulse(true, true, 2u, 0));
+    CHECK(!ukeButtonStartWakePulse(true, true, 0, 2u));
     CHECK(!ukeBacklightWakeReady(true, 1, 1, 1499));
     CHECK(ukeBacklightWakeReady(true, 2, 0, 0) && ukeBacklightWakeReady(true, 0, 2, 0));
     CHECK(ukeBacklightWakeReady(true, 0, 0, 1500));

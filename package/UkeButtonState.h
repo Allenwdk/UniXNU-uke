@@ -36,3 +36,9 @@ static inline uint32_t ukeButtonWakeReport(uint32_t mask, bool ponValid, bool &s
     if (ponValid && !(mask & 2u)) suppressPower = false;
     return mask & ~2u;
 }
+
+// Replay a physical wake once, after PM resume, only while iPadOS is still
+// requesting zero brightness. Coalesce with a power event already in flight.
+static inline bool ukeButtonStartWakePulse(bool pending, bool displayDark, uint32_t current, uint32_t last) {
+    return pending && displayDark && !((current | last) & 2u);
+}

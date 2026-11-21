@@ -91,6 +91,7 @@ EngineIo gIo[2];
 thread_call_t gIrqCall;
 // The newest brightness asked for: goal << 16 | fade milliseconds, with bit 63 set while the work loop has not taken it.
 volatile uint64_t gRequest;
+int32_t gRequestedBacklightLevel = -1;
 IOTimerEventSource *gSleepRequestTimer;
 bool gSystemAsleep;
 uint64_t gWakeAt;
@@ -860,6 +861,7 @@ public:
         bump(1);
         native_backlight_request[0] = (int32_t)goal;
         native_backlight_request[1] = (int32_t)milliseconds;
+        __atomic_store_n(&gRequestedBacklightLevel, (int32_t)goal, __ATOMIC_RELEASE);
         // Handed to the work loop without waiting for it (a runAction here blocks backboardd's brightness thread on the work loop's
         // gate; int-277 got 53 requests in the first 41 s and none after): a newer request replaces one not yet taken. The request timer, not
         // the interrupt source, carries it: int-278 signalled the interrupt source for 345 requests and wrote none.
@@ -930,6 +932,10 @@ extern "C" void sheng_backlight_start(void) {
 
 extern "C" bool native_backlight_runtime_ready(void) {
     return __atomic_load_n(&gRuntimeReady, __ATOMIC_ACQUIRE);
+}
+
+extern "C" bool uke_backlight_needs_power_wake(void) {
+    return __atomic_load_n(&gRequestedBacklightLevel, __ATOMIC_ACQUIRE) == 0;
 }
 
 extern "C" void uke_sleep_backlight(unsigned message) {

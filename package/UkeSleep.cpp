@@ -14,25 +14,24 @@ extern "C" volatile struct armcpu_sleep_stats armcpu_sleep_stats;
 extern "C" uint32_t uke_buttons_sleep_intid(void);
 extern "C" bool uke_buttons_sleep_armed(void);
 extern "C" bool uke_buttons_sleep_check(void);
+extern "C" void uke_buttons_deliver_power_wake(void);
 extern "C" void uke_gunyah_wdt_sleep_tick(void);
 extern "C" void uke_sleep_backlight(unsigned message);
 extern "C" void uke_wifi_ahb_wake(void);
 
 namespace {
 bool gStarted, gRegistered;
-bool gPowerWake, gPromoteWake;
+bool gPowerWake;
 uint32_t gWakeIntid;
 
 // These three ArmCpu callbacks execute without normal driver scheduling.
 void prepare() {
     __atomic_store_n(&gPowerWake, false, __ATOMIC_RELAXED);
-    __atomic_store_n(&gPromoteWake, false, __ATOMIC_RELAXED);
 }
 
 int shouldWake(uint32_t intid) {
     if (intid != gWakeIntid || !uke_buttons_sleep_check()) return 0;
     __atomic_store_n(&gPowerWake, true, __ATOMIC_RELEASE);
-    __atomic_store_n(&gPromoteWake, true, __ATOMIC_RELEASE);
     return 1;
 }
 
@@ -41,11 +40,6 @@ const struct armcpu_sleep_board kBoard = {
 };
 static_assert(sizeof(kBoard) == ARMCPU_SLEEP_BOARD_SIZE);
 static_assert(sizeof(armcpu_sleep_stats) == ARMCPU_SLEEP_STATS_SIZE);
-
-void promotePowerWake(IOPMrootDomain *root) {
-    if (root && __atomic_exchange_n(&gPromoteWake, false, __ATOMIC_ACQ_REL))
-        root->requestUserActive(root, "Uke power key");
-}
 
 IOReturn sleepWake(void *, void *, UInt32 message, IOService *, void *, vm_size_t) {
     switch (message) {
@@ -61,7 +55,6 @@ IOReturn sleepWake(void *, void *, UInt32 message, IOService *, void *, vm_size_
         if (root && __atomic_load_n(&gPowerWake, __ATOMIC_ACQUIRE))
             root->claimSystemWakeEvent(root, kIOPMWakeEventSource, "Uke power key");
         uke_sleep_backlight(message);
-        promotePowerWake(root);
         break;
     }
     case kIOMessageSystemHasPoweredOn: {
@@ -69,13 +62,14 @@ IOReturn sleepWake(void *, void *, UInt32 message, IOService *, void *, vm_size_
         uint64_t rate;
         __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(rate));
         const uint64_t durationMs = rate ? stats.asleep_ticks * 1000 / rate : 0;
+        const bool powerWake = __atomic_exchange_n(&gPowerWake, false, __ATOMIC_ACQ_REL);
         IOLog("UKE SLEEP: resumed power=%u reason=%u intid=%u ms=%llu entries=%u ticks=%u spurious=%u masked=%u unarmed=%u cpu_off_failures=%u phase=%u\n",
-              __atomic_load_n(&gPowerWake, __ATOMIC_ACQUIRE), stats.last_reason, stats.last_intid,
+              powerWake, stats.last_reason, stats.last_intid,
               durationMs, stats.entries, stats.ticks, stats.spurious, stats.masked, stats.unarmed,
               stats.cpu_off_failures, stats.phase);
         uke_sleep_backlight(message);
+        if (powerWake) uke_buttons_deliver_power_wake();
         uke_wifi_ahb_wake();
-        promotePowerWake(IOService::getPMRootDomain());
         break;
     }
     default:
@@ -110,11 +104,6 @@ void install(void *, wait_result_t) {
 
 extern "C" bool uke_platform_sleep_ready(void) {
     return __atomic_load_n(&gRegistered, __ATOMIC_ACQUIRE) && uke_buttons_sleep_armed();
-}
-
-extern "C" void uke_sleep_promote_power_wake(void) {
-    if (__atomic_load_n(&gPromoteWake, __ATOMIC_ACQUIRE))
-        promotePowerWake(IOService::getPMRootDomain());
 }
 
 extern "C" void uke_sleep_probe(void) {

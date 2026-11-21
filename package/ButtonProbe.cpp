@@ -20,7 +20,7 @@ extern "C" {
 }
 
 extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
-extern "C" void uke_sleep_promote_power_wake(void) __attribute__((weak_import));
+extern "C" bool uke_backlight_needs_power_wake(void);
 // [0] stage (1 mapped, 2 configured, 3 armed, -9 masked after an interrupt storm, other negatives: the step that failed), [1] interrupts, [2] reports, [3] pressed mask,
 // [4] power APID, [5] GPIO APID, [6] interrupts of other APIDs cleared, [7] PDC version, [8] last error, [9] spurious interrupts
 extern "C" {volatile int32_t native_buttons_stats[10];}
@@ -46,6 +46,7 @@ IOLock *gSinkLock;
 volatile uint32_t gSinkEpoch;
 volatile uint32_t gPending[2];
 bool gSuppressWakePower;
+bool gWakePowerPending;
 
 bool mapWindow(Window &w, uint64_t base, uint64_t size) {
     IODeviceMemory *memory = IODeviceMemory::withRange(base, size);
@@ -221,14 +222,24 @@ void buttonsThread(void *, wait_result_t) {
     if (!setup()) return;
     uint32_t seen = __atomic_load_n(&gEvents, __ATOMIC_ACQUIRE), last = ~0u, epoch = ~0u;
     UkeButtonState state = {};
+    uint64_t wakeRelease = 0;
     for (;;) {
         uint32_t report = 0;
         const bool retry = sample(state, report);
-        if (uke_sleep_promote_power_wake) uke_sleep_promote_power_wake();
+        const bool wakePending = __atomic_exchange_n(&gWakePowerPending, false, __ATOMIC_ACQ_REL);
+        const bool startWake = ukeButtonStartWakePulse(wakePending, uke_backlight_needs_power_wake(), report, last);
+        if (startWake) {
+            // Deliver a short Consumer Power event through the normal sink.
+            // The 180 ms hold also covers the generic HID 150 ms debounce.
+            clock_interval_to_deadline(180, kMillisecondScale, &wakeRelease);
+        }
+        if (wakeRelease && mach_absolute_time() >= wakeRelease) wakeRelease = 0;
+        if (wakeRelease) report |= 2u;
         native_buttons_stats[3] = (int32_t)report;
         IOLockLock(gSinkLock);
         if (gSink && (report != last || epoch != gSinkEpoch)) {
             gSink(gSinkContext, report);
+            if (startWake && (report & 2u)) IOLog("UKE BTN: delivering power wake to HID\n");
             last = report; epoch = gSinkEpoch;
             native_buttons_stats[2] = native_buttons_stats[2] + 1;
             if (native_buttons_stats[2] <= 64 || !(native_buttons_stats[2] % 32))
@@ -236,16 +247,28 @@ void buttonsThread(void *, wait_result_t) {
                        native_buttons_stats[1], native_buttons_stats[2], native_buttons_stats[8]);
         }
         IOLockUnlock(gSinkLock);
+        uint64_t deadline = wakeRelease;
         if (retry) {
-            uint64_t deadline; clock_interval_to_deadline(10, kMillisecondScale, &deadline);
-            assert_wait_deadline((event_t)&gEvents, THREAD_UNINT, deadline);
-        } else assert_wait((event_t)&gEvents, THREAD_UNINT);
-        if (__atomic_load_n(&gEvents, __ATOMIC_ACQUIRE) != seen) clear_wait(current_thread(), THREAD_AWAKENED);
-        else thread_block(THREAD_CONTINUE_NULL);
+            uint64_t retryAt;
+            clock_interval_to_deadline(10, kMillisecondScale, &retryAt);
+            if (!deadline || retryAt < deadline) deadline = retryAt;
+        }
+        const wait_result_t wait = deadline ?
+            assert_wait_deadline((event_t)&gEvents, THREAD_UNINT, deadline) : assert_wait((event_t)&gEvents, THREAD_UNINT);
+        if (wait == THREAD_WAITING) {
+            if (__atomic_load_n(&gEvents, __ATOMIC_ACQUIRE) != seen) clear_wait(current_thread(), THREAD_AWAKENED);
+            else thread_block(THREAD_CONTINUE_NULL);
+        }
         seen = __atomic_load_n(&gEvents, __ATOMIC_ACQUIRE);
     }
 }
 }  // namespace
+
+extern "C" void uke_buttons_deliver_power_wake(void) {
+    __atomic_store_n(&gWakePowerPending, true, __ATOMIC_RELEASE);
+    __atomic_fetch_add(&gEvents, 1u, __ATOMIC_RELEASE);
+    thread_wakeup((event_t)&gEvents);
+}
 
 extern "C" bool uke_buttons_sleep_armed(void) {
     return native_buttons_stats[0] == 3 &&
