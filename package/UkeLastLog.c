@@ -39,6 +39,8 @@ extern uint32_t uke_idle_timer_rearms[8] __attribute__((weak_import));
 extern char bootsessionuuid_string[37];
 extern unsigned int vm_page_free_count,vm_page_active_count,vm_page_inactive_count,vm_page_wire_count,vm_page_speculative_count;
 extern volatile uint32_t boot_log_rounds;
+extern volatile int native_owner_data_stage __attribute__((weak_import));
+extern void uke_system_snapshot_start(void) __attribute__((weak_import));
 extern volatile int32_t native_battery_stats[16];
 extern volatile uint32_t native_battery_dispatch[6];
 extern unsigned armcpu_stats_row(unsigned, char *, unsigned);
@@ -546,6 +548,8 @@ uke_last_log_writer(void *arg, wait_result_t result)
 	uint32_t progress_only = 0;
 	PE_parse_boot_argn("sheng-diag", &progress_diag, sizeof(progress_diag));
 	PE_parse_boot_argn("uke-progress", &progress_only, sizeof(progress_only));
+	uint32_t system_log = 0;
+	PE_parse_boot_argn("log-sys", &system_log, sizeof(system_log));
 	const bool gpu_log_on = progress_diag == 1 || progress_diag == 2 || progress_diag == 4;
 	const bool progress_on = (progress_diag == 1 || progress_only == 1) &&
 	    &native_data_write_back && &native_data_io_reads &&
@@ -576,6 +580,11 @@ uke_last_log_writer(void *arg, wait_result_t result)
 		}
 #endif
 #if defined(UKE_SOURCE_STORAGE_LOG)
+        if (system_log == 2 && &native_owner_data_stage &&
+            native_owner_data_stage >= 4 && uke_system_snapshot_start) {
+            system_log = 0;
+            uke_system_snapshot_start();
+        }
         /* Observe dispatch independently of the DSP and battery work-loop.
          * Counts are diagnostic samples, not a committed battery snapshot. */
         if (progress_on && (tick % 40) == 0 && native_battery_stats[0] != 0) {

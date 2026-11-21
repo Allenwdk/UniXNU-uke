@@ -351,6 +351,23 @@ void governorThread(void *, wait_result_t) {
 }
 }
 
+extern "C" unsigned sheng_cpufreq_snapshot(uint32_t state_mhz[3], uint32_t vote_mhz[3]) {
+    unsigned valid = 0;
+    if (!gLock)
+        return valid;
+    IOLockLock(gLock);
+    for (unsigned d = 0; d < 3; ++d) {
+        const Window &window = gDomain[d];
+        if (!window.va || !(rd32(window.va, kRegEnable) & 1))
+            continue;
+        valid |= 1u << d;
+        state_mhz[d] = (rd32(window.va, kRegDomainState) & 0xff) * kXoKHz / 1000;
+        vote_mhz[d] = window.votedKHz / 1000;
+    }
+    IOLockUnlock(gLock);
+    return valid;
+}
+
 extern "C" void sheng_cpufreq_poll(void) {
     if (!gMode || !gLock) return;
     IOLockLock(gLock);
