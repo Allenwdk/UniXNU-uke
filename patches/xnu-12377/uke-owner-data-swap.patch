@@ -1,0 +1,129 @@
+Use writable owner Data for iPadOS swap after the mount is ready.
+
+Adapt UniXNU 007356dc for iPadOS, which already uses /private/var/vm.
+Keep compressor initialization in place. Defer backing-file creation and
+the freezer's temporary file probe until the verified Data mount has a
+vm directory, including on existing Data installs.
+
+--- a/osfmk/vm/vm_compressor_backing_store.c
++++ b/osfmk/vm/vm_compressor_backing_store.c
+@@ -27,6 +27,7 @@
+  */
+ 
+ #include "vm_compressor_backing_store_internal.h"
++#include <os/atomic_private.h>
+ #include <vm/vm_pageout_xnu.h>
+ #include <vm/vm_protos_internal.h>
+ #include <vm/vm_kern_xnu.h>
+@@ -536,6 +537,19 @@
+ 	thread = THREAD_NULL;
+ }
+ STARTUP(EARLY_BOOT, STARTUP_RANK_MIDDLE, vm_swapout_create_threads);
++
++#if defined(XNU_TARGET_OS_IOS) && defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
++static bool vm_owner_data_swap_ready;
++
++void
++vm_swap_owner_data_ready(void)
++{
++	lck_mtx_lock(&vm_swap_data_lock);
++	os_atomic_store(&vm_owner_data_swap_ready, true, release);
++	thread_wakeup((event_t)&vm_swapfile_create_needed);
++	lck_mtx_unlock(&vm_swap_data_lock);
++}
++#endif
+ 
+ int vm_swap_enabled = 0;
+ void
+@@ -806,6 +820,11 @@
+ static inline bool
+ vm_swapfile_should_create(uint64_t now)
+ {
++#if defined(XNU_TARGET_OS_IOS) && defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
++	if (!os_atomic_load(&vm_owner_data_swap_ready, acquire)) {
++		return false;
++	}
++#endif
+ 	uint64_t delta_failed_creation_ns;
+ 	absolutetime_to_nanoseconds(now - vm_swapfile_last_failed_to_create_ts, &delta_failed_creation_ns);
+ 
+@@ -2525,6 +2544,12 @@
+ boolean_t
+ vm_swap_max_budget(uint64_t *freeze_daily_budget)
+ {
++#if defined(XNU_TARGET_OS_IOS) && defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
++	if (!os_atomic_load(&vm_owner_data_swap_ready, acquire)) {
++		*freeze_daily_budget = 0;
++		return FALSE;
++	}
++#endif
+ 	boolean_t       use_device_value = FALSE;
+ 	struct swapfile *swf = NULL;
+ 
+--- a/osfmk/vm/vm_compressor_backing_store_internal.h
++++ b/osfmk/vm/vm_compressor_backing_store_internal.h
+@@ -81,6 +81,9 @@
+ struct swapfile;
+ 
+ boolean_t vm_swap_create_file(void);
++#if defined(XNU_TARGET_OS_IOS) && defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
++void vm_swap_owner_data_ready(void);
++#endif
+ 
+ 
+ struct swapout_io_completion {
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -9269,6 +9269,38 @@
+ 	    "/Applications/Weather.app/Info.plist", &native_staged_union_stage, &native_staged_union_status);
+ }
+ 
++#if defined(XNU_TARGET_OS_IOS)
++extern void vm_swap_owner_data_ready(void);
++
++static void
++native_owner_data_prepare_swap(proc_t p, user_addr_t scratch, vnode_t data_root)
++{
++	static const char directory[] = "/private/var/vm";
++	struct mkdir_args request = {.path = scratch + 0xc00, .mode = 0755};
++	int32_t result = 0;
++	vnode_t swap_dir = NULLVP;
++	int error = copyout(directory, request.path, sizeof(directory));
++	if (!error) {
++		error = mkdir(p, &request, &result);
++	}
++	if (error == EEXIST) {
++		error = 0;
++	}
++	if (!error) {
++		error = vnode_lookupat("vm", VNODE_LOOKUP_NOFOLLOW_ANY | VNODE_LOOKUP_NOCROSSMOUNT,
++		    &swap_dir, vfs_context_current(), data_root);
++		if (!error) {
++			error = vnode_isdir(swap_dir) ? 0 : ENOTDIR;
++			vnode_put(swap_dir);
++		}
++	}
++	printf("owner Data: %s swap directory status %d\n", directory, error);
++	if (!error) {
++		vm_swap_owner_data_ready();
++	}
++}
++#endif
++
+ static int
+ native_owner_data_prepare(proc_t p, user_addr_t scratch)
+ {
+@@ -9328,7 +9360,12 @@
+ 	native_owner_data_readonly = (vfs_flags(data_mount) & MNT_RDONLY) != 0;
+ 	if (actual != device || (vfs_flags(data_mount) & MNT_RDONLY) ||
+ 	    strcmp(vfs_statfs(data_mount)->f_fstypename, "apfs")) error = EINVAL;
+-	if (!error) native_owner_data_stage = 4;
++	if (!error) {
++		native_owner_data_stage = 4;
++#if defined(XNU_TARGET_OS_IOS)
++		native_owner_data_prepare_swap(p, scratch, data_root);
++#endif
++	}
+ 	if (!error) native_gpu_addon_prepare(p, scratch);
+ 	if (!error) native_staged_apps_prepare(p, scratch, data_mount);
+ done:
